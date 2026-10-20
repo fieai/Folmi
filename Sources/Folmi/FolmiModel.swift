@@ -129,6 +129,10 @@ final class FolmiModel {
     var compareBaseID: String?
     /// What the selected commit allows (reword, revert, cherry-pick).
     var selectedCommitAbilities: GitRepository.CommitAbilities?
+    /// A rollback waiting for the user to pick how (keep the changes staged, or put the files back too).
+    var rollbackPrompt: GitRepository.RollbackPlan?
+    /// The open repository's working trees (main checkout first), for the project rail.
+    var worktrees: [WorktreeInfo] = []
     @ObservationIgnored var historyRequest = UUID()
     @ObservationIgnored var commitRequest = UUID()
     static let historyLimit = 500
@@ -153,6 +157,7 @@ final class FolmiModel {
     var glassSurfaces = true { didSet { editors.values.forEach { $0.glassSurfaces = glassSurfaces }; scheduleSave() } }
     var markdownDiffRendered = true { didSet { scheduleSave() } }
     var unifiedDiff = false { didSet { scheduleSave() } }
+    var foldWhitespace = false { didSet { scheduleSave() } }
     var companionMotion = true { didSet { scheduleSave() } }
     var editorFontSize: Double = 18 { didSet { applyEditorPresentation(); scheduleSave() } }
     /// Markdown live-preview body font ("" system, "serif"), size and reading width (0 = no limit).
@@ -312,6 +317,7 @@ final class FolmiModel {
             glassSurfaces = preferences.glassSurfaces
             markdownDiffRendered = preferences.markdownDiffRendered
             unifiedDiff = preferences.unifiedDiff
+            foldWhitespace = preferences.foldWhitespace
             companionMotion = preferences.companionMotion
             projects = preferences.projects
             reviewComments = projects.flatMap(\.reviewComments)
@@ -458,6 +464,7 @@ final class FolmiModel {
                 try await installRepository(url, environment: environment, demo: demo, cached: cached)
                 try savePreferencesNow()
                 finishPendingRemoval()
+                await loadWorktrees()
             } catch let error where FolmiModel.isNotRepository(error) { reportNotRepository(url) }
             catch { report(error, title: "打开项目失败") }
             busy = false
@@ -606,6 +613,7 @@ final class FolmiModel {
         readAIEvents()
         // Open files follow the disk first: the agent in the terminal edits them, and the reader should show its result.
         if editorWorkspace?.reloadCleanDocuments().isEmpty == false { editorWorkspace?.indexRevision &+= 1 }
+        if !worktreeOnly { Task { await loadWorktrees() } }
         Task {
             defer {
                 backgroundRefreshing = false

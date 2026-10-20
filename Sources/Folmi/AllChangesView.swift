@@ -348,6 +348,7 @@ struct AllChangesView: View {
                             .themedFont(.caption.weight(.medium), points: 10).monospacedDigit().fixedSize()
                     }
                     Spacer(minLength: 8)
+                    WhitespaceFoldToggle(model: model)
                     ThemedSegmented(options: [(false, "并排"), (true, "统一")],
                                     selection: Binding(get: { model.unifiedDiff }, set: { model.unifiedDiff = $0 }))
                         .controlSize(.small)

@@ -151,3 +151,139 @@ final class CommitActionTests: XCTestCase {
         XCTAssertTrue(files.isEmpty, "\(files)")
     }
 }
+
+final class RollbackTests: XCTestCase {
+    private func rev(_ f: ActionFixture, _ name: String) throws -> String { try f.git(["rev-parse", name]).trimmingCharacters(in: .whitespacesAndNewlines) }
+    private func fingerprint(_ f: ActionFixture) async throws -> String { try await f.repo.load().fingerprint }
+
+    private func threeCommits() throws -> ActionFixture {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write("sample.txt", "second\n"); try f.git(["commit", "-am", "Second"])
+        try f.write("added.txt", "new\n"); try f.git(["add", "added.txt"]); try f.git(["commit", "-m", "Third"])
+        return f
+    }
+
+    func testKeepChangesMovesTheBranchAndStagesTheDroppedWork() async throws {
+        let f = try threeCommits()
+        let first = try rev(f, "HEAD~2"), third = try rev(f, "HEAD")
+        let plan = try await f.repo.rollbackPlan(to: first)
+        XCTAssertEqual(plan.commits, 2); XCTAssertEqual(plan.pushed, 0); XCTAssertEqual(plan.branch, "refs/heads/main")
+        let step = try await f.repo.rollback(plan, mode: .keepChanges, expectedFingerprint: try await fingerprint(f))
+        XCTAssertEqual(try rev(f, "HEAD"), first)
+        XCTAssertEqual(try f.read("sample.txt"), "second\n")
+        XCTAssertEqual(try f.git(["diff", "--cached", "--name-only"]), "added.txt\nsample.txt\n")
+        _ = try await f.repo.undo(step)
+        XCTAssertEqual(try rev(f, "HEAD"), third)
+        XCTAssertEqual(try f.git(["status", "--porcelain"]), "")
+    }
+
+    func testDiscardChangesPutsFilesBackKeepsUnrelatedWorkAndUndoes() async throws {
+        let f = try threeCommits()
+        try f.write("notes.txt", "mine\n")
+        let first = try rev(f, "HEAD~2"), third = try rev(f, "HEAD")
+        let plan = try await f.repo.rollbackPlan(to: first)
+        let step = try await f.repo.rollback(plan, mode: .discardChanges, expectedFingerprint: try await fingerprint(f))
+        XCTAssertEqual(try rev(f, "HEAD"), first)
+        XCTAssertEqual(try f.read("sample.txt"), "one\ntwo\nthree\nfour\nfive\nsix\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("added.txt").path))
+        XCTAssertEqual(try f.read("notes.txt"), "mine\n")
+        _ = try await f.repo.undo(step)
+        XCTAssertEqual(try rev(f, "HEAD"), third)
+        XCTAssertEqual(try f.read("sample.txt"), "second\n")
+        XCTAssertEqual(try f.git(["status", "--porcelain"]), "?? notes.txt\n")
+    }
+
+    func testDiscardRefusesWhenUncommittedWorkWouldBeOverwritten() async throws {
+        let f = try threeCommits()
+        try f.write("sample.txt", "edited\n")
+        let first = try rev(f, "HEAD~2"), third = try rev(f, "HEAD")
+        let plan = try await f.repo.rollbackPlan(to: first)
+        do { _ = try await f.repo.rollback(plan, mode: .discardChanges, expectedFingerprint: try await fingerprint(f)); XCTFail("会覆盖改动") }
+        catch {}
+        XCTAssertEqual(try rev(f, "HEAD"), third)
+        XCTAssertEqual(try f.read("sample.txt"), "edited\n")
+    }
+
+    func testPlanRefusesHeadAndCountsPushedCommits() async throws {
+        let f = try threeCommits()
+        do { _ = try await f.repo.rollbackPlan(to: try rev(f, "HEAD")); XCTFail("已经在这里") } catch {}
+        try f.git(["update-ref", "refs/remotes/origin/main", "HEAD~1"])
+        let plan = try await f.repo.rollbackPlan(to: try rev(f, "HEAD~2"))
+        XCTAssertEqual(plan.commits, 2); XCTAssertEqual(plan.pushed, 1)
+    }
+
+    func testRestoreFileBeforeAndAfterACommit() async throws {
+        let f = try threeCommits()
+        let second = try rev(f, "HEAD~1"), third = try rev(f, "HEAD")
+        try await f.repo.restoreFile("sample.txt", from: second, side: .before)
+        XCTAssertEqual(try f.read("sample.txt"), "one\ntwo\nthree\nfour\nfive\nsix\n")
+        try await f.repo.restoreFile("sample.txt", from: second, side: .after)
+        XCTAssertEqual(try f.read("sample.txt"), "second\n")
+        // Before the commit that added it, the file did not exist.
+        try await f.repo.restoreFile("added.txt", from: third, side: .before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("added.txt").path))
+        XCTAssertEqual(try rev(f, "HEAD"), third)
+    }
+}
+
+final class ConflictTests: XCTestCase {
+    func testParsesBlocksAndSettlesOneAtATime() {
+        let text = "top\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> feature\nmiddle\n<<<<<<< HEAD\na\n||||||| base\nb\n=======\nc\n>>>>>>> feature\nend\n"
+        let file = ConflictFile(text)
+        XCTAssertEqual(file.blocks.count, 2)
+        XCTAssertEqual(file.blocks[0].oursLabel, "HEAD"); XCTAssertEqual(file.blocks[0].theirsLabel, "feature")
+        XCTAssertEqual(file.blocks[1].base, "b\n")
+        XCTAssertEqual(file.resolvingAll(with: .ours), "top\nmine\nmiddle\na\nend\n")
+        let first = file.resolving(0, with: .oursThenTheirs)!
+        XCTAssertTrue(first.hasPrefix("top\nmine\ntheirs\nmiddle\n<<<<<<< HEAD\n"))
+        XCTAssertEqual(ConflictFile(first).blocks.count, 1)
+        XCTAssertEqual(ConflictFile(first).resolving(0, with: .theirs), "top\nmine\ntheirs\nmiddle\nc\nend\n")
+    }
+
+    func testCRLFAndUnclosedMarkersSurvive() {
+        let file = ConflictFile("<<<<<<< HEAD\r\nx\r\n=======\r\ny\r\n>>>>>>> b\r\ntail")
+        XCTAssertEqual(file.resolvingAll(with: .theirs), "y\r\ntail")
+        XCTAssertEqual(ConflictFile("<<<<<<< HEAD\nonly\n").blocks.count, 0)
+        XCTAssertEqual(ConflictFile("<<<<<<< HEAD\nonly\n").resolvingAll(with: .ours), "<<<<<<< HEAD\nonly\n")
+    }
+
+    func testRealMergeConflictResolvesAndStages() async throws {
+        let f = try ActionFixture()
+        try f.initial("a.txt", "one\n")
+        try f.git(["switch", "-c", "feature"]); try f.write("a.txt", "feature\n"); try f.git(["commit", "-am", "F"])
+        try f.git(["switch", "main"]); try f.write("a.txt", "main\n"); try f.git(["commit", "-am", "M"])
+        _ = try? f.git(["merge", "feature"])
+        let file = try await f.repo.conflictFile("a.txt")!
+        XCTAssertEqual(file.blocks.count, 1)
+        do { try await f.repo.markResolved("a.txt"); XCTFail("还有冲突") } catch {}
+        try await f.repo.resolveConflict("a.txt", block: 0, choice: .theirsThenOurs, expected: file)
+        XCTAssertEqual(try f.read("a.txt"), "feature\nmain\n")
+        try await f.repo.markResolved("a.txt")
+        let after = try await f.repo.load()
+        XCTAssertFalse(after.files.contains(where: \.isConflict))
+    }
+}
+
+final class WorktreeTests: XCTestCase {
+    func testListsWorktreesAndFindsTheMainCheckout() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let extra = f.directory.deletingLastPathComponent().appendingPathComponent("agent-tree")
+        try f.git(["worktree", "add", "-b", "agent/fix", extra.path])
+        let list = try await f.repo.worktrees()
+        XCTAssertEqual(list.count, 2)
+        XCTAssertTrue(list[0].isMain); XCTAssertEqual(list[0].branch, "main")
+        XCTAssertEqual(list[1].branch, "agent/fix"); XCTAssertFalse(list[1].isMain)
+        let canonical = { (path: String) in URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
+        XCTAssertEqual(WorktreeInfo.mainRoot(of: extra.path).map(canonical), canonical(f.directory.path))
+        XCTAssertNil(WorktreeInfo.mainRoot(of: f.directory.path))
+    }
+
+    func testParseSkipsBareAndPrunable() {
+        let text = "worktree /a\nbare\n\nworktree /b\nHEAD 1234567890\ndetached\n\nworktree /c\nHEAD ff\nbranch refs/heads/x\nprunable gitdir file points to non-existent location\n"
+        let list = WorktreeInfo.parse(text)
+        XCTAssertEqual(list.map(\.path), ["/b"])
+        XCTAssertEqual(list[0].title, "1234567"); XCTAssertFalse(list[0].isMain)
+    }
+}

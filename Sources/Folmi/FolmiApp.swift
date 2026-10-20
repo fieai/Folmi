@@ -4,6 +4,9 @@ import SwiftUI
 @MainActor
 final class FolmiAppDelegate: NSObject, NSApplicationDelegate {
     weak var model: FolmiModel?
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        FinderService.shared.install()
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         model?.prepareToQuit() == false ? .terminateCancel : .terminateNow
     }
@@ -23,6 +26,7 @@ struct FolmiApp: App {
                     LocalCLI.warm()
                     InboxPanel.shared.register(model: model)
                     delegate.model = model
+                    FinderService.shared.attach(model)
                     AINotifier.shared.start(model: model)
                     CommandHoldMonitor.shared.start(model: model)
                     NSApplication.shared.setActivationPolicy(.regular)
@@ -44,7 +48,10 @@ struct FolmiApp: App {
                     }
                 }
                 // `folmi://` links (MCP show_in_folmi) go to this window, not a new one.
-                .onOpenURL { model.handleFolmiLink($0) }
+                // A folder dropped on the Dock icon or passed to `open -a` arrives here as a file URL.
+                .onOpenURL { url in
+                    if url.isFileURL { model.openFromFinder(url) } else { model.handleFolmiLink(url) }
+                }
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
         .handlesExternalEvents(matching: ["*"])

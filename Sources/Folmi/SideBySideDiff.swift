@@ -208,6 +208,25 @@ struct SideBySideDiff: View {
 }
 
 /// A distinct file view keeps repeated hunk identifiers in separate namespaces.
+private struct FoldWhitespaceKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    /// 折叠空白改动: hunks that only change whitespace show as one line until opened.
+    var foldWhitespaceHunks: Bool {
+        get { self[FoldWhitespaceKey.self] }
+        set { self[FoldWhitespaceKey.self] = newValue }
+    }
+}
+
+/// The 折叠空白改动 switch beside 并排 / 统一.
+struct WhitespaceFoldToggle: View {
+    let model: FolmiModel
+    var body: some View {
+        Toggle("折叠空白改动", isOn: Binding(get: { model.foldWhitespace }, set: { model.foldWhitespace = $0 }))
+            .toggleStyle(.checkbox).controlSize(.small).themedFont(.caption, points: 10)
+            .help("只改了缩进、空格或换行的块收成一行；照样能看、能收下")
+    }
+}
+
 struct SideBySideFile: View {
     let diff: FileDiff
     let selected: Set<Int>
@@ -249,6 +268,8 @@ struct SideBySideFile: View {
     @Environment(\.folmiTheme) private var theme
     @State private var localCommenting: String?
     @State private var hoveredHunk: String?
+    @State private var openedWhitespace: Set<String> = []
+    @Environment(\.foldWhitespaceHunks) private var foldWhitespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var commentingHunk: String? {
         get { commenting?.wrappedValue ?? localCommenting }
@@ -326,11 +347,23 @@ struct SideBySideFile: View {
                     VStack(alignment: .leading, spacing: 0) {
                         hunkToolbar(section.hunk, partialAllowed: display.partialAllowed)
                             .id(anchorPrefix + section.hunk.id)
+                        if foldWhitespace, section.hunk.isWhitespaceOnly, !openedWhitespace.contains(section.hunk.id) {
+                            Button { openedWhitespace.insert(section.hunk.id) } label: {
+                                let count = section.hunk.lines.filter { $0.kind == .addition || $0.kind == .deletion }.count
+                                Label("只改了空白（\(count) 行）· 点开看", systemImage: "space")
+                                    .themedFont(.caption, points: 10).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 12).padding(.vertical, 6).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .opacity(seen && currentHunkID != section.hunk.id ? 0.55 : 1)
+                        } else {
                         DiffRowsView(rows: section.rows, rowsKey: diff.fingerprint + "\0" + section.id + "\0\(section.rows.count)",
                                      selected: selected, canSelect: allowsLineSelection && display.partialAllowed && !busy,
                                      unified: unified, onToggle: { onToggleLine($0, diff) })
                             .frame(height: DiffCanvasMetrics.height(rows: DiffRowsCanvas.displayCount(section.rows, unified: unified)))
                             .opacity(seen && currentHunkID != section.hunk.id ? 0.55 : 1)
+                        }
                     }
                     .background {
                         if let onCurrentFrame, currentHunkID == section.hunk.id {
@@ -384,6 +417,11 @@ struct SideBySideFile: View {
             } else if !readOnly && !seenHunkIDs.isEmpty {
                 Text("新").themedFont(.system(size: 9, weight: .bold), points: 9).foregroundStyle(.white)
                     .padding(.horizontal, 4).padding(.vertical, 1).themedCapsule(ThemeColor(token: .accent)).help("上次看过之后的新改动")
+            }
+            if hunk.isWhitespaceOnly {
+                Text("只改空白").themedFont(.system(size: 9, weight: .medium), points: 9).foregroundStyle(.secondary)
+                    .padding(.horizontal, 4).padding(.vertical, 1).themedCapsule(ThemeColor(token: .hover))
+                    .help("这一块只改了缩进、空格或换行")
             }
             Text(SideBySideDisplayBudget.clippedText(hunk.header).text).themedFont(.system(size: 10, design: .monospaced), points: 10)
                 .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)

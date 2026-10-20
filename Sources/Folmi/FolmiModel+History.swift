@@ -118,6 +118,50 @@ extension FolmiModel {
         }
     }
 
+    /// Reads what rolling back to `id` would drop, then asks (see `rollbackPrompt`).
+    func prepareRollback(to id: String) {
+        guard let repository, !busy else { return }
+        Task {
+            do { rollbackPrompt = try await repository.rollbackPlan(to: id) }
+            catch { report(error, title: "无法回滚") }
+        }
+    }
+
+    /// Moves the branch back; ⌥⌘Z moves it forward again.
+    func rollback(_ plan: GitRepository.RollbackPlan, mode: GitRepository.RollbackMode) {
+        guard let repository, let state = snapshot else { return }
+        rollbackPrompt = nil
+        if mode == .discardChanges, editorWorkspace?.hasUnsavedChanges == true {
+            report(FolmiFailure(message: "编辑器里还有没保存的改动。先保存，再回滚。"), title: "仍有编辑草稿"); return
+        }
+        let title = "回滚到 \(plan.target.prefix(7))"
+        mutate(title) { [weak self] in
+            let step = try await repository.rollback(plan, mode: mode, expectedFingerprint: state.fingerprint)
+            await MainActor.run {
+                self?.pushUndo(title, step)
+                self?.selectedCommitID = plan.target
+                if mode == .keepChanges { self?.area = .staged }
+            }
+            let pushed = plan.pushed > 0 ? "其中 \(plan.pushed) 个已经推送过，要让远端也回滚得强制推送（Folmi 不会替你强制推送）。" : ""
+            return mode == .keepChanges
+                ? "去掉了 \(plan.commits) 个提交，它们的改动在暂存区。\(pushed)⌥⌘Z 可撤销。"
+                : "去掉了 \(plan.commits) 个提交，文件回到了 \(plan.target.prefix(7)) 时的样子。\(pushed)⌥⌘Z 可撤销。"
+        }
+    }
+
+    /// Puts one file in the work tree back to how a commit left it (`after`) or found it (`before`).
+    func restoreFile(_ path: String, from commit: String, side: GitRepository.RestoreSide) {
+        guard let repository else { return }
+        if editorWorkspace?.hasUnsavedChanges == true {
+            report(FolmiFailure(message: "编辑器里还有没保存的改动。先保存，再恢复文件。"), title: "仍有编辑草稿"); return
+        }
+        let title = "恢复 \((path as NSString).lastPathComponent)"
+        mutateUndoable(title, capture: { try await repository.captureWorktree([path]) }) {
+            try await repository.restoreFile(path, from: commit, side: side)
+            return "\(path) 已恢复成 \(commit.prefix(7)) \(side == .after ? "提交后" : "提交前")的样子，在工作区里，看过再收下。⌥⌘Z 可撤销。"
+        }
+    }
+
     func createBranch(_ name: String, at id: String) {
         guard let repository else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)

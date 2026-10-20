@@ -58,6 +58,7 @@ extension FolmiModel {
         preferences.glassSurfaces = glassSurfaces
         preferences.markdownDiffRendered = markdownDiffRendered
         preferences.unifiedDiff = unifiedDiff
+        preferences.foldWhitespace = foldWhitespace
         preferences.companionMotion = companionMotion
         preferences.editorFontSize = editorFontSize
         preferences.markdownFontFamily = markdownFontFamily

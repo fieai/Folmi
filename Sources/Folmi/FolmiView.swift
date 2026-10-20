@@ -111,6 +111,7 @@ struct FolmiView: View {
         // stays on the window: in a sheet it would turn every plain button into accent-colored text.
         .environment(\.folmiTheme, model.theme)
         .environment(\.folmiGlass, model.glassSurfaces)
+        .environment(\.foldWhitespaceHunks, model.foldWhitespace)
         // Reading repositoryURL (observed) re-reads the repository when the project changes.
         .environment(\.gitRepository, model.repositoryURL == nil ? nil : model.repository)
         // A design swaps a custom font for the system one in that design, so the pixel font goes without it.
@@ -260,38 +261,26 @@ private struct ProjectRail: View {
             .accessibilityLabel(expanded ? "收起项目名称" : "展开项目名称").help(expanded ? "收起项目名称" : "展开项目名称")
             ScrollView {
                 VStack(spacing: 6) {
-                    ForEach(model.projects) { project in
-                        let selected = model.repositoryURL?.path == project.rootPath
-                        Button { model.switchProject(project.rootPath) } label: {
-                            HStack(spacing: 8) {
-                                Text(project.name.prefix(1).uppercased())
-                                    .themedFont(.system(size: 13, weight: .semibold), points: 13)
-                                    .frame(width: 28, height: 30)
-                                // Always laid out at the open width and only faded, so nothing re-wraps while the rail
-                                // slides open or shut.
-                                Text(project.name).themedFont(.system(size: 12, weight: selected ? .semibold : .regular), points: 12)
-                                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                                    .opacity(expanded ? 1 : 0)
-                                if project.isDemo { Image(systemName: "play.fill").font(.system(size: 8)).foregroundStyle(.secondary).opacity(expanded ? 1 : 0) }
+                    ForEach(RailEntry.entries(projects: model.projects, current: model.repositoryURL?.path, worktrees: model.worktrees)) { entry in
+                        switch entry {
+                        case .project(let project):
+                            projectRow(project, letter: String(project.name.prefix(1)).uppercased(), title: project.name, worktree: false)
+                        case .worktreeProject(let project, let branch):
+                            projectRow(project, letter: nil, title: branch ?? project.name, worktree: true)
+                        case .unopened(let worktree):
+                            Button { model.open(URL(fileURLWithPath: worktree.path)) } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "arrow.triangle.branch").font(.system(size: 11)).frame(width: 28, height: 26)
+                                    Text(worktree.isMain ? "\(worktree.title)（主目录）" : worktree.title)
+                                        .themedFont(.system(size: 11.5), points: 11.5).lineLimit(1).truncationMode(.middle)
+                                        .frame(maxWidth: .infinity, alignment: .leading).opacity(expanded ? 1 : 0)
+                                }
+                                .modifier(RailRowInsets())
+                                .foregroundStyle(.secondary).opacity(0.75)
                             }
-                            .modifier(RailRowInsets())
-                            .padding(.vertical, 4)
-                            .foregroundStyle(ThemeColor(token: selected ? .accent : .foreground))
-                            .background(alignment: .leading) {
-                                // The pill hugs the letter while closed and opens with the rail.
-                                RoundedRectangle(cornerRadius: model.theme.style.radius(.control))
-                                    .fill(ThemeColor(token: selected ? .selectedFill : .card,
-                                                     opacity: !selected && model.theme == .terrazzo && colorScheme == .dark ? 0 : 1))
-                                    .frame(width: expanded ? ProjectRail.openContentWidth : 32)
-                            }
-                        }
-                        .buttonStyle(.pressableRow).disabled(model.busy)
-                        .accessibilityLabel(project.name).help("\(project.name)\n\(project.rootPath)")
-                        .contextMenu {
-                            Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.rootPath)]) }
-                            Divider()
-                            Button("从项目列表移除…") { removing = project }
-                                .disabled(model.busy || !model.canRemoveProject(project.rootPath))
+                            .buttonStyle(.pressableRow).disabled(model.busy)
+                            .accessibilityLabel("打开工作树 \(worktree.title)")
+                            .help("同一仓库的另一个工作树，还没打开：\(worktree.title)\n\(worktree.path)\n点一下打开")
                         }
                     }
                 }
@@ -346,6 +335,48 @@ private struct ProjectRail: View {
             Text(project.rootPath == model.repositoryURL?.path
                  ? "会先切换到另一个项目。只从 Folmi 的列表移除，不会删除磁盘上的文件；这个项目的审阅评论会一起清掉。"
                  : "只从 Folmi 的列表移除，不会删除磁盘上的文件；这个项目的审阅评论会一起清掉。")
+        }
+    }
+
+    /// One project in the rail; a worktree of the project above it is drawn with a branch mark and its branch name.
+    private func projectRow(_ project: ProjectPreferences, letter: String?, title: String, worktree: Bool) -> some View {
+        let selected = model.repositoryURL?.path == project.rootPath
+        return Button { model.switchProject(project.rootPath) } label: {
+            HStack(spacing: 8) {
+                Group {
+                    if let letter {
+                        Text(letter).themedFont(.system(size: 13, weight: .semibold), points: 13)
+                    } else {
+                        Image(systemName: "arrow.triangle.branch").font(.system(size: 11, weight: .medium))
+                    }
+                }
+                .frame(width: 28, height: worktree ? 26 : 30)
+                // Always laid out at the open width and only faded, so nothing re-wraps while the rail
+                // slides open or shut.
+                Text(title).themedFont(.system(size: worktree ? 11.5 : 12, weight: selected ? .semibold : .regular), points: worktree ? 11.5 : 12)
+                    .lineLimit(worktree ? 1 : 2).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
+                    .opacity(expanded ? 1 : 0)
+                if project.isDemo { Image(systemName: "play.fill").font(.system(size: 8)).foregroundStyle(.secondary).opacity(expanded ? 1 : 0) }
+            }
+            .modifier(RailRowInsets())
+            .padding(.vertical, worktree ? 2 : 4)
+            .foregroundStyle(ThemeColor(token: selected ? .accent : .foreground))
+            .background(alignment: .leading) {
+                // The pill hugs the letter while closed and opens with the rail.
+                RoundedRectangle(cornerRadius: model.theme.style.radius(.control))
+                    .fill(ThemeColor(token: selected ? .selectedFill : .card,
+                                     opacity: (!selected && model.theme == .terrazzo && colorScheme == .dark) || (worktree && !selected) ? 0 : 1))
+                    .frame(width: expanded ? ProjectRail.openContentWidth : 32)
+            }
+        }
+        .buttonStyle(.pressableRow).disabled(model.busy)
+        .accessibilityLabel(worktree ? "工作树 \(title)" : project.name)
+        .help(worktree ? "\(project.name) 的工作树：\(title)\n\(project.rootPath)" : "\(project.name)\n\(project.rootPath)")
+        .contextMenu {
+            Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.rootPath)]) }
+            Divider()
+            Button("从项目列表移除…") { removing = project }
+                .disabled(model.busy || !model.canRemoveProject(project.rootPath))
         }
     }
 

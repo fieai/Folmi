@@ -33,6 +33,24 @@ struct HistoryView: View {
         } message: {
             Text(branchFrom.map { "从 \($0.shortID) \($0.subject.prefix(40)) 新建，不会切换过去。" } ?? "")
         }
+        .confirmationDialog(model.rollbackPrompt.map { "回滚到 \($0.target.prefix(7))？" } ?? "",
+                            isPresented: Binding(get: { model.rollbackPrompt != nil }, set: { if !$0 { model.rollbackPrompt = nil } }),
+                            presenting: model.rollbackPrompt) { plan in
+            Button("回滚，改动留在暂存区") { model.rollback(plan, mode: .keepChanges) }
+            Button("回滚，文件也回到那时", role: .destructive) { model.rollback(plan, mode: .discardChanges) }
+            Button("取消", role: .cancel) { model.rollbackPrompt = nil }
+        } message: { plan in
+            Text(Self.rollbackMessage(plan))
+        }
+    }
+
+    static func rollbackMessage(_ plan: GitRepository.RollbackPlan) -> String {
+        var text = "当前分支会去掉之后的 \(plan.commits) 个提交。"
+        text += "\n「改动留在暂存区」：文件不动，这些提交的改动回到暂存区，可以重新整理后再提交。"
+        text += "\n「文件也回到那时」：文件一起回到那个提交，没提交的改动会保留，有冲突时不执行。"
+        if plan.pushed > 0 { text += "\n其中 \(plan.pushed) 个已经推送到远端；要让远端也回滚，需要你自己强制推送。" }
+        text += "\n两种都能用 ⌥⌘Z 撤销。"
+        return text
     }
 
     private func startBranch(_ commit: CommitNode) { branchName = ""; branchFrom = commit }
@@ -132,6 +150,12 @@ struct HistoryView: View {
             Button(model.compareBaseID == nil ? "设为对比起点" : "改为对比起点") { model.setCompareBase(commit.id) }
         }
         Button("从这里新建分支…") { startBranch(commit) }
+        if let head = model.snapshot?.head, commit.id != head, model.history.first(where: { $0.id == head }) != nil {
+            Button("回滚到这里…") { model.prepareRollback(to: commit.id) }.disabled(model.busy)
+        }
+        if commit.id == model.snapshot?.head, let parent = commit.parents.first {
+            Button("撤销这次提交…") { model.prepareRollback(to: parent) }.disabled(model.busy)
+        }
         Divider()
         Button("复制提交编号") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(commit.id, forType: .string) }
         Button("复制提交标题") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(commit.subject, forType: .string) }
@@ -163,6 +187,12 @@ struct HistoryView: View {
                                     .lineLimit(1).truncationMode(.middle)
                             }
                             .tag(file.path)
+                            .contextMenu {
+                                if model.compareBaseID == nil || model.compareBaseID == detail.id {
+                                    Button("恢复成这次提交后的样子") { model.restoreFile(file.path, from: detail.id, side: .after) }.disabled(model.busy)
+                                    Button("恢复成这次提交前的样子") { model.restoreFile(file.path, from: detail.id, side: .before) }.disabled(model.busy)
+                                }
+                            }
                         }
                     }
                     .listStyle(.sidebar).scrollContentBackground(.hidden)
@@ -385,6 +415,17 @@ private struct CommitActionBar: View {
                 action("挑到当前分支", symbol: "arrow.down.to.line", enabled: !busy,
                        help: clean ? "把这个提交的改动放进暂存区，看过后再提交（⌥⌘Z 可撤销）" : "工作区有改动：会先临时收起它们，再挑选",
                        perform: { if clean { model.applyCommit(commit.id, kind: .cherryPick) } else { stashFirst = .cherryPick } })
+            }
+            if ability?.onCurrentBranch == true {
+                if ability?.isHead == true, let parent = commit.parents.first {
+                    action("撤销提交", symbol: "arrow.uturn.left.circle", enabled: !busy,
+                           help: "去掉这次提交，改动放回暂存区（也可以选文件一起退回）。⌥⌘Z 可撤销",
+                           perform: { model.prepareRollback(to: parent) })
+                } else if ability?.isHead == false {
+                    action("回滚到这里", symbol: "clock.arrow.circlepath", enabled: !busy,
+                           help: "把当前分支退回到这个提交，之后的提交去掉。⌥⌘Z 可撤销",
+                           perform: { model.prepareRollback(to: commit.id) })
+                }
             }
             action("新建分支", symbol: "arrow.triangle.branch", enabled: !busy, help: "从这个提交新建分支，不会切换过去", perform: onBranch)
             action("对比", symbol: "arrow.left.arrow.right", enabled: true,

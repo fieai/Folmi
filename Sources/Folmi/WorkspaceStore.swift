@@ -131,6 +131,8 @@ struct WorkspacePreferences: Codable, Equatable {
     var markdownDiffRendered: Bool = true
     /// Source diffs as one column (unified) instead of side by side.
     var unifiedDiff: Bool = false
+    /// Hunks that only change whitespace are folded to one line (still reviewed and staged like any other).
+    var foldWhitespace: Bool = false
     /// 琥珀's mascot moves (AI tab, done page); off leaves it still. The status bar mascot is always still.
     var companionMotion: Bool = true
     /// Markdown live-preview body text: "" system, "serif" system serif, or a font name.
@@ -140,7 +142,7 @@ struct WorkspacePreferences: Codable, Equatable {
     var markdownReadingWidth: Double = 720
     var markdownOutlineWidth: Double = 220
 
-    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, companionMotion }
+    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, foldWhitespace, companionMotion }
 
     init(version: Int = 1, projects: [ProjectPreferences] = [], selectedProjectPath: String? = nil,
          showTerminal: Bool = false, editorFontSize: Double = 13, appearance: FolmiAppearance = .system,
@@ -178,6 +180,7 @@ struct WorkspacePreferences: Codable, Equatable {
         glassSurfaces = try values.decodeIfPresent(Bool.self, forKey: .glassSurfaces) ?? true
         markdownDiffRendered = (try? values.decodeIfPresent(Bool.self, forKey: .markdownDiffRendered)) ?? true
         unifiedDiff = (try? values.decodeIfPresent(Bool.self, forKey: .unifiedDiff)) ?? false
+        foldWhitespace = (try? values.decodeIfPresent(Bool.self, forKey: .foldWhitespace)) ?? false
         companionMotion = (try? values.decodeIfPresent(Bool.self, forKey: .companionMotion)) ?? true
         // Reading preferences are cosmetic: a bad value falls back instead of rejecting the file.
         let family = (try? values.decodeIfPresent(String.self, forKey: .markdownFontFamily)) ?? ""

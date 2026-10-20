@@ -160,7 +160,9 @@ struct DiffPane: View {
                 VStack(spacing: 0) {
                     DiffToolbar(model: model, diff: model.fileDiffs.count == 1 ? model.fileDiffs.first : nil)
                     Divider()
-                    if let diff = renderedMarkdown {
+                    if model.fileDiffs.count == 1, let diff = model.fileDiffs.first, diff.file.isConflict {
+                        ConflictView(model: model, diff: diff)
+                    } else if let diff = renderedMarkdown {
                         MarkdownDiffView(model: model, diff: diff)
                     } else {
                         sourceDiff
@@ -224,6 +226,7 @@ struct DiffToolbar: View {
                 .help("Markdown 改动按排版后的样子看，或看源码行")
             }
             if !rendered {
+                WhitespaceFoldToggle(model: model)
                 ThemedSegmented(options: [(false, "并排"), (true, "统一")],
                                 selection: Binding(get: { model.unifiedDiff }, set: { model.unifiedDiff = $0 }))
                     .controlSize(.small)

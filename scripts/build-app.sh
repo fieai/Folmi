@@ -80,6 +80,19 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSServices</key><array><dict>
+    <key>NSMenuItem</key><dict><key>default</key><string>用 Folmi 打开</string></dict>
+    <key>NSMessage</key><string>openFolder</string>
+    <key>NSPortName</key><string>Folmi</string>
+    <key>NSRequiredContext</key><dict/>
+    <key>NSSendFileTypes</key><array><string>public.folder</string></array>
+  </dict></array>
+  <key>CFBundleDocumentTypes</key><array><dict>
+    <key>CFBundleTypeName</key><string>Folder</string>
+    <key>CFBundleTypeRole</key><string>Viewer</string>
+    <key>LSHandlerRank</key><string>None</string>
+    <key>LSItemContentTypes</key><array><string>public.folder</string></array>
+  </dict></array>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>local.folmi.link</string>
     <key>CFBundleURLSchemes</key><array><string>folmi</string></array>
@@ -92,6 +105,10 @@ version="$(<"$app_root/VERSION")"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $bundle_id" "$app_dir/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $bundle_title" "$app_dir/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName $bundle_title" "$app_dir/Contents/Info.plist"
+# Finder's right-click 「用 Folmi 打开」; preview builds name themselves so the two entries can be told apart.
+if [[ "$bundle_title" != Folmi ]]; then
+  /usr/libexec/PlistBuddy -c "Set :NSServices:0:NSMenuItem:default 用 ${bundle_title}打开" "$app_dir/Contents/Info.plist"
+fi
 # Ad-hoc signatures are pinned to the cdhash, so macOS forgets folder-access grants on every rebuild.
 # Prefer a stable Apple Development identity; set FOLMI_SIGN_IDENTITY=- to force ad-hoc.
 sign_identity="${FOLMI_SIGN_IDENTITY:-$(/usr/bin/security find-identity -v -p codesigning | /usr/bin/awk '/"Apple Development:/ { print $2; exit }')}"
@@ -115,4 +132,7 @@ if [[ -e "$app_destination" ]]; then
   mv "$app_destination" "$archived_app"
 fi
 mv "$app_dir" "$app_destination"
+# Register the bundle and refresh the services list now, so the Finder entry appears without a logout.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app_destination" || true
+/System/Library/CoreServices/pbs -update || true
 print "已生成：$app_destination（签名：$sign_identity）"

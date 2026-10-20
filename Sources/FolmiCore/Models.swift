@@ -107,6 +107,20 @@ public struct DiffHunk: Identifiable, Hashable, Sendable {
     public let header: String
     public let lines: [DiffLine]
     public init(id: String, header: String, lines: [DiffLine]) { self.id = id; self.header = header; self.lines = lines }
+
+    /// Only indentation, spacing or line breaks changed: the removed and added text match once all whitespace is
+    /// taken out (so a re-indented or re-wrapped block counts too).
+    public var isWhitespaceOnly: Bool {
+        var removed = "", added = "", changed = false
+        for line in lines {
+            switch line.kind {
+            case .deletion: removed += line.text.filter { !$0.isWhitespace }; changed = true
+            case .addition: added += line.text.filter { !$0.isWhitespace }; changed = true
+            case .context, .meta: break
+            }
+        }
+        return changed && removed == added
+    }
 }
 public struct FileDiff: Sendable {
     public let file: FileChange
