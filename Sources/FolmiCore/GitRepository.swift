@@ -3,7 +3,7 @@ import CryptoKit
 
 public actor GitRepository {
     private let initialURL: URL
-    private let environment: [String: String]
+    let environment: [String: String]
     private var root: URL?
     private var knownPaths: GitPaths?
     /// See `GitProcess.largeRepository`; set per project by the app.

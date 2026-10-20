@@ -36,6 +36,7 @@ extension FolmiModel {
             PaletteCommand(id: "terminal", title: "显示 / 隐藏终端", keywords: "terminal 终端 shell", enabled: open) { [weak self] in self?.toggleTerminal() },
             PaletteCommand(id: "newTerminal", title: "新建终端标签", keywords: "terminal new 终端", enabled: open) { [weak self] in self?.newTerminalTab() },
             PaletteCommand(id: "hooks", title: "接入 agent（hooks / MCP）", keywords: "claude codex hooks mcp 接入 活动 撤回 guardrails 评论", enabled: open) { [weak self] in self?.showHooksSetup = true },
+            PaletteCommand(id: "worktrees", title: "工作树", keywords: "worktree worktrees codex claude 工作树 文件夹 清理", enabled: open) { [weak self] in self?.showWorktrees = true },
             PaletteCommand(id: "memory", title: "记住了什么", keywords: "memory rules learning 规则 记忆 提议 claude.md agents.md", enabled: open) { [weak self] in self?.showMemory = true },
             PaletteCommand(id: "aiBatch", title: "撤回 Claude 最近一批改动", keywords: "claude undo batch 撤回 回滚", enabled: aiBatches.last?.canUndo == true) { [weak self] in self?.undoLatestAIBatch() },
             PaletteCommand(id: "refresh", title: "刷新", keywords: "refresh reload 刷新", enabled: open && !busy) { [weak self] in self?.refresh() },

@@ -69,14 +69,63 @@ private struct TerrazzoBurstCanvas: View, Animatable {
     }
 }
 
+/// 像素's version: square blocks in the four status colors that jump outward on whole-point steps, like an 8-bit
+/// sprite, instead of mineral shards drifting.
+private struct PixelBurstCanvas: View, Animatable {
+    nonisolated var progress: Double
+    let kind: TerrazzoParticleKind
+    let colors: [ThemeRGB]
+    let edge: ThemeRGB
+    nonisolated var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            Canvas { context, _ in
+                guard !colors.isEmpty, progress > 0, progress < 1 else { return }
+                context.translateBy(x: 24, y: 24)
+                // Seven frames, not a smooth glide.
+                let frame = (progress * 7).rounded(.down) / 7
+                let size = geometry.size
+                let count = kind == .activation ? 10 : 16
+                let reach: CGFloat = kind == .activation ? 10 : 20
+                let travel = (1 - pow(1 - CGFloat(frame), 2)) * reach
+                for index in 0..<count {
+                    let unit = CGFloat((index * 37 + 11) % 101) / 100
+                    let top = index.isMultiple(of: 2)
+                    let x = 2 + unit * max(0, size.width - 4) + (unit - 0.5) * travel
+                    let y = top ? -4 - travel : size.height + 4 + travel
+                    let side: CGFloat = index % 3 == 0 ? 5 : 4
+                    let rect = CGRect(x: (x / 2).rounded() * 2 - side / 2, y: (y / 2).rounded() * 2 - side / 2, width: side, height: side)
+                    let fade = frame < 0.72 ? 1 : 1 - (frame - 0.72) / 0.28
+                    context.fill(Path(rect), with: .color(colors[index % colors.count].color.opacity(fade)))
+                    context.stroke(Path(rect.insetBy(dx: 0.5, dy: 0.5)), with: .color(edge.color.opacity(fade * 0.6)), lineWidth: 1)
+                }
+            }
+            .frame(width: geometry.size.width + 48, height: geometry.size.height + 48)
+            .offset(x: -24, y: -24)
+        }
+    }
+}
+
 private struct TerrazzoBurstPlayback: View {
     let kind: TerrazzoParticleKind
     let colors: [ThemeRGB]
+    /// Set for 像素: draw square blocks with this edge instead of shards.
+    var pixelEdge: ThemeRGB? = nil
     let finished: () -> Void
     @State private var progress = 0.0
 
     var body: some View {
-        TerrazzoBurstCanvas(progress: progress, kind: kind, colors: colors)
+        Group {
+            if let pixelEdge {
+                PixelBurstCanvas(progress: progress, kind: kind, colors: colors, edge: pixelEdge)
+            } else {
+                TerrazzoBurstCanvas(progress: progress, kind: kind, colors: colors)
+            }
+        }
             .task {
                 withAnimation(Motion.resolved(.linear(duration: kind.duration), reduceMotion: Motion.systemReducesMotion)) { progress = 1 }
                 do { try await Task.sleep(for: .seconds(kind.duration)) }
@@ -95,14 +144,17 @@ private struct TerrazzoParticleFeedback: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
-    private var enabled: Bool { theme == .terrazzo && !reduceMotion && scenePhase == .active }
+    private var enabled: Bool { (theme == .terrazzo || theme == .pixel) && !reduceMotion && scenePhase == .active }
 
     func body(content: Content) -> some View {
         content
             .overlay {
                 if enabled, let current = playback {
                     let palette = theme.definition.colors(dark: colorScheme == .dark)
-                    TerrazzoBurstPlayback(kind: kind, colors: palette.primaryMaterial?.speckles ?? [palette.accent]) {
+                    let pixel = theme == .pixel
+                    let colors = pixel ? [palette.removed, palette.markFill(.modified), palette.accent, palette.added]
+                        : palette.primaryMaterial?.speckles ?? [palette.accent]
+                    TerrazzoBurstPlayback(kind: kind, colors: colors, pixelEdge: pixel ? palette.border : nil) {
                         if playback == current { playback = nil }
                     }
                     .id(current)
@@ -117,6 +169,8 @@ private struct TerrazzoParticleFeedback: ViewModifier {
 }
 
 extension View {
+    /// A short burst when something finishes (review done, commit landed): mineral grains under 石墨, pixel blocks
+    /// under 像素, nothing elsewhere or under Reduce Motion.
     func terrazzoParticles(trigger: Int, kind: TerrazzoParticleKind = .completion) -> some View {
         modifier(TerrazzoParticleFeedback(trigger: trigger, kind: kind))
     }

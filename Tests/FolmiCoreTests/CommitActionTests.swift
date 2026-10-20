@@ -353,3 +353,45 @@ final class RefTests: XCTestCase {
         XCTAssertTrue(tracked); XCTAssertFalse(untracked)
     }
 }
+
+final class WorktreeStatusTests: XCTestCase {
+    func testStatusCountsChangesAndOwnCommitsAndGuardsRemoval() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let base = f.directory.deletingLastPathComponent()
+        let busy = base.appendingPathComponent("busy-tree"), done = base.appendingPathComponent("done-tree")
+        let loose = base.appendingPathComponent("loose-tree")
+        try f.git(["worktree", "add", "-b", "agent/busy", busy.path])
+        try f.git(["worktree", "add", "--detach", done.path])
+        try f.git(["worktree", "add", "--detach", loose.path])
+        try "new\n".write(to: busy.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
+        try "x\n".write(to: loose.appendingPathComponent("x.txt"), atomically: true, encoding: .utf8)
+        try f.git(["-C", loose.path, "add", "x.txt"])
+        try f.git(["-C", loose.path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "only here"])
+
+        let statuses = await f.repo.worktreeStatuses(try await f.repo.worktrees())
+        func status(_ url: URL) -> WorktreeStatus? {
+            statuses.first { URL(fileURLWithPath: $0.info.path).resolvingSymlinksInPath() == url.resolvingSymlinksInPath() }
+        }
+        let busyStatus = try XCTUnwrap(status(busy)), doneStatus = try XCTUnwrap(status(done)), looseStatus = try XCTUnwrap(status(loose))
+        XCTAssertEqual(busyStatus.changes, 1); XCTAssertTrue(busyStatus.hasWork); XCTAssertFalse(busyStatus.canRemove)
+        XCTAssertEqual(doneStatus.changes, 0); XCTAssertEqual(doneStatus.ownCommits, 0); XCTAssertTrue(doneStatus.canRemove)
+        XCTAssertNotNil(doneStatus.modified)
+        XCTAssertEqual(looseStatus.ownCommits, 1); XCTAssertFalse(looseStatus.canRemove, "a detached commit would be left behind")
+        XCTAssertFalse(statuses[0].canRemove, "the main checkout is never removed")
+
+        try await f.repo.removeWorktree(doneStatus)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: done.path))
+        do { try await f.repo.removeWorktree(busyStatus); XCTFail("removed a worktree with changes") } catch {}
+        XCTAssertTrue(FileManager.default.fileExists(atPath: busy.path))
+    }
+
+    func testAgentIsGuessedFromThePath() {
+        XCTAssertEqual(WorktreeAgent.guess(path: "/Users/a/.codex/worktrees/1f2e/app"), .codex)
+        XCTAssertEqual(WorktreeAgent.guess(path: "/repo/.claude/worktrees/fix"), .claudeCode)
+        XCTAssertNil(WorktreeAgent.guess(path: "/repo-feature"))
+        let status = WorktreeStatus(info: WorktreeInfo(path: "/Users/a/.codex/worktrees/1f2e/app", branch: nil, head: "abc", isMain: false),
+                                    changes: 0, ownCommits: 0, modified: nil)
+        XCTAssertEqual(status.folder, "1f2e/app")
+    }
+}

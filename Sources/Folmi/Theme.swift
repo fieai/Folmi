@@ -75,6 +75,11 @@ struct ThemeColors: Sendable {
     var modifiedMark: ThemeRGB? = nil
     /// Colors along progress bars, left to right; nil uses the accent.
     var progress: [ThemeRGB]? = nil
+    /// The solid offset shadow under cards and keys when it should differ from the edge (dark 像素: a light edge on a
+    /// black shadow, so the step still reads on a dark floor).
+    var shadow: ThemeRGB? = nil
+
+    var hardShadow: ThemeRGB { shadow ?? border }
 
     subscript(token: ThemeToken) -> ThemeRGB {
         switch token {
@@ -214,8 +219,8 @@ struct ThemeStyle: Sendable {
                                  focusLineWidth: 1, focusLineOpacity: 1, tabs: .underline, selection: .bar, marks: .text,
                                  prominent: .sharp, rowPadding: 1, instrument: true, focusSweep: true, paneGap: 6)
     static let pixel = ThemeStyle(rowRadius: 0, controlRadius: 0, cardRadius: 0, borderWidth: 2, shadow: .hard(3), typeface: .monospaced,
-                                  dither: true, steppedProgress: true, pixelFont: true, solidMarks: true,
-                                  focusLineWidth: 4, focusLineOpacity: 1)
+                                  steppedProgress: true, pixelFont: true, solidMarks: true,
+                                  focusLineWidth: 2, focusLineOpacity: 1)
     /// Apple: concentric corners (card 16 = row 10 + 6 inset), no edges, the system face, a native segmented switch,
     /// Finder-style selection.
     static let terrazzo = ThemeStyle(rowRadius: 10, controlRadius: 8, cardRadius: 16, borderWidth: 1, shadow: .soft, typeface: .standard,

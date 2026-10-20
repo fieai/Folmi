@@ -172,7 +172,7 @@ struct FolmiCardShape: ViewModifier {
                         .shadow(color: dark ? .black.opacity(0.35) : Color(red: 0.47, green: 0.31, blue: 0.08).opacity(0.10),
                                 radius: dark ? 6 : 14, y: dark ? 2 : 5)
                 case let .hard(offset):
-                    shape.fill(.themed(.border)).offset(x: offset, y: offset)
+                    shape.fill(theme.definition.colors(dark: dark).hardShadow.color).offset(x: offset, y: offset)
                 case .lifted:
                     shape.fill(Color.theme(theme, \.card))
                         .shadow(color: .black.opacity(dark ? 0.55 : 0.12), radius: 16, y: 8)

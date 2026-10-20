@@ -70,6 +70,7 @@ struct FolmiView: View {
         }
         .sheet(isPresented: $model.showHooksSetup) { HooksSetupSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showMemory) { MemorySheet(model: model).sheetEntrance() }
+        .sheet(isPresented: $model.showWorktrees) { WorktreesSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showTasks) { TasksSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showReplay) { ReplaySheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showOverview) { ProjectOverviewSheet(model: model).sheetEntrance() }
@@ -143,15 +144,26 @@ private struct BranchMenu: View {
                 }
                 if unpushed > 0 || snapshot.upstream != nil { Divider() }
                 ForEach(snapshot.branches, id: \.self) { branch in
-                    Button {
-                        model.checkout(branch)
-                    } label: {
-                        if branch == snapshot.branch {
-                            Label(branch, systemImage: "checkmark")
-                        } else {
-                            Text(branch)
+                    // A branch checked out in another worktree cannot be checked out here; it opens that folder.
+                    if branch != snapshot.branch, let holder = model.worktree(holding: branch) {
+                        Button { model.openWorktree(holder) } label: {
+                            Label("\(branch)  ·  在\(holder.agent?.title ?? "另一个")文件夹里", systemImage: "folder")
+                        }
+                    } else {
+                        Button {
+                            model.checkout(branch)
+                        } label: {
+                            if branch == snapshot.branch {
+                                Label(branch, systemImage: "checkmark")
+                            } else {
+                                Text(branch)
+                            }
                         }
                     }
+                }
+                if !model.otherWorktrees.isEmpty {
+                    Divider()
+                    Button("工作树（\(model.otherWorktrees.count)）…") { model.showWorktrees = true }
                 }
                 if !snapshot.branches.isEmpty {
                     Divider()
@@ -283,22 +295,11 @@ private struct ProjectRail: View {
                         switch entry {
                         case .project(let project):
                             projectRow(project, letter: String(project.name.prefix(1)).uppercased(), title: project.name, worktree: false)
-                        case .worktreeProject(let project, let branch):
-                            projectRow(project, letter: nil, title: branch ?? project.name, worktree: true)
-                        case .unopened(let worktree):
-                            Button { model.open(URL(fileURLWithPath: worktree.path)) } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "arrow.triangle.branch").font(.system(size: 11)).frame(width: 28, height: 26)
-                                    Text(worktree.isMain ? "\(worktree.title)（主目录）" : worktree.title)
-                                        .themedFont(.system(size: 11.5), points: 11.5).lineLimit(1).truncationMode(.middle)
-                                        .frame(maxWidth: .infinity, alignment: .leading).opacity(expanded ? 1 : 0)
-                                }
-                                .modifier(RailRowInsets())
-                                .foregroundStyle(.secondary).opacity(0.75)
-                            }
-                            .buttonStyle(.pressableRow).disabled(model.busy)
-                            .accessibilityLabel("打开工作树 \(worktree.title)")
-                            .help("同一仓库的另一个工作树，还没打开：\(worktree.title)\n\(worktree.path)\n点一下打开")
+                        case .worktreeProject(let project, let title):
+                            projectRow(project, letter: nil, title: title, worktree: true)
+                        case .worktreeNotice(let count, let agent):
+                            WorktreeNoticeRow(count: count, agent: agent, expanded: expanded) { model.showWorktrees = true }
+                                .disabled(model.busy)
                         }
                     }
                 }
@@ -404,7 +405,7 @@ private struct ProjectRail: View {
 
 /// Every rail row keeps its icon in one 28-point column, centered in the collapsed rail, so nothing shifts sideways
 /// when names are shown or hidden.
-private struct RailRowInsets: ViewModifier {
+struct RailRowInsets: ViewModifier {
     func body(content: Content) -> some View {
         content.padding(.leading, 2).padding(.trailing, 6)
             .frame(width: ProjectRail.openContentWidth, alignment: .leading)
@@ -637,7 +638,8 @@ enum WelcomeRecents {
     }
 
     /// The branch name, or a short hash when HEAD is detached; nil when the folder is not a repository.
-    static func branch(at root: String) -> String? {
+    /// The checked-out branch; a detached HEAD gives its short commit, or nil with `detached: false`.
+    static func branch(at root: String, detached: Bool = true) -> String? {
         let dotGit = URL(fileURLWithPath: root).appendingPathComponent(".git")
         var gitDir = dotGit
         // A worktree or submodule keeps a `.git` file that points at its real git directory.
@@ -649,7 +651,7 @@ enum WelcomeRecents {
             .trimmingCharacters(in: .whitespacesAndNewlines), !head.isEmpty else { return nil }
         if head.hasPrefix("ref: refs/heads/") { return String(head.dropFirst("ref: refs/heads/".count)) }
         if head.hasPrefix("ref: ") { return String(head.dropFirst("ref: ".count)) }
-        return String(head.prefix(7))
+        return detached ? String(head.prefix(7)) : nil
     }
 }
 

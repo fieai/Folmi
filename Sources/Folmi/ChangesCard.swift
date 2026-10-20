@@ -507,7 +507,7 @@ struct CommitActionButton: View {
         .onChange(of: model.lastCommit) { _, toast in
             guard let toast else { return }
             justCommitted = toast
-            if model.theme == .terrazzo { completionTick += 1 }
+            if model.theme == .terrazzo || model.theme == .pixel { completionTick += 1 }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(reduceMotion ? 1.2 : 1.6))
                 if justCommitted == toast { justCommitted = nil }

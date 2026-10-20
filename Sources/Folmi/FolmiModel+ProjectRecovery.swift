@@ -143,7 +143,7 @@ extension FolmiModel {
     }
 
     @discardableResult
-    private func forgetProject(_ path: String) -> Bool {
+    func forgetProject(_ path: String) -> Bool {
         let previousProjects = projects, previousPreferences = preferences, previousComments = reviewComments
         do {
             projects.removeAll { $0.rootPath == path }

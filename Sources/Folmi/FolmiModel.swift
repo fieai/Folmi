@@ -131,8 +131,11 @@ final class FolmiModel {
     var selectedCommitAbilities: GitRepository.CommitAbilities?
     /// A rollback waiting for the user to pick how (keep the changes staged, or put the files back too).
     var rollbackPrompt: GitRepository.RollbackPlan?
-    /// The open repository's working trees (main checkout first), for the project rail.
-    var worktrees: [WorktreeInfo] = []
+    /// The open repository's working trees (main checkout first) and what each holds, for the rail's notice, the
+    /// worktree sheet and the branch menu.
+    var worktrees: [WorktreeStatus] = []
+    @ObservationIgnored var worktreesRead: Date?
+    var showWorktrees = false
     @ObservationIgnored var historyRequest = UUID()
     @ObservationIgnored var commitRequest = UUID()
     static let historyLimit = 500
@@ -703,7 +706,7 @@ final class FolmiModel {
 
     /// A click on the window outside an open sheet closes it, like a popover.
     func dismissSheets() {
-        showDelivery = false; showPull = false; showStashes = false; showActivity = false; showAISettings = false; showPalette = false; showHooksSetup = false; showMemory = false
+        showDelivery = false; showPull = false; showStashes = false; showActivity = false; showAISettings = false; showPalette = false; showHooksSetup = false; showMemory = false; showWorktrees = false
         showTasks = false; showReplay = false; showOverview = false; showDocHistory = false; readerCommentDraft = nil; showQuickOpen = false; showProjectSearch = false; showSettings = false
     }
     /// The file tree's 看改动: the change's diff, in the area that has it.

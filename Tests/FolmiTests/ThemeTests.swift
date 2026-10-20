@@ -81,9 +81,9 @@ final class ThemeTests: XCTestCase {
         var environment = EnvironmentValues()
         environment.folmiTheme = .pixel
         environment.colorScheme = .dark
-        XCTAssertEqual(rgb(NSColor(ThemeColor(token: .accent).resolve(in: environment))), rgb(ThemePalette.hex(0x4C9BFF)))
+        XCTAssertEqual(rgb(NSColor(ThemeColor(token: .accent).resolve(in: environment))), rgb(ThemePalette.hex(0x5BB2FF)))
         environment.colorScheme = .light
-        XCTAssertEqual(rgb(NSColor(ThemeColor(token: .accent).resolve(in: environment))), rgb(ThemePalette.hex(0x1F6FEB)))
+        XCTAssertEqual(rgb(NSColor(ThemeColor(token: .accent).resolve(in: environment))), rgb(ThemePalette.hex(0x1B6CC4)))
         environment.folmiTheme = .zinc
         XCTAssertEqual(rgb(NSColor(ThemeColor(token: .accent).resolve(in: environment))), rgb(ThemePalette.hex(0xB8326A)))
     }

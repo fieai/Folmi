@@ -48,29 +48,29 @@ enum ThemeCatalog {
             comment: 0x6B6B74, keyword: 0xE38BD6, string: 0x93D49A, number: 0xEDAA6A, type: 0x82B4F2, variable: 0xF06A9E,
             selection: 0x4A2635, link: 0xF06A9E))
 
-    /// Colors after Super Mario: light is the overworld (white cards, ink edges, primaries only on small marks), dark
-    /// is the underground (black floor, blue-brick edges, coin yellow). Mario red stays for deletions; primary
-    /// actions take the overalls blue so 暂存 never reads as destructive.
+    /// Bright, warm primaries with a quiet reading surface. Coin gold marks only what still waits for review (M marks,
+    /// the review progress); sky blue is navigation, selection and the primary action; red stays for deletions and
+    /// green for additions. Dark keeps the same roles on a neutral floor, with light edges over a black step shadow.
     static let pixel = ThemeDefinition(
-        id: "pixel", title: "像素", detail: "方角、硬描边、错位投影，马里奥配色：浅色是地上关，深色是地下关",
+        id: "pixel", title: "像素", detail: "方角、硬描边、错位投影；暖红金黄配天空蓝，金黄只标待验收，代码区保持安静",
         style: .pixel,
         light: ThemeColors(
-            canvas: 0xE6EAF0, card: 0xFFFFFF, header: 0xF3F5F8, editorBackground: 0xFFFFFF, gutter: 0xF3F5F8,
-            border: 0x1A1F2E, foreground: 0x1A1F2E, secondaryText: 0x3A4256, tertiaryText: 0x6B7489,
-            hover: 0xEDF1F6, selectedFill: 0xD6E6FF,
-            accent: 0x1F6FEB, onAccent: 0xFFFFFF, added: 0x1E9E3A, removed: 0xD41E25, modified: 0xA86400,
-            comment: 0x8A93A6, keyword: 0x1F5FCC, string: 0x1E8A36, number: 0xD9480F, type: 0x0E7C86, variable: 0x1F6FEB,
-            selection: 0xFFE08A, link: 0x1F6FEB, modifiedMark: 0xFFB800, progress: [0x1E9E3A, 0xFFB800, 0xD41E25]),
+            canvas: 0xE6EEF8, card: 0xFFFFFF, header: 0xF5F7FA, editorBackground: 0xFFFFFF, gutter: 0xF5F7FA,
+            border: 0x242A35, foreground: 0x242A35, secondaryText: 0x4A5568, tertiaryText: 0x687387,
+            hover: 0xEEF2F7, selectedFill: 0xDDEBFF,
+            accent: 0x1B6CC4, onAccent: 0xFFFFFF, added: 0x167A37, removed: 0xC8261C, modified: 0x8A6100,
+            comment: 0x7C879A, keyword: 0x7A44B8, string: 0x1E8040, number: 0xC2410C, type: 0x0E7C86, variable: 0x1B6CC4,
+            selection: 0xFFE7A0, link: 0x1B6CC4, modifiedMark: 0xFFC629, progress: [0x2CAD55, 0xFFC629, 0xE5352B]),
         dark: ThemeColors(
-            canvas: 0x0B0D14, card: 0x151926, header: 0x1C2233, editorBackground: 0x151926, gutter: 0x121522,
-            border: 0x3B4E86, foreground: 0xF2F2F2, secondaryText: 0xA9B4CC, tertiaryText: 0x6B7899,
-            hover: 0x1F2740, selectedFill: 0x22345E,
-            accent: 0x4C9BFF, onAccent: 0x0B0D14, added: 0x3FCF5E, removed: 0xFF5A4F, modified: 0xFFC21A,
-            comment: 0x6B7899, keyword: 0x6CB4FF, string: 0x7EE08F, number: 0xFFB347, type: 0x5FE0E0, variable: 0x9CC9FF,
-            selection: 0x2A3D6E, link: 0x6CB4FF, progress: [0x3FCF5E, 0xFFC21A, 0xFF5A4F]))
+            canvas: 0x0F1218, card: 0x202329, header: 0x272B33, editorBackground: 0x202329, gutter: 0x1C1F25,
+            border: 0x737E90, foreground: 0xE9EDF5, secondaryText: 0xA5AFBF, tertiaryText: 0x7C8799,
+            hover: 0x2A2F38, selectedFill: 0x22324A,
+            accent: 0x5BB2FF, onAccent: 0x0F1218, added: 0x5CCE77, removed: 0xFF6A5C, modified: 0xF2C54B,
+            comment: 0x7C8799, keyword: 0xC6A1EF, string: 0x86D99A, number: 0xFFB347, type: 0x5FD4D4, variable: 0x8CC8FF,
+            selection: 0x2A3D5E, link: 0x8CC8FF, progress: [0x5CCE77, 0xF2C54B, 0xFF6A5C], shadow: 0x000000))
 
     /// Graphite: no hue of its own. Ink and stone carry the chrome; the mineral grains on the primary button are the
-    /// only color, and a little verdigris marks links. Leaves blue to 像素 and yellow to 琥珀. Saved under its first name, terrazzo.
+    /// only color, and a little verdigris marks links. Leaves sky blue and coin gold to 像素 and amber to 琥珀. Saved under its first name, terrazzo.
     static let terrazzo = ThemeDefinition(
         id: "terrazzo", title: "石墨", detail: "石墨与石灰，不带主色：同心圆角、不描边、Finder 式选中；颜色只在矿物颗粒里",
         style: .terrazzo,

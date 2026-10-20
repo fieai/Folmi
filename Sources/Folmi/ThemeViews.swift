@@ -109,7 +109,7 @@ private struct StandardProminentButtonStyle: ButtonStyle {
                 shape.fill(colors.accent.color).overlay { shape.fill(Color.black.opacity(0.2)) }
                     .offset(y: pressed ? 1 : lip)
             } else if hard > 0, !pressed, enabled {
-                shape.fill(colors.border.color).offset(x: hard - 1, y: hard - 1)
+                shape.fill(colors.hardShadow.color).offset(x: hard - 1, y: hard - 1)
             }
         }
     }
@@ -372,7 +372,7 @@ struct PixelKeyButtonStyle: ButtonStyle {
                 .frame(minHeight: small ? 20 : 24)
                 .background(pressed ? colors.hover.color : colors.card.color)
                 .overlay { Rectangle().strokeBorder(colors.border.color.opacity(enabled ? 1 : 0.4), lineWidth: 1.5) }
-                .background { if enabled { Rectangle().fill(colors.border.color).offset(x: 2 - sunk, y: 2 - sunk) } }
+                .background { if enabled { Rectangle().fill(colors.hardShadow.color).offset(x: 2 - sunk, y: 2 - sunk) } }
                 .offset(x: sunk, y: sunk)
                 .padding(.trailing, 2).padding(.bottom, 2)
                 .contentShape(Rectangle())
