@@ -230,6 +230,8 @@ final class FolmiModel {
     let board = ProjectBoard()
     var showOverview = false
     var showDocHistory = false
+    /// A note being written on text selected in the Markdown reader.
+    var readerCommentDraft: ReaderCommentDraft?
     /// The right card shows the AI tab instead of the selected terminal.
     var aiTabSelected = false
     /// The AI tab's conversation with Claude or Codex (AgentSession.swift), its draft and attached context.
@@ -535,6 +537,9 @@ final class FolmiModel {
             editor.sendSelectionToTerminal = { [weak self] range in self?.sendEditorSelectionToTerminal(selection: range) }
             editor.sendTextToTerminal = { [weak self] text, reference in self?.sendTextToTerminal(text, reference: reference) }
             editor.assistSelection = { [weak self] mode, text, source in self?.assist(mode, text: text, source: source) }
+            editor.commentSelection = { [weak self] path, first, last, quote in
+                self?.readerCommentDraft = ReaderCommentDraft(path: path, firstLine: first, lastLine: last, quote: quote)
+            }
             editor.showChanges = { [weak self] path in self?.showChanges(of: path) }
         }
         editorWorkspace = editors[state.root.path]
@@ -697,7 +702,7 @@ final class FolmiModel {
     /// A click on the window outside an open sheet closes it, like a popover.
     func dismissSheets() {
         showDelivery = false; showPull = false; showStashes = false; showActivity = false; showAISettings = false; showPalette = false; showHooksSetup = false; showMemory = false
-        showTasks = false; showReplay = false; showOverview = false; showDocHistory = false; showQuickOpen = false; showProjectSearch = false; showSettings = false
+        showTasks = false; showReplay = false; showOverview = false; showDocHistory = false; readerCommentDraft = nil; showQuickOpen = false; showProjectSearch = false; showSettings = false
     }
     /// The file tree's 看改动: the change's diff, in the area that has it.
     func showChanges(ofPath path: String) {

@@ -61,6 +61,17 @@ extension FolmiModel {
         return true
     }
 
+    /// Adds the note written on a Markdown reader selection; it is sent with the diff notes (⌥⌘↩).
+    func addReaderComment(_ body: String, draft: ReaderCommentDraft) {
+        readerCommentDraft = nil
+        guard let root = repositoryURL,
+              let comment = ReviewComment.make(projectPath: root.path, draft: draft, body: body,
+                                               fileLines: ReviewComment.fileLines(root.appendingPathComponent(draft.path))) else { return }
+        reviewComments.append(comment)
+        recordNote(comment)
+        editorWorkspace?.showNotice("已加评论（\(comment.reference)），和其他评论一起发到终端：⌥⌘↩")
+    }
+
     func deleteReviewComment(_ id: UUID) { reviewComments.removeAll { $0.id == id } }
 
     func clearReviewComments() { reviewComments.removeAll { $0.projectPath == repositoryURL?.path } }

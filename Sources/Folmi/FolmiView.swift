@@ -74,6 +74,12 @@ struct FolmiView: View {
         .sheet(isPresented: $model.showReplay) { ReplaySheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showOverview) { ProjectOverviewSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showDocHistory) { DocHistorySheet(model: model).sheetEntrance() }
+        .sheet(item: $model.readerCommentDraft) { draft in
+            ReviewCommentComposer(title: "\(draft.reference) · 「\(draft.quote.prefix(40))\(draft.quote.count > 40 ? "…" : "")」",
+                                  onAdd: { model.addReaderComment($0, draft: draft) },
+                                  onCancel: { model.readerCommentDraft = nil })
+                .sheetEntrance()
+        }
         .sheet(isPresented: $model.showQuickOpen) {
             QuickOpenSheet(paths: model.quickOpenPaths, onOpen: model.openQuickMatch).sheetEntrance()
         }

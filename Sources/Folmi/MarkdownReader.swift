@@ -273,6 +273,9 @@ struct MarkdownReaderView: NSViewRepresentable {
                 }
                 let lines = range(lines: first, through: last)
                 workspace.sendSelectionToTerminal?(lines)
+            case "comment":
+                guard let text = body["text"] as? String, let first = body["line"] as? Int, let last = body["end"] as? Int else { return }
+                workspace.commentSelection?(id, first + 1, last + 1, text)
             case "quote":
                 guard let text = body["text"] as? String, let first = body["line"] as? Int, let last = body["end"] as? Int else { return }
                 let quoted = text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
@@ -530,7 +533,7 @@ enum MarkdownReaderPage {
     </style></head><body><main id="doc"></main>
     <div id="find"><input id="find-q" placeholder="在文档中查找" spellcheck="false"><span class="n" id="find-n"></span>
     <button data-dir="-1" title="上一个（⇧↩）">↑</button><button data-dir="1" title="下一个（↩）">↓</button><button data-dir="0" title="关闭（Esc）">✕</button></div>
-    <div id="pop"><button class="primary" data-act="send">发到终端</button><button data-act="quote">复制为引用</button><button data-act="plain">说人话</button><button data-act="deai">去 AI 腔</button><button data-act="edit">编辑这里</button></div>
+    <div id="pop"><button class="primary" data-act="send">发到终端</button><button data-act="comment">评论</button><button data-act="quote">复制为引用</button><button data-act="plain">说人话</button><button data-act="deai">去 AI 腔</button><button data-act="edit">编辑这里</button></div>
     <script>
     (function(){
     const post=(m)=>window.webkit.messageHandlers.wb.postMessage(m);
@@ -661,6 +664,7 @@ enum MarkdownReaderPage {
     pop.addEventListener('mousedown',(e)=>e.preventDefault());
     pop.addEventListener('click',(e)=>{const b=e.target.closest('button');const info=selectionInfo();if(!b||!info)return;
       const act=b.dataset.act;if(act==='send')post({type:'send',line:info.line,end:info.end,text:info.text});
+      else if(act==='comment')post({type:'comment',text:info.text.trim(),line:info.line,end:info.end});
       else if(act==='quote')post({type:'quote',text:info.text.trim(),line:info.line,end:info.end});
       else if(act==='plain'||act==='deai')post({type:act,text:info.text.trim(),line:info.line,end:info.end});
       else if(act==='edit')post({type:'edit',line:info.line,end:info.end,text:info.text});hide();window.getSelection().removeAllRanges()});

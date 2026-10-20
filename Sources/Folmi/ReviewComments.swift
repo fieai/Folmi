@@ -52,6 +52,25 @@ struct ReviewComment: Identifiable, Equatable, Codable {
                              excerpt: excerpt, body: trimmed, anchor: span.map { $0.text.hasSuffix("\r") ? String($0.text.dropLast()) : $0.text }, anchorStart: span.first?.number ?? first)
     }
 
+    /// A note on lines of a document read in the Markdown reader, not on a diff. The excerpt is the Markdown source
+    /// of those lines (what the agent edits), or the selected text when the file cannot be read.
+    static func make(projectPath: String, draft: ReaderCommentDraft, body: String, fileLines: [String]?) -> ReviewComment? {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let first = max(1, draft.firstLine), last = max(first, draft.lastLine)
+        var excerpt: [String], anchor: [String] = [], anchorStart = first
+        if let lines = fileLines, last <= lines.count {
+            let chosen = lines[(first - 1)..<last]
+            excerpt = chosen.prefix(60).map { " " + $0 } + (chosen.count > 60 ? ["…（另有 \(chosen.count - 60) 行）"] : [])
+            let low = max(1, first - 1), high = min(lines.count, last + 1)
+            anchor = Array(lines[(low - 1)..<high].prefix(200)); anchorStart = low
+        } else {
+            excerpt = draft.quote.split(separator: "\n", omittingEmptySubsequences: false).prefix(60).map { " " + $0 }
+        }
+        return ReviewComment(projectPath: projectPath, path: draft.path, area: .working, firstLine: first, lastLine: last,
+                             excerpt: excerpt, body: trimmed, anchor: anchor, anchorStart: anchorStart)
+    }
+
     /// Where the anchor is in `fileLines` now: its 1-based start, or nil when it is gone.
     /// Prefers the saved position, then the closest copy.
     static func locate(anchor: [String], near start: Int, in fileLines: [String]) -> Int? {
@@ -126,6 +145,16 @@ struct ReviewComment: Identifiable, Equatable, Codable {
             scalar == "\n" || scalar == "\t" || !(scalar.value < 0x20 || (0x7F...0x9F).contains(scalar.value))
         }))
     }
+}
+
+/// Text selected in the Markdown reader, waiting for its note.
+struct ReaderCommentDraft: Identifiable, Equatable {
+    let id = UUID()
+    let path: String
+    let firstLine: Int
+    let lastLine: Int
+    let quote: String
+    var reference: String { firstLine == lastLine ? "\(path):\(firstLine)" : "\(path):\(firstLine)-\(lastLine)" }
 }
 
 struct ReviewCommentComposer: View {

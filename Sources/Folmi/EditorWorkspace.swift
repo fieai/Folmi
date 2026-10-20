@@ -62,6 +62,8 @@ final class EditorWorkspace: ObservableObject {
     var sendSelectionToTerminal: ((NSRange) -> Void)?
     /// "发到终端" in the Markdown reader: the text as read on the page (no Markdown marks), with its line reference.
     var sendTextToTerminal: ((String, String) -> Void)?
+    /// 评论 in the Markdown reader: document path, 1-based first and last source line, and the selected text.
+    var commentSelection: ((String, Int, Int, String) -> Void)?
     /// 说人话 / 去 AI 腔 on selected text, with where it came from.
     var assistSelection: ((AIAssistState.Mode, String, String) -> Void)?
     /// Headings of the selected Markdown document and the section at the caret, for the outline.

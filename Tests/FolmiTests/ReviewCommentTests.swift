@@ -23,6 +23,21 @@ final class ReviewCommentTests: XCTestCase {
         FileDiff(file: file, area: .working, rawPatch: "", hunks: [hunk], fingerprint: "f", isPartialSupported: true, notice: nil)
     }
 
+    func testReaderCommentKeepsTheMarkdownSourceAndFollowsMovedLines() throws {
+        let lines = ["# 标题", "", "第一段 **重点**", "第二段", "结尾"]
+        let draft = ReaderCommentDraft(path: "docs/a.md", firstLine: 3, lastLine: 4, quote: "第一段 重点\n第二段")
+        let comment = try XCTUnwrap(ReviewComment.make(projectPath: "/p", draft: draft, body: " 说清楚一点 ", fileLines: lines))
+        XCTAssertEqual(comment.reference, "docs/a.md:3-4")
+        XCTAssertEqual(comment.excerpt, [" 第一段 **重点**", " 第二段"])
+        XCTAssertEqual(comment.body, "说清楚一点")
+        let moved = comment.located(in: ["新的一行"] + lines)
+        XCTAssertEqual(moved.lines, "4-5"); XCTAssertFalse(moved.outdated)
+        XCTAssertTrue(comment.located(in: ["# 标题", "", "改写了", "第二段", "结尾"]).outdated)
+        // Unreadable file: the selected text stands in; an empty note is refused.
+        XCTAssertEqual(ReviewComment.make(projectPath: "/p", draft: draft, body: "x", fileLines: nil)?.excerpt, [" 第一段 重点", " 第二段"])
+        XCTAssertNil(ReviewComment.make(projectPath: "/p", draft: draft, body: "  ", fileLines: lines))
+    }
+
     func testLineNumbersFollowTheNewSide() throws {
         let numbers = try XCTUnwrap(ReviewComment.newLineNumbers(hunk))
         XCTAssertEqual(numbers, [1: 10, 2: 11, 3: 11, 4: 12, 5: 13])
