@@ -74,6 +74,7 @@ struct FolmiView: View {
         .sheet(isPresented: $model.showReplay) { ReplaySheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showOverview) { ProjectOverviewSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showDocHistory) { DocHistorySheet(model: model).sheetEntrance() }
+        .modifier(RefPrompts(model: model))
         .sheet(item: $model.readerCommentDraft) { draft in
             ReviewCommentComposer(title: "\(draft.reference) · 「\(draft.quote.prefix(40))\(draft.quote.count > 40 ? "…" : "")」",
                                   onAdd: { model.addReaderComment($0, draft: draft) },
@@ -151,6 +152,17 @@ private struct BranchMenu: View {
                             Text(branch)
                         }
                     }
+                }
+                if !snapshot.branches.isEmpty {
+                    Divider()
+                    Menu("改名分支") {
+                        ForEach(snapshot.branches, id: \.self) { branch in Button(branch) { model.refPrompt = .renameBranch(branch) } }
+                    }
+                    let others = snapshot.branches.filter { $0 != snapshot.branch }
+                    Menu("删除分支") {
+                        ForEach(others, id: \.self) { branch in Button(branch) { model.askDeleteBranch(branch) } }
+                    }
+                    .disabled(others.isEmpty)
                 }
             } label: {
                 // A toolbar menu draws only the label's first text, so the counts are part of it.

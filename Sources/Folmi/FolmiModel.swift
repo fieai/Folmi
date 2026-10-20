@@ -232,6 +232,8 @@ final class FolmiModel {
     var showDocHistory = false
     /// A note being written on text selected in the Markdown reader.
     var readerCommentDraft: ReaderCommentDraft?
+    /// A branch or tag action waiting for a name or a yes.
+    var refPrompt: RefPrompt?
     /// The right card shows the AI tab instead of the selected terminal.
     var aiTabSelected = false
     /// The AI tab's conversation with Claude or Codex (AgentSession.swift), its draft and attached context.

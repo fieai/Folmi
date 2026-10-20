@@ -322,6 +322,8 @@ struct ProjectFileTreeView: View {
     var onShowChanges: ((String) -> Void)?
     var onTerminalHere: ((String, Bool) -> Void)?
     var onSendPath: ((String) -> Void)?
+    /// 忽略: adds the path to the root .gitignore (true for a folder).
+    var onIgnore: ((String, Bool) -> Void)?
     /// Reads an ignored folder the first time it is shown open.
     var onLoadFolder: ((String) -> Void)?
     @State private var hovered: String?
@@ -341,6 +343,9 @@ struct ProjectFileTreeView: View {
         }
         if let onSendPath { Button("把路径发到终端") { onSendPath(node.path) } }
         if let onTerminalHere { Button(node.isDirectory ? "在终端中进入这个文件夹" : "在终端中进入所在文件夹") { onTerminalHere(node.path, node.isDirectory) } }
+        if let onIgnore {
+            Button(node.isDirectory ? "忽略这个文件夹（加进 .gitignore）" : "忽略这个文件（加进 .gitignore）") { onIgnore(node.path, node.isDirectory) }
+        }
         if let root {
             Divider()
             FileActionsMenu(url: root.appendingPathComponent(node.path), relativePath: node.path)

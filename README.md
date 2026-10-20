@@ -15,7 +15,7 @@
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-222429)
 ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 
-[官网](https://folmi.mindmesh.site) · [下载](https://github.com/fieai/Folmi/releases/latest) · [功能](#功能) · [从源码构建](#从源码构建) · [产品方向](docs/direction.md)
+[官网](https://folmi.mindmesh.site) · [下载](https://github.com/fieai/Folmi/releases/latest) · [功能](#功能) · [从源码构建](#从源码构建) · [产品方向](docs/direction.md) · [更新记录](CHANGELOG.md)
 
 </div>
 
@@ -135,7 +135,7 @@ docs/             产品方向、设计说明、品牌资源
 
 ## 参与
 
-欢迎提 [Issue](https://github.com/fieai/Folmi/issues) 和 Pull Request。改动前可以先读一下 [产品方向](docs/direction.md)，里面写了哪些功能会做、哪些不做，以及原因。
+欢迎提 [Issue](https://github.com/fieai/Folmi/issues) 和 Pull Request。提交 PR 前在本机跑一遍 `scripts/test.sh`；GitHub 上的 CI 会构建并跑核心测试。改动前可以先读一下 [产品方向](docs/direction.md)，里面写了哪些功能会做、哪些不做，以及原因。
 
 ## 致谢
 

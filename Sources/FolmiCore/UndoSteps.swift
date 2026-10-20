@@ -14,6 +14,11 @@ public enum UndoStep: Sendable, Equatable {
     /// Undo moves `branch` and the files back to `restore`, if HEAD is still on that branch at `current`: uncommitted
     /// changes (staged or not) are carried along, and git refuses, changing nothing, where they would be lost.
     case reset(restore: String, current: String, branch: String?)
+    /// Undo points `ref` (a full ref such as `refs/heads/x` or `refs/tags/v1`) at `restore` (nil: deletes it), if it
+    /// still points at `current` (nil: must not exist). Used for branches and tags made or removed.
+    case ref(ref: String, restore: String?, current: String?)
+    /// Undo renames branch `to` back to `from` (short names).
+    case renameBranch(from: String, to: String)
     /// A stash action to take back (see `StashUndo`).
     case stash(StashUndo)
     /// Several steps that undo together, newest last.
@@ -23,7 +28,7 @@ public enum UndoStep: Sendable, Equatable {
         switch self {
         case .worktree(let files): return files.map(\.path)
         case .index(let entries): return entries.map(\.path)
-        case .head, .reset, .stash: return []
+        case .head, .reset, .stash, .ref, .renameBranch: return []
         case .group(let steps): return steps.flatMap(\.paths)
         }
     }
@@ -93,7 +98,7 @@ extension GitRepository {
         switch step {
         case .worktree(let files): return try await captureWorktree(files.map(\.path))
         case .index(let entries): return try await captureIndex(entries.map(\.path))
-        case .head, .reset, .stash: return step
+        case .head, .reset, .stash, .ref, .renameBranch: return step
         case .group(let steps):
             var result: [UndoStep] = []
             for step in steps { result.append(try await recapture(step)) }
@@ -170,6 +175,14 @@ extension GitRepository {
             }
             _ = try git.run(["update-ref", "-m", "Folmi：撤销", ref, restore, current])
             return .reset(restore: current, current: restore, branch: branch)
+        case let .ref(ref, restore, current):
+            let git = try runner()
+            if let restore { _ = try git.run(["update-ref", "-m", "Folmi：撤销", ref, restore, current ?? ""]) }
+            else if let current { _ = try git.run(["update-ref", "-d", ref, current]) }
+            return .ref(ref: ref, restore: current, current: restore)
+        case let .renameBranch(from, to):
+            _ = try runner().run(["branch", "-m", "--", to, from])
+            return .renameBranch(from: to, to: from)
         case .stash(let change):
             return try undoStash(change)
         case .group(let steps):

@@ -82,6 +82,7 @@ struct TreePane: View {
                                     root: model.repositoryURL,
                                     onShowChanges: model.showChanges(ofPath:), onTerminalHere: model.openTerminal(at:isDirectory:),
                                     onSendPath: { model.sendTextToTerminal($0) },
+                                    onIgnore: { model.ignorePath($0, folder: $1) },
                                     onLoadFolder: model.loadTreeFolder,
                                     expansion: expansion)
                     .id(model.repositoryURL?.path)
@@ -207,6 +208,9 @@ struct ChangesPane: View {
             Button(files.count > 1 ? "编辑这 \(files.count) 个文件" : "编辑") {
                 // Several rows in the menu are always the selection.
                 if files.count == 1 { model.editPath(files[0].path) } else { model.editSelectedFiles() }
+            }
+            if files.count == 1, files[0].isUntracked {
+                Button("忽略这个文件（加进 .gitignore）") { model.ignorePath(files[0].path, folder: false) }.disabled(model.busy)
             }
         }
     }

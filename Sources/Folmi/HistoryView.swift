@@ -150,6 +150,15 @@ struct HistoryView: View {
             Button(model.compareBaseID == nil ? "设为对比起点" : "改为对比起点") { model.setCompareBase(commit.id) }
         }
         Button("从这里新建分支…") { startBranch(commit) }
+        Button("在这里打标签…") { model.refPrompt = .createTag(commit: commit.id) }.disabled(model.busy)
+        let tags = commit.refs.filter { $0.hasPrefix("tag: ") }.map { String($0.dropFirst(5)) }
+        ForEach(tags, id: \.self) { tag in
+            Menu("标签 \(tag)") {
+                Button(model.tagRemote.map { "推送到 \($0)" } ?? "没有远端可推送") { model.pushTag(tag) }
+                    .disabled(model.tagRemote == nil || model.busy)
+                Button("删除本地标签…") { model.refPrompt = .deleteTag(tag) }.disabled(model.busy)
+            }
+        }
         if let head = model.snapshot?.head, commit.id != head, model.history.first(where: { $0.id == head }) != nil {
             Button("回滚到这里…") { model.prepareRollback(to: commit.id) }.disabled(model.busy)
         }

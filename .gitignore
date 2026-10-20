@@ -23,3 +23,7 @@ docs/build-output-*
 docs/source-manifest-*
 docs/progress-v0.5.md
 docs/acceptance-v0.6.md
+
+# Local tool configuration and personal working notes
+.claude/
+docs/cursor-reference.md

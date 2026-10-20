@@ -287,3 +287,69 @@ final class WorktreeTests: XCTestCase {
         XCTAssertEqual(list[0].title, "1234567"); XCTAssertFalse(list[0].isMain)
     }
 }
+
+final class RefTests: XCTestCase {
+    private func rev(_ f: ActionFixture, _ name: String) throws -> String { try f.git(["rev-parse", name]).trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    func testDeleteBranchWarnsAboutOwnCommitsAndUndoes() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.git(["branch", "merged"])
+        try f.git(["switch", "-c", "work"]); try f.write("sample.txt", "x\n"); try f.git(["commit", "-am", "W"]); try f.git(["switch", "main"])
+        let mergedOwn = try await f.repo.branchHasOwnCommits("merged")
+        let workOwn = try await f.repo.branchHasOwnCommits("work")
+        XCTAssertFalse(mergedOwn); XCTAssertTrue(workOwn)
+        let work = try rev(f, "work")
+        let step = try await f.repo.deleteBranch("work")
+        XCTAssertEqual(try f.git(["branch", "--list", "work"]), "")
+        _ = try await f.repo.undo(step)
+        XCTAssertEqual(try rev(f, "work"), work)
+        do { _ = try await f.repo.deleteBranch("main"); XCTFail("当前分支") } catch {}
+    }
+
+    func testRenameCurrentBranchAndUndo() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let step = try await f.repo.renameBranch("main", to: "trunk")
+        XCTAssertEqual(try f.git(["symbolic-ref", "--short", "HEAD"]), "trunk\n")
+        do { _ = try await f.repo.renameBranch("trunk", to: "bad name"); XCTFail("无效名") } catch {}
+        _ = try await f.repo.undo(step)
+        XCTAssertEqual(try f.git(["symbolic-ref", "--short", "HEAD"]), "main\n")
+    }
+
+    func testTagsCreateAnnotatedOrLightAndUndo() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let head = try rev(f, "HEAD")
+        let light = try await f.repo.createTag("v1", at: head, message: "")
+        let annotated = try await f.repo.createTag("v2", at: head, message: "第二版")
+        XCTAssertEqual(try f.git(["cat-file", "-t", "v1"]), "commit\n")
+        XCTAssertEqual(try f.git(["cat-file", "-t", "v2"]), "tag\n")
+        let tags = try await f.repo.tags(at: head)
+        XCTAssertEqual(tags, ["v1", "v2"])
+        do { _ = try await f.repo.createTag("v1", at: head, message: ""); XCTFail("重复") } catch {}
+        _ = try await f.repo.undo(annotated); _ = try await f.repo.undo(light)
+        XCTAssertEqual(try f.git(["tag"]), "")
+        try f.git(["tag", "v3"])
+        let removed = try await f.repo.deleteTag("v3")
+        _ = try await f.repo.undo(removed)
+        XCTAssertEqual(try f.git(["tag"]), "v3\n")
+    }
+
+    func testIgnorePatternsAndGitignoreAppend() async throws {
+        XCTAssertEqual(GitRepository.ignorePattern(for: "build/out.log", folder: false), "/build/out.log")
+        XCTAssertEqual(GitRepository.ignorePattern(for: "tmp", folder: true), "/tmp/")
+        XCTAssertEqual(GitRepository.ignorePattern(for: "a[1]*.txt", folder: false), "/a\\[1\\]\\*.txt")
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write(".gitignore", "node_modules")
+        try f.write("junk.log", "x")
+        try await f.repo.addToGitignore("/junk.log")
+        try await f.repo.addToGitignore("/junk.log")
+        XCTAssertEqual(try f.read(".gitignore"), "node_modules\n/junk.log\n")
+        XCTAssertEqual(try f.git(["status", "--porcelain", "--", "junk.log"]), "")
+        let tracked = try await f.repo.isTracked("sample.txt")
+        let untracked = try await f.repo.isTracked("junk.log")
+        XCTAssertTrue(tracked); XCTAssertFalse(untracked)
+    }
+}
