@@ -114,7 +114,12 @@ nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px }
 .brand img { width: 30px; height: 30px }
 nav ul { display: flex; gap: 22px; list-style: none; margin: 0; padding: 0; font-size: 14px; color: var(--fg2) }
 nav ul a { text-decoration: none } nav ul a:hover { color: var(--fg) }
-nav .cta { margin-left: auto }
+nav .gh { margin-left: auto; gap: 7px; padding: 6px 6px 6px 12px }
+nav .gh + .cta { margin-left: -16px }
+.gh-stars { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); font: 600 12px var(--ui); font-variant-numeric: tabular-nums; color: var(--fg2) }
+.gh-stars[hidden] { display: none }
+.gh:not(:has(.gh-stars:not([hidden]))) { padding-right: 12px }
+@media (max-width: 460px) { nav .gh .gh-label { display: none } }
 @media (max-width: 720px) { nav ul { display: none } }
 
 .btn { display: inline-flex; align-items: center; gap: 8px; font: 600 15px var(--ui); text-decoration: none; border-radius: var(--r-btn);
@@ -406,6 +411,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
       <li><a href="#features">功能</a></li>
       <li><a href="#faq">问答</a></li>
     </ul>
+    <a class="btn btn-ghost btn-sm gh" href="https://github.com/fieai/Folmi" target="_blank" rel="noopener" aria-label="在 GitHub 上查看 Folmi"><svg class="gh-mark" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span class="gh-label">GitHub</span><span class="gh-stars" data-gh-stars hidden>★ <span></span></span></a>
     <a class="btn btn-primary btn-sm cta" href="#download">下载内测版</a>
   </div>
 </nav>
@@ -708,7 +714,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
         <a class="btn btn-primary" href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA.dmg" id="dl" download>下载内测版 DMG</a>
         <a class="btn btn-ghost" href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA-安装说明.html">安装说明</a>
       </div>
-      <p class="hero-meta"><a href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA-安装说明.txt">纯文本安装说明</a> · <a href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA.dmg.sha256" download>SHA256 校验文件</a></p>
+      <p class="hero-meta"><a href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA-安装说明.txt">纯文本安装说明</a> · <a href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA.dmg.sha256" download>SHA256 校验文件</a> · <a href="https://github.com/fieai/Folmi/releases" target="_blank" rel="noopener">GitHub Releases</a> · <a href="https://github.com/fieai/Folmi" target="_blank" rel="noopener">源代码（MIT）</a></p>
       <div class="req"><span>macOS 14 Sonoma 及以上</span><span>Apple Silicon</span><span>项目需要用 Git 管理（不用会 Git）</span></div>
     </div>
     <img class="big" src="assets/icon-256.png" alt="Folmi 图标">
@@ -735,7 +741,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
   <div class="wrap">
     <a class="brand" href="#top"><img src="assets/icon-256.png" alt="">Folmi</a>
     <span>为 macOS 而做 · © 2026</span>
-    <div class="right"><a href="#download">下载</a><a href="#faq">问答</a></div>
+    <div class="right"><a href="#download">下载</a><a href="#faq">问答</a><a href="https://github.com/fieai/Folmi" target="_blank" rel="noopener">GitHub</a></div>
   </div>
 </footer>
 
@@ -743,6 +749,26 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
 // Nav border once scrolled.
 const nav = document.getElementById('nav');
 addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), { passive: true });
+
+// GitHub star count; cached for an hour so visitors stay under the API's per-IP limit. Hidden if it can't load.
+(async function () {
+  const show = n => document.querySelectorAll('[data-gh-stars]').forEach(el => {
+    el.lastElementChild.textContent = n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k' : String(n);
+    el.hidden = false;
+  });
+  try {
+    const cached = JSON.parse(localStorage.getItem('folmi-gh-stars') || 'null');
+    if (cached && Date.now() - cached.t < 3600e3) return show(cached.n);
+  } catch (e) {}
+  try {
+    const r = await fetch('https://api.github.com/repos/fieai/Folmi', { headers: { Accept: 'application/vnd.github+json' } });
+    if (!r.ok) return;
+    const n = (await r.json()).stargazers_count;
+    if (typeof n !== 'number') return;
+    show(n);
+    try { localStorage.setItem('folmi-gh-stars', JSON.stringify({ n, t: Date.now() })) } catch (e) {}
+  } catch (e) {}
+})();
 
 // Fade sections in as they enter the viewport.
 const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target) } }), { rootMargin: '0px 0px -8% 0px' });

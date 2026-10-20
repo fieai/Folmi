@@ -1,96 +1,151 @@
+<div align="center">
+
+<img src="site/assets/icon-256.png" width="112" alt="Folmi">
+
 # Folmi
 
-AI 一轮能改几十个文件，人很难一处处看完。Folmi 是一个 macOS 原生应用，帮你看清 Claude Code、Codex 改了什么：先看要紧的，看不懂的当场问，一处一处决定留不留，每一步都能撤回。
+**看清 AI 改了什么，一处一处决定留不留。**
 
-![Folmi 主界面](site/assets/shot-graphite-light.jpg)
+一个 macOS 原生应用，主要配合 Claude Code 和 Codex。
 
-- 官网与下载：<https://folmi.mindmesh.site>（目前是内测版）
-- 系统要求：macOS 14 及以上，Apple Silicon
-- 产品方向与取舍：[docs/direction.md](docs/direction.md)
+[![GitHub stars](https://img.shields.io/github/stars/fieai/Folmi?style=flat&logo=github&label=Stars&color=E9AA47)](https://github.com/fieai/Folmi/stargazers)
+[![Release](https://img.shields.io/github/v/release/fieai/Folmi?include_prereleases&label=%E5%86%85%E6%B5%8B%E7%89%88&color=222429)](https://github.com/fieai/Folmi/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-222429)](LICENSE)
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-222429?logo=apple)
+![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-222429)
+![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 
-## 它能做什么
+[官网](https://folmi.mindmesh.site) · [下载](https://github.com/fieai/Folmi/releases/latest) · [功能](#功能) · [从源码构建](#从源码构建) · [产品方向](docs/direction.md)
 
-**看 AI 的改动**
+</div>
 
-- 逐个验收：空格看下一处，⏎ 收下，⌫ 丢弃，⌥⌘Z 撤销。收下就是暂存，没处理的留在工作区，不在 Git 之外另记一套状态。
-- 要紧的排前面：依赖、构建脚本、配置、大段删除先给你看，并写明为什么值得先看。
-- 左右对照的差异视图、全部改动连续滚动、按行或按块暂存，可以在改动旁写评论，再一次发给终端里的 agent。
-- 选中一段，让 AI 解释这处改动，回答就显示在改动旁边。
+<br>
 
-**配合 Claude Code 和 Codex**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/assets/shot-graphite-dark.jpg">
+  <img src="site/assets/shot-graphite-light.jpg" alt="Folmi 主界面：左侧项目和改动，中间是差异，右侧是终端">
+</picture>
 
-- 钩子：按轮次记录 AI 的改动，顶部显示「正在修改 / 改完了」；一整轮可以整批撤回，也能回放；可选拦截 `git push`、`git reset --hard` 这类危险命令。
-- MCP 服务（`folmi-hook mcp`）：agent 能读到你写的审阅评论，处理完标成「已处理」，也能在 Folmi 里打开指定文件和行。
-- 你反复丢弃的改动会归纳成规则提议，同意后写进 `CLAUDE.md` / `AGENTS.md`，可以随时查看和删除。
-- 其他 AI 改的文件也能看、收、丢，只是不按轮次接入。
+## 为什么做 Folmi
 
-**读和改 Markdown**
+AI 一轮对话能改几十个文件。一行行看完很累，闭着眼全收又不放心。
 
-- 阅读视图支持公式（KaTeX）和 Mermaid，还能渲染差异、显示大纲、查看文档历史。
+Folmi 把这一轮改动摊开：要紧的排在前面，看不懂的当场让 AI 解释，然后一处一处决定收下还是丢弃。每一步都能撤回，AI 的一整轮改动也能整批退回。
+
+底下用的是 Git：收下就是暂存，没处理的留在工作区，不在 Git 之外另记一套状态。不太会 Git 也能用。
+
+## 功能
+
+### 验收 AI 的改动
+
+| 按键 | 动作 |
+| :---: | --- |
+| <kbd>Space</kbd> | 看下一处 |
+| <kbd>⏎</kbd> | 收下这一处 |
+| <kbd>⌫</kbd> | 丢弃这一处 |
+| <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>Z</kbd> | 撤销上一步 |
+
+- **先看要紧的**：依赖、构建脚本、配置、大段删除排在前面，并写明为什么值得先看。
+- **当场问**：选中一段，让 AI 解释这处改动，回答显示在改动旁边。
+- **差异视图**：左右对照、全部改动连续滚动，可以按行或按块暂存。
+- **审阅评论**：在改动旁写评论，一次发给终端里的 agent。
+
+### 配合 Claude Code 和 Codex
+
+- **按轮次记录**：钩子记下 AI 每一轮改了哪些文件，顶部显示「正在修改 / 改完了」。一整轮可以整批撤回，也可以回放。
+- **危险命令拦截**：可选拦截 `git push`、`git reset --hard`、`git clean -f` 等命令。
+- **MCP 服务**：agent 能读到你的审阅评论，处理完标成「已处理」，也能让 Folmi 打开指定的文件和行。
+- **越用越顺手**：你反复丢弃的改动会归纳成规则提议，同意后写进 `CLAUDE.md` / `AGENTS.md`。
+
+其他 AI 或你自己改的文件也能看、收、丢，只是不按轮次接入。
+
+### 读和改 Markdown
+
+- 阅读视图支持 KaTeX 公式和 Mermaid 图表，可以渲染差异、显示大纲、查看文档历史。
 - 源码编辑辅助：表格里按 Tab 跳格、`/` 菜单、粘贴图片、`[[` 补全。
 
-**Git 和日常**
+### 日常用到的其他功能
 
-- 提交前检查，后台预先写好提交说明；推送、拉取和冲突处理、分支、历史与提交图、收起改动（stash）、大仓库模式。
-- 内嵌多标签终端（SwiftTerm）、⌘K 命令面板、⌘P 快速打开、全文搜索、多项目、四套主题。
+- 提交前检查，提交说明在后台预先写好；推送、拉取和冲突处理、分支、历史与提交图、收起改动（stash）。
+- 内嵌多标签终端、<kbd>⌘</kbd> <kbd>K</kbd> 命令面板、<kbd>⌘</kbd> <kbd>P</kbd> 快速打开、全文搜索、多项目。
+- 四套主题：琥珀、锌莓、像素、石墨，各有浅色和深色。
+
+<table>
+  <tr>
+    <td><img src="site/assets/shot-amber-light.jpg" alt="琥珀主题"></td>
+    <td><img src="site/assets/shot-zinc-dark.jpg" alt="锌莓主题"></td>
+    <td><img src="site/assets/shot-pixel-light.jpg" alt="像素主题"></td>
+  </tr>
+</table>
+
+## 安装
+
+从 [Releases](https://github.com/fieai/Folmi/releases/latest) 或[官网](https://folmi.mindmesh.site)下载 DMG，把 Folmi 拖进「应用程序」。
+
+> [!NOTE]
+> 内测版已用 Developer ID 签名，但还没有完成 Apple 公证。第一次打开如果被系统阻止，请到「系统设置 → 隐私与安全性」点「仍要打开」。下载后可以用 `shasum -a 256` 对照 Release 里的校验值。
+
+接入 agent：打开项目后，在命令面板（<kbd>⌘</kbd> <kbd>K</kbd>）里选「接入 agent」，按提示接入 Claude Code 或 Codex 的钩子和 MCP。
 
 ## 从源码构建
 
-需要 Xcode 16 或更高版本（Swift 6 工具链）。
+需要 macOS 14+、Xcode 16 或更高版本（Swift 6 工具链）。
 
 ```sh
+git clone https://github.com/fieai/Folmi.git
+cd Folmi
 swift build
 ./scripts/test.sh
 ```
 
-打包成 App 并用演示仓库试用（使用隔离配置，不会碰你的真实项目和个人设置）：
+打包成 App，并用演示仓库试用（使用隔离的配置，不会碰你的真实项目和设置）：
 
 ```sh
 ./scripts/build-app.sh --editor-preview
 open -n dist/Folmi-EditorPreview.app --args --demo --workspace-file /tmp/Folmi-Demo/workspace.json
 ```
 
-`./scripts/build-app.sh` 不带参数时生成 `dist/Folmi.app`。有 Apple Development 证书时用它签名，否则做 ad-hoc 签名，只适合在本机运行。
+`./scripts/build-app.sh` 不带参数时生成 `dist/Folmi.app`。有 Apple Development 证书时用它签名，否则做 ad-hoc 签名，只能在本机运行。
 
-交付前完整检查（编译、测试、性能门槛、打包）：
+提交代码前建议跑一遍完整检查，包括编译、测试、性能门槛和打包：
 
 ```sh
-./scripts/check.sh            # SKIP_PERF=1 可跳过性能门槛
+./scripts/check.sh    # SKIP_PERF=1 跳过性能门槛
 ```
 
-签名、公证和发布用的脚本没有放进公开仓库。
+## 项目结构
 
-## 目录
+```text
+Sources/
+├── Folmi/        App 本体（SwiftUI + AppKit）
+├── FolmiCore/    Git 操作、差异、AI 事件、MCP 服务，不依赖界面
+└── FolmiHook/    folmi-hook：Claude Code / Codex 的钩子程序和 MCP 入口
+Tests/            FolmiCoreTests、FolmiTests
+scripts/          构建、测试、性能、品牌资源导出
+site/             官网页面
+docs/             产品方向、设计说明、品牌资源
+```
 
-| 路径 | 内容 |
-| --- | --- |
-| `Sources/Folmi` | App 本体（SwiftUI / AppKit） |
-| `Sources/FolmiCore` | Git 操作、差异、AI 事件、MCP 服务，不依赖界面 |
-| `Sources/FolmiHook` | `folmi-hook`：Claude Code / Codex 的钩子程序和 MCP 服务入口 |
-| `Tests/` | `FolmiCoreTests` 与 `FolmiTests` |
-| `scripts/` | 构建、测试、性能、打包、发布脚本 |
-| `site/` | 宣传页 |
-| `docs/` | 产品方向、设计说明、品牌资源、验收记录 |
+## 数据与隐私
 
-## 数据放在哪里
+- Folmi 自己不上传任何东西。只有用到解释改动、写提交说明这类 AI 功能时，相关内容才会发给你配置的模型，或者本机的 `claude`。
+- 个人设置放在 `~/Library/Application Support/Folmi/`，目录权限 0700，文件权限 0600。API Key 存在系统钥匙串里。
+- AI 的改动记录、审阅评论和你的决定放在各项目的 `.git/folmi/` 里，不会进入提交。
+- 钩子和 MCP 只在你点「接入」并确认后才写入配置。
 
-- 个人设置：`~/Library/Application Support/Folmi/`（目录权限 0700，文件 0600）。
-- AI 的改动记录、审阅评论和决定：放在各项目的 `.git/folmi/` 里，不进提交。
-- 钩子只在你点「接入」时写进项目的 `.claude/settings.local.json` 或 `.codex/hooks.json`。MCP 也只在你确认后才注册到 Claude Code、Claude 桌面 App 或 Codex 的配置里。
-- AI 的 API Key 存在系统钥匙串里。只有你配置了模型服务时，才会向该服务发请求。
+## 参与
 
-## 第三方组件
+欢迎提 [Issue](https://github.com/fieai/Folmi/issues) 和 Pull Request。改动前可以先读一下 [产品方向](docs/direction.md)，里面写了哪些功能会做、哪些不做，以及原因。
 
-| 组件 | 用途 | 许可 |
-| --- | --- | --- |
-| [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) 1.19.0 | 内嵌终端 | MIT |
-| [KaTeX](https://katex.org) | Markdown 公式 | MIT，见 [licenses/](licenses/) |
-| [Mermaid](https://mermaid.js.org) | Markdown 图表 | MIT，见 [licenses/](licenses/) |
-| [Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font) | 像素主题字体 | OFL-1.1，见 [licenses/FusionPixel](licenses/FusionPixel) |
-| One Dark Pro 配色 | 编辑器主题 | MIT，见 [licenses/](licenses/) |
+## 致谢
 
-KaTeX、Mermaid 和字体都打包在 App 里，运行时不联网加载。
+- [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm)：内嵌终端（MIT）
+- [KaTeX](https://katex.org) 与 [Mermaid](https://mermaid.js.org)：Markdown 公式与图表（MIT）
+- [Fusion Pixel](https://github.com/TakWolf/fusion-pixel-font)：像素主题字体（OFL-1.1）
+- [One Dark Pro](https://github.com/Binaryify/OneDark-Pro)：编辑器配色（MIT）
+
+第三方许可全文见 [licenses/](licenses/)。KaTeX、Mermaid 和字体都打包在 App 里，运行时不联网加载。
 
 ## 许可证
 
-[MIT](LICENSE)
+[MIT](LICENSE) © fieai
