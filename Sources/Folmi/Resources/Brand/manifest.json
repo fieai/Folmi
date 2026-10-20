@@ -1,0 +1,413 @@
+{
+  "assets" : [
+    {
+      "alpha" : true,
+      "height" : 1024,
+      "path" : "AppIcon-1024.png",
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "Application icon master export and preview",
+      "width" : 1024
+    },
+    {
+      "alpha" : true,
+      "height" : 128,
+      "path" : "AppIcon.appiconset/icon_128x128.png",
+      "points" : 128,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 128
+    },
+    {
+      "alpha" : true,
+      "height" : 256,
+      "path" : "AppIcon.appiconset/icon_128x128@2x.png",
+      "points" : 128,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 256
+    },
+    {
+      "alpha" : true,
+      "height" : 16,
+      "path" : "AppIcon.appiconset/icon_16x16.png",
+      "points" : 16,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 16
+    },
+    {
+      "alpha" : true,
+      "height" : 32,
+      "path" : "AppIcon.appiconset/icon_16x16@2x.png",
+      "points" : 16,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 32
+    },
+    {
+      "alpha" : true,
+      "height" : 256,
+      "path" : "AppIcon.appiconset/icon_256x256.png",
+      "points" : 256,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 256
+    },
+    {
+      "alpha" : true,
+      "height" : 512,
+      "path" : "AppIcon.appiconset/icon_256x256@2x.png",
+      "points" : 256,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 512
+    },
+    {
+      "alpha" : true,
+      "height" : 32,
+      "path" : "AppIcon.appiconset/icon_32x32.png",
+      "points" : 32,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 32
+    },
+    {
+      "alpha" : true,
+      "height" : 64,
+      "path" : "AppIcon.appiconset/icon_32x32@2x.png",
+      "points" : 32,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 64
+    },
+    {
+      "alpha" : true,
+      "height" : 512,
+      "path" : "AppIcon.appiconset/icon_512x512.png",
+      "points" : 512,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 512
+    },
+    {
+      "alpha" : true,
+      "height" : 1024,
+      "path" : "AppIcon.appiconset/icon_512x512@2x.png",
+      "points" : 512,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 1024
+    },
+    {
+      "alpha" : true,
+      "height" : 128,
+      "path" : "AppIcon.iconset/icon_128x128.png",
+      "points" : 128,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 128
+    },
+    {
+      "alpha" : true,
+      "height" : 256,
+      "path" : "AppIcon.iconset/icon_128x128@2x.png",
+      "points" : 128,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 256
+    },
+    {
+      "alpha" : true,
+      "height" : 16,
+      "path" : "AppIcon.iconset/icon_16x16.png",
+      "points" : 16,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 16
+    },
+    {
+      "alpha" : true,
+      "height" : 32,
+      "path" : "AppIcon.iconset/icon_16x16@2x.png",
+      "points" : 16,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 32
+    },
+    {
+      "alpha" : true,
+      "height" : 256,
+      "path" : "AppIcon.iconset/icon_256x256.png",
+      "points" : 256,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 256
+    },
+    {
+      "alpha" : true,
+      "height" : 512,
+      "path" : "AppIcon.iconset/icon_256x256@2x.png",
+      "points" : 256,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 512
+    },
+    {
+      "alpha" : true,
+      "height" : 32,
+      "path" : "AppIcon.iconset/icon_32x32.png",
+      "points" : 32,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 32
+    },
+    {
+      "alpha" : true,
+      "height" : 64,
+      "path" : "AppIcon.iconset/icon_32x32@2x.png",
+      "points" : 32,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 64
+    },
+    {
+      "alpha" : true,
+      "height" : 512,
+      "path" : "AppIcon.iconset/icon_512x512.png",
+      "points" : 512,
+      "scale" : 1,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 512
+    },
+    {
+      "alpha" : true,
+      "height" : 1024,
+      "path" : "AppIcon.iconset/icon_512x512@2x.png",
+      "points" : 512,
+      "scale" : 2,
+      "source" : "Source/folmi-app-icon-master.png",
+      "usage" : "macOS application icon",
+      "width" : 1024
+    },
+    {
+      "alpha" : true,
+      "height" : 1024,
+      "path" : "Mascot/folmi-mascot-master.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Generated master: simplified editable vector redraw, not an exact imagegen cutout",
+      "width" : 1024
+    },
+    {
+      "alpha" : true,
+      "height" : 16,
+      "path" : "MenuBar/folmi-16Template.png",
+      "points" : 16,
+      "scale" : 1,
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Reserved monochrome template; set NSImage.isTemplate; existing Git status icon unchanged",
+      "width" : 16
+    },
+    {
+      "alpha" : true,
+      "height" : 32,
+      "path" : "MenuBar/folmi-16Template@2x.png",
+      "points" : 16,
+      "scale" : 2,
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Reserved monochrome template; set NSImage.isTemplate; existing Git status icon unchanged",
+      "width" : 32
+    },
+    {
+      "alpha" : true,
+      "height" : 18,
+      "path" : "MenuBar/folmi-18Template.png",
+      "points" : 18,
+      "scale" : 1,
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Reserved monochrome template; set NSImage.isTemplate; existing Git status icon unchanged",
+      "width" : 18
+    },
+    {
+      "alpha" : true,
+      "height" : 36,
+      "path" : "MenuBar/folmi-18Template@2x.png",
+      "points" : 18,
+      "scale" : 2,
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Reserved monochrome template; set NSImage.isTemplate; existing Git status icon unchanged",
+      "width" : 36
+    },
+    {
+      "alpha" : true,
+      "height" : 20,
+      "path" : "MenuBar/folmi-20Template.png",
+      "points" : 20,
+      "scale" : 1,
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Reserved monochrome template; set NSImage.isTemplate; existing Git status icon unchanged",
+      "width" : 20
+    },
+    {
+      "alpha" : true,
+      "height" : 40,
+      "path" : "MenuBar/folmi-20Template@2x.png",
+      "points" : 20,
+      "scale" : 2,
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Reserved monochrome template; set NSImage.isTemplate; existing Git status icon unchanged",
+      "width" : 40
+    },
+    {
+      "alpha" : true,
+      "height" : 24,
+      "path" : "MenuBar/folmi-24Template.png",
+      "points" : 24,
+      "scale" : 1,
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Reserved monochrome template; set NSImage.isTemplate; existing Git status icon unchanged",
+      "width" : 24
+    },
+    {
+      "alpha" : true,
+      "height" : 48,
+      "path" : "MenuBar/folmi-24Template@2x.png",
+      "points" : 24,
+      "scale" : 2,
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Reserved monochrome template; set NSImage.isTemplate; existing Git status icon unchanged",
+      "width" : 48
+    },
+    {
+      "alpha" : true,
+      "height" : 1024,
+      "path" : "UI/folmi-mascot-1024.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 1024
+    },
+    {
+      "alpha" : true,
+      "height" : 128,
+      "path" : "UI/folmi-mascot-128.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 128
+    },
+    {
+      "alpha" : true,
+      "height" : 16,
+      "path" : "UI/folmi-mascot-16.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 16
+    },
+    {
+      "alpha" : true,
+      "height" : 20,
+      "path" : "UI/folmi-mascot-20.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 20
+    },
+    {
+      "alpha" : true,
+      "height" : 24,
+      "path" : "UI/folmi-mascot-24.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 24
+    },
+    {
+      "alpha" : true,
+      "height" : 256,
+      "path" : "UI/folmi-mascot-256.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 256
+    },
+    {
+      "alpha" : true,
+      "height" : 32,
+      "path" : "UI/folmi-mascot-32.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 32
+    },
+    {
+      "alpha" : true,
+      "height" : 48,
+      "path" : "UI/folmi-mascot-48.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 48
+    },
+    {
+      "alpha" : true,
+      "height" : 512,
+      "path" : "UI/folmi-mascot-512.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 512
+    },
+    {
+      "alpha" : true,
+      "height" : 64,
+      "path" : "UI/folmi-mascot-64.png",
+      "source" : "Mascot/folmi-mascot.svg",
+      "usage" : "Transparent UI character rendered from simplified editable SVG redraw; not an exact imagegen cutout",
+      "width" : 64
+    }
+  ],
+  "generator" : "swift scripts/export-brand-assets.swift",
+  "icns" : {
+    "path" : "Folmi.icns",
+    "representations" : 10,
+    "roundTripValidated" : true
+  },
+  "notes" : [
+    "Application icons preserve the approved source raster artwork and alpha without cleanup or recoloring.",
+    "UI PNGs and generated mascot master render the editable layered SVG using the native macOS SVG renderer.",
+    "The UI mascot is a simplified vector redraw; it is not an exact imagegen cutout.",
+    "Menu bar artwork extracts canonical body, tail and eyes from the same SVG and removes details; reserved for future use.",
+    "AppIcon.appiconset is for future Xcode adoption; current SwiftPM packaging uses Folmi.icns."
+  ],
+  "schemaVersion" : 2,
+  "sources" : [
+    {
+      "alpha" : true,
+      "format" : "PNG",
+      "height" : 1254,
+      "path" : "Source/folmi-app-icon-master.png",
+      "sha256" : "dedb044b92bf83308571beebc5c9b0b69ccdaf7e250a70c999a3d458cb72b9ab",
+      "width" : 1254
+    },
+    {
+      "alpha" : true,
+      "artwork" : "Simplified editable layered vector redraw of approved D3; not an exact imagegen cutout",
+      "format" : "SVG",
+      "height" : 512,
+      "path" : "Mascot/folmi-mascot.svg",
+      "sha256" : "9fdfa9a52ab36cc2e077d20e8497321ceb48157cee06880c9ffbefcd77ff0cbf",
+      "width" : 512
+    }
+  ]
+}

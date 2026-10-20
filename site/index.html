@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Folmi · AI 写得太快，你也能跟上</title>
+<meta name="description" content="AI 写得太快，人跟不上。Folmi 把 AI 的改动摊开给你：先看要紧的，看不懂的让它说人话，一处一处决定留不留。">
+<meta property="og:title" content="Folmi · AI 写得太快，你也能跟上">
+<meta property="og:description" content="一处一处看 AI 的改动：⏎ 收下，⌫ 丢弃，后悔了随时退回。适用于 Claude Code、Codex 等任何 AI。">
+<meta property="og:image" content="assets/shot-amber-light.jpg">
+<link rel="icon" href="assets/icon-256.png">
+<script>
+// Pick the skin before first paint: saved choice, else 琥珀 following the system.
+(function () {
+  var skin = 'amber', theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  try { skin = localStorage.getItem('folmi-skin') || skin; theme = localStorage.getItem('folmi-theme') || theme } catch (e) {}
+  if (skin === 'terrazzo') skin = 'graphite'; // 水磨石 was renamed 石墨
+  document.documentElement.dataset.skin = skin; document.documentElement.dataset.theme = theme;
+})();
+</script>
+<style>
+/* Four skins from the app's ThemeCatalog (琥珀 / 锌莓 / 像素 / 石墨), each light and dark.
+   <html data-skin data-theme> is set by the inline script before paint; without script it is 琥珀 following the system. */
+:root {
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --r: 16px; --r-btn: 12px; --r-sm: 9px; --bw: 1px; --card-shadow: none;
+  --canvas: #F0EFEC; --card: #FFFEFA; --header: #F7F5EF; --line: rgba(34,36,41,.10); --line-strong: rgba(34,36,41,.18);
+  --fg: #222429; --fg2: #67665F; --fg3: #8A887F;
+  --accent: #E9AA47; --accent-ink: #875710; --accent-soft: rgba(233,170,71,.16); --on-accent: #222429;
+  --added: #1F8A5B; --added-bg: rgba(31,138,91,.10); --removed: #C2413A; --removed-bg: rgba(194,65,58,.09);
+  --shadow: 0 30px 80px -30px rgba(34,36,41,.35), 0 2px 8px rgba(34,36,41,.06);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) {
+  --canvas: #181A1E; --card: #222429; --header: #292B30; --line: rgba(242,232,213,.09); --line-strong: rgba(242,232,213,.18);
+  --fg: #EEEDE8; --fg2: #ABA9A3; --fg3: #7A7974; --accent-ink: #E9AA47; --accent-soft: rgba(233,170,71,.12);
+  --added: #5CC28E; --added-bg: rgba(92,194,142,.10); --removed: #EF7D74; --removed-bg: rgba(239,125,116,.09);
+  --shadow: 0 30px 80px -30px rgba(0,0,0,.7), 0 2px 8px rgba(0,0,0,.3); color-scheme: dark } }
+:root[data-theme="dark"] { color-scheme: dark; --shadow: 0 30px 80px -30px rgba(0,0,0,.7), 0 2px 8px rgba(0,0,0,.3) }
+
+/* 琥珀 */
+:root[data-skin="amber"][data-theme="dark"] {
+  --canvas: #181A1E; --card: #222429; --header: #292B30; --line: rgba(242,232,213,.09); --line-strong: rgba(242,232,213,.18);
+  --fg: #EEEDE8; --fg2: #ABA9A3; --fg3: #7A7974; --accent-ink: #E9AA47; --accent-soft: rgba(233,170,71,.12);
+  --added: #5CC28E; --added-bg: rgba(92,194,142,.10); --removed: #EF7D74; --removed-bg: rgba(239,125,116,.09) }
+
+/* 锌莓: tight, thin lines, small radii */
+:root[data-skin="zinc"] { --r: 10px; --r-btn: 8px; --r-sm: 6px;
+  --canvas: #F0F0F1; --card: #FFFFFF; --header: #F7F7F8; --line: rgba(0,0,0,.09); --line-strong: rgba(0,0,0,.16);
+  --fg: #18181B; --fg2: #5F5F68; --fg3: #94949C;
+  --accent: #B8326A; --accent-ink: #B8326A; --accent-soft: rgba(184,50,106,.10); --on-accent: #FFFFFF;
+  --added: #1E8556; --added-bg: rgba(30,133,86,.09); --removed: #C4502A; --removed-bg: rgba(196,80,42,.08);
+  --shadow: 0 24px 60px -30px rgba(0,0,0,.30), 0 1px 3px rgba(0,0,0,.06) }
+:root[data-skin="zinc"][data-theme="dark"] {
+  --shadow: 0 30px 80px -30px rgba(0,0,0,.7), 0 2px 8px rgba(0,0,0,.3);
+  --canvas: #0F0F11; --card: #19191C; --header: #1F1F23; --line: rgba(255,255,255,.08); --line-strong: rgba(255,255,255,.15);
+  --fg: #ECECEE; --fg2: #A1A1AA; --fg3: #6B6B74;
+  --accent: #F06A9E; --accent-ink: #F06A9E; --accent-soft: rgba(240,106,158,.12); --on-accent: #2A0A17;
+  --added: #5FC48D; --added-bg: rgba(95,196,141,.10); --removed: #F0956C; --removed-bg: rgba(240,149,108,.09) }
+
+/* 像素: square corners, hard 2px ink edges, offset shadows, pixel type */
+@font-face { font-family: "Folmi Pixel"; src: url(assets/pixel.otf) format("opentype"); font-display: swap }
+:root[data-skin="pixel"] { --r: 0; --r-btn: 0; --r-sm: 0; --bw: 2px;
+  --ui: "Folmi Pixel", -apple-system, "PingFang SC", sans-serif; --display: var(--ui); --mono: "Folmi Pixel", ui-monospace, monospace;
+  --canvas: #E6EAF0; --card: #FFFFFF; --header: #F3F5F8; --line: #1A1F2E; --line-strong: #1A1F2E;
+  --fg: #1A1F2E; --fg2: #3A4256; --fg3: #6B7489;
+  --accent: #1F6FEB; --accent-ink: #1F5FCC; --accent-soft: #D6E6FF; --on-accent: #FFFFFF;
+  --added: #1E9E3A; --added-bg: rgba(30,158,58,.12); --removed: #D41E25; --removed-bg: rgba(212,30,37,.10);
+  --shadow: 8px 8px 0 #1A1F2E; --card-shadow: 4px 4px 0 #1A1F2E }
+:root[data-skin="pixel"][data-theme="dark"] {
+  --canvas: #0B0D14; --card: #151926; --header: #1C2233; --line: #3B4E86; --line-strong: #3B4E86;
+  --fg: #F2F2F2; --fg2: #A9B4CC; --fg3: #6B7899;
+  --accent: #4C9BFF; --accent-ink: #6CB4FF; --accent-soft: #22345E; --on-accent: #0B0D14;
+  --added: #3FCF5E; --added-bg: rgba(63,207,94,.12); --removed: #FF5A4F; --removed-bg: rgba(255,90,79,.12);
+  --shadow: 8px 8px 0 #3B4E86; --card-shadow: 4px 4px 0 #3B4E86 }
+
+/* 石墨: concentric rounded corners, no strokes, ink and lime instead of a hue; color only in the stone grains */
+:root[data-skin="graphite"] { --r: 22px; --r-btn: 14px; --r-sm: 11px;
+  --canvas: #E7E9EB; --card: #F9FAFA; --header: #F2F3F4; --line: rgba(35,39,45,.09); --line-strong: rgba(35,39,45,.16);
+  --fg: #15181C; --fg2: #575D66; --fg3: #5F656E;
+  --accent: #32363D; --accent-ink: #226F6B; --accent-soft: rgba(50,54,61,.08); --on-accent: #FFFFFF;
+  --added: #18764D; --added-bg: rgba(24,118,77,.09); --removed: #C0392F; --removed-bg: rgba(192,57,47,.08);
+  --stone-top: #3A3E45; --stone-bottom: #1B1D21; --stone-text: #F4F5F6;
+  --speck-a: #6FD3CA; --speck-b: #E2A9C0;
+  --card-shadow: inset 0 1px 0 rgba(255,255,255,.8), 0 14px 32px -22px rgba(35,39,45,.45) }
+:root[data-skin="graphite"][data-theme="dark"] {
+  --canvas: #1A1B1D; --card: #25272A; --header: #2A2C2F; --line: rgba(255,255,255,.10); --line-strong: rgba(255,255,255,.18);
+  --fg: #E8E8E6; --fg2: #B3B4B1; --fg3: #9C9D9A;
+  --accent: #DDDCD8; --accent-ink: #74C7BF; --accent-soft: rgba(221,220,216,.10); --on-accent: #1D1F22;
+  --added: #8FC79F; --added-bg: rgba(143,199,159,.10); --removed: #E89B90; --removed-bg: rgba(232,155,144,.09);
+  --stone-top: #E6E5E1; --stone-bottom: #D3D2CD; --stone-text: #23262A;
+  --speck-a: #2F9A90; --speck-b: #C0718F;
+  --card-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 14px 32px -22px rgba(0,0,0,.7) }
+
+* { box-sizing: border-box }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; overflow-x: clip }
+body { margin: 0; background: var(--canvas); color: var(--fg); font: 16px/1.7 var(--ui); -webkit-font-smoothing: antialiased; overflow-x: clip }
+a { color: inherit }
+img { display: block; max-width: 100% }
+kbd { font: 600 .85em var(--ui); display: inline-block; min-width: 1.9em; padding: .05em .45em; text-align: center;
+  border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: var(--r-sm); background: var(--card); color: var(--fg) }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px }
+@media (max-width: 600px) { .wrap { padding: 0 16px } }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--r-sm) }
+
+/* Nav */
+nav { position: sticky; top: 0; z-index: 10; backdrop-filter: saturate(1.6) blur(16px); -webkit-backdrop-filter: saturate(1.6) blur(16px);
+  background: color-mix(in srgb, var(--canvas) 78%, transparent); border-bottom: 1px solid transparent; transition: border-color .2s }
+nav.scrolled { border-bottom-color: var(--line) }
+nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; text-decoration: none; letter-spacing: .01em }
+.brand img { width: 30px; height: 30px }
+nav ul { display: flex; gap: 22px; list-style: none; margin: 0; padding: 0; font-size: 14px; color: var(--fg2) }
+nav ul a { text-decoration: none } nav ul a:hover { color: var(--fg) }
+nav .cta { margin-left: auto }
+@media (max-width: 720px) { nav ul { display: none } }
+
+.btn { display: inline-flex; align-items: center; gap: 8px; font: 600 15px var(--ui); text-decoration: none; border-radius: var(--r-btn);
+  padding: 12px 20px; border: 1px solid transparent; cursor: pointer; transition: transform .15s, box-shadow .15s, background .15s }
+.btn:active { transform: scale(.97) }
+.btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 6px 18px -8px rgba(233,170,71,.8) }
+.btn-primary:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 10px 24px -8px rgba(233,170,71,.9) }
+.btn-ghost { border-color: var(--line-strong); color: var(--fg) } .btn-ghost:hover { background: var(--card) }
+.btn-sm { padding: 7px 14px; font-size: 13.5px; border-radius: var(--r-sm) }
+
+/* Hero */
+.hero { padding: 88px 0 0; text-align: center; position: relative }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg2); background: var(--card);
+  border: var(--bw) solid var(--line); border-radius: var(--r); padding: 4px 12px 4px 6px }
+.eyebrow b { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; border-radius: var(--r); padding: 1px 8px; font-size: 12px }
+h1 { font: 700 clamp(40px, 7vw, 76px)/1.08 var(--display); letter-spacing: -.02em; margin: 22px 0 0; text-wrap: balance }
+h1 em { font-style: normal; color: var(--accent); position: relative }
+.lede { font-size: clamp(17px, 2.2vw, 20px); color: var(--fg2); max-width: 36em; margin: 22px auto 0; text-wrap: pretty }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-top: 34px }
+.hero-meta { font-size: 13px; color: var(--fg3); margin-top: 14px }
+
+.shot { position: relative; margin: 64px auto 0; max-width: 1080px }
+.shot .frame { border-radius: var(--r); overflow: hidden; box-shadow: var(--shadow); border: var(--bw) solid var(--line); background: var(--card) }
+.shot .frame img { width: 100%; height: auto; aspect-ratio: 16 / 10 }
+.shot .mascot { position: absolute; height: auto; aspect-ratio: 1; width: clamp(84px, 13vw, 150px); right: 3%; top: 0; transform: translateY(-60%); pointer-events: none;
+  animation: peek 4.5s ease-in-out infinite }
+@keyframes peek { 0%, 100% { transform: translateY(-60%) rotate(0) } 50% { transform: translateY(-64%) rotate(-3deg) } }
+.glow { position: absolute; inset: 18% 0 -8%; background: radial-gradient(60% 60% at 50% 40%, rgba(233,170,71,.28), transparent 70%); filter: blur(30px); z-index: -1 }
+
+/* Sections */
+section { padding: 120px 0 0; scroll-margin-top: 20px }
+.kicker { font-size: 13px; font-weight: 600; letter-spacing: .1em; color: var(--accent-ink) }
+h2 { font: 700 clamp(30px, 4.4vw, 46px)/1.18 var(--display); letter-spacing: -.015em; margin: 10px 0 0; text-wrap: balance }
+.sub { color: var(--fg2); font-size: 18px; max-width: 38em; margin: 16px 0 0; text-wrap: pretty }
+.center { text-align: center } .center .sub { margin-left: auto; margin-right: auto }
+
+/* The loop */
+.loop { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 48px; counter-reset: step }
+.loop li { list-style: none; background: var(--card); border: var(--bw) solid var(--line); border-radius: var(--r); padding: 22px 20px; position: relative }
+.loop li::before { counter-increment: step; content: counter(step); font: 700 13px var(--mono); color: var(--accent-ink);
+  background: var(--accent-soft); border-radius: var(--r-sm); width: 26px; height: 26px; display: grid; place-items: center }
+.loop h3 { margin: 14px 0 4px; font-size: 18px }
+.loop p { margin: 0; color: var(--fg2); font-size: 14.5px; line-height: 1.6 }
+.loop ul.keys { padding: 0; margin: 8px 0 0; display: grid; gap: 6px; font-size: 14px; color: var(--fg2) }
+.loop ul.keys li { all: unset; display: flex; gap: 8px; align-items: center }
+.loop ul.keys li::before { content: none }
+@media (max-width: 900px) { .loop { grid-template-columns: repeat(2, 1fr) } }
+@media (max-width: 520px) { .loop { grid-template-columns: 1fr } }
+
+/* Interactive review demo */
+.demo { display: grid; grid-template-columns: 1fr 1.25fr; gap: 56px; align-items: center }
+@media (max-width: 900px) { .demo { grid-template-columns: 1fr; gap: 32px } }
+.demo-copy .keys-hint { display: grid; gap: 12px; margin-top: 28px; padding: 0; list-style: none }
+.demo-copy .keys-hint li { display: flex; gap: 12px; align-items: baseline; color: var(--fg2) }
+.demo-copy .keys-hint kbd { flex: none }
+.review { background: var(--card); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); overflow: hidden; font-size: 13px }
+.review-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--header); border-bottom: 1px solid var(--line) }
+.review-head .title { font-weight: 600 }
+.review-head .progress { margin-left: auto; display: flex; align-items: center; gap: 10px; color: var(--fg3); font: 12px var(--mono) }
+.bar { width: 90px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .35s cubic-bezier(.2,.8,.2,1) }
+.hunks { position: relative; height: 236px; overflow: hidden }
+.hunk { position: absolute; inset: 0; padding: 14px 16px; transition: transform .38s cubic-bezier(.2,.8,.2,1), opacity .3s }
+.hunk.out-accept { transform: translateY(-40px); opacity: 0 }
+.hunk.out-reject { transform: translateX(60px); opacity: 0 }
+.hunk.in { transform: translateY(40px); opacity: 0 }
+.hunk .file { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 10px }
+.hunk .file span { font: 11.5px var(--mono); color: var(--fg3); font-weight: 400 }
+.code { font: 12.5px/1.75 var(--mono); border: var(--bw) solid var(--line); border-radius: var(--r-sm); overflow: hidden }
+.code div { padding: 0 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis }
+.code .ctx { color: var(--fg2) }
+.code .add { background: var(--added-bg); color: var(--fg) } .code .add::before { content: "+ "; color: var(--added) }
+.code .del { background: var(--removed-bg); color: var(--fg2); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--removed) 50%, transparent) }
+.code .del::before { content: "− "; color: var(--removed) }
+.code .ctx::before { content: "  " }
+.review-foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--header) }
+.review-foot button { font: 500 13px var(--ui); color: var(--fg); background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  padding: 6px 12px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center }
+.review-foot button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600 }
+.review-foot button:active { transform: scale(.96) }
+.review-foot button kbd { font-size: 11px; min-width: 0; padding: 0 5px; border-bottom-width: 1px; background: transparent; border-color: currentColor; opacity: .55 }
+.toast { position: absolute; left: 50%; bottom: 14px; transform: translate(-50%, 8px); opacity: 0; transition: .25s; pointer-events: none;
+  background: var(--fg); color: var(--canvas); font-size: 12.5px; padding: 6px 12px; border-radius: var(--r); white-space: nowrap }
+.toast.show { opacity: 1; transform: translate(-50%, 0) }
+.done { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 6px; opacity: 0; pointer-events: none; transition: opacity .4s }
+.done.show { opacity: 1; pointer-events: auto }
+.done img { width: 72px; margin: 0 auto 6px }
+.done b { font-size: 18px } .done span { color: var(--fg2) }
+.done button { margin-top: 10px; justify-self: center }
+
+/* Feature grid */
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 48px }
+@media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr) } }
+@media (max-width: 560px) { .grid { grid-template-columns: 1fr } }
+.feat { background: var(--card); border: var(--bw) solid var(--line); border-radius: var(--r); padding: 24px 22px }
+.feat .ic { width: 38px; height: 38px; border-radius: var(--r-btn); display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-ink) }
+.feat .ic svg { width: 20px; height: 20px }
+.feat h3 { font-size: 18px; margin: 16px 0 6px }
+.feat p { margin: 0; color: var(--fg2); font-size: 14.5px; line-height: 1.65 }
+.feat.wide { grid-column: span 2; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: center }
+@media (max-width: 560px) { .feat.wide { grid-column: auto; grid-template-columns: 1fr } }
+.capsule { display: inline-flex; align-items: center; gap: 8px; background: var(--header); border: var(--bw) solid var(--line); border-radius: var(--r); padding: 6px 12px 6px 8px; font-size: 13px }
+.capsule .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); animation: pulse 1.6s infinite }
+@keyframes pulse { 50% { box-shadow: 0 0 0 7px transparent } }
+.capsule em { font-style: normal; color: var(--fg3); font-family: var(--mono); font-size: 12px }
+.mini-list { display: grid; gap: 8px; font-size: 13px }
+.mini-list div { display: flex; gap: 8px; align-items: center; color: var(--fg2) }
+.mini-list code { font: 12px var(--mono); color: var(--fg) }
+
+.feat.full { grid-column: 1 / -1; display: flex; gap: 18px; align-items: center }
+.feat.full h3 { margin-top: 0 }
+
+/* Themes */
+.themes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 48px }
+@media (max-width: 900px) { .themes { grid-template-columns: repeat(2, 1fr) } }
+.theme { border-radius: var(--r); overflow: hidden; border: var(--bw) solid var(--line); background: var(--card) }
+.swatch { height: 132px; position: relative; padding: 14px; display: flex; gap: 8px }
+.swatch .pane { flex: 1; border-radius: var(--r-sm); padding: 10px; display: grid; gap: 6px; align-content: start }
+.swatch .pane i { display: block; height: 6px; border-radius: 3px; opacity: .9 }
+.swatch .side { flex: .6 }
+.theme figcaption { padding: 14px 16px 16px }
+.theme figcaption b { font-size: 16px } .theme figcaption p { margin: 4px 0 0; font-size: 13.5px; color: var(--fg2); line-height: 1.55 }
+.t-pixel .pane { border-radius: 0; box-shadow: 3px 3px 0 #0B0D14 } .t-pixel .swatch { font-family: var(--mono) }
+
+/* Not-list */
+.nots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 40px }
+@media (max-width: 800px) { .nots { grid-template-columns: 1fr } }
+.nots div { border-top: 2px solid var(--fg); padding-top: 16px }
+.nots b { font-size: 18px } .nots p { margin: 6px 0 0; color: var(--fg2); font-size: 15px }
+
+/* Download */
+.download { margin-top: 120px; background: var(--fg); color: var(--canvas); border: var(--bw) solid var(--line); box-shadow: var(--card-shadow); border-radius: var(--r); padding: 64px 48px; display: grid;
+  grid-template-columns: 1.4fr 1fr; gap: 40px; align-items: center; position: relative; overflow: hidden }
+.download h2 { color: var(--canvas) } .download .sub { color: color-mix(in srgb, var(--canvas) 72%, var(--fg)) }
+.download .btn-ghost { color: var(--canvas); border-color: color-mix(in srgb, var(--canvas) 30%, transparent) } .download .btn-ghost:hover { background: color-mix(in srgb, var(--canvas) 8%, transparent) }
+.download .req { margin-top: 18px; font-size: 13.5px; color: color-mix(in srgb, var(--canvas) 55%, var(--fg)); display: flex; flex-wrap: wrap; gap: 6px 18px }
+.download .big { width: min(260px, 70%); justify-self: center; filter: drop-shadow(0 30px 40px rgba(0,0,0,.4)) }
+@media (max-width: 800px) { .download { grid-template-columns: 1fr; padding: 44px 24px; border-radius: var(--r) } .download .big { order: -1; width: 140px } }
+
+/* FAQ */
+.faq { max-width: 760px; margin: 40px auto 0 }
+details { border-bottom: 1px solid var(--line); padding: 18px 0 }
+summary { cursor: pointer; font-weight: 600; font-size: 17px; list-style: none; display: flex; justify-content: space-between; gap: 16px }
+summary::-webkit-details-marker { display: none }
+summary::after { content: "+"; color: var(--fg3); font-weight: 400; font-size: 22px; line-height: 1; transition: transform .2s }
+details[open] summary::after { transform: rotate(45deg) }
+details p { color: var(--fg2); margin: 10px 0 0; font-size: 15.5px }
+
+footer { margin-top: 120px; border-top: 1px solid var(--line); padding: 28px 0 44px; color: var(--fg3); font-size: 13.5px }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center }
+footer .brand { font-size: 15px; color: var(--fg) } footer .brand img { width: 22px; height: 22px }
+footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-decoration: none } footer a:hover { color: var(--fg) }
+
+/* Problem cards */
+.pains { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 48px }
+@media (max-width: 860px) { .pains { grid-template-columns: 1fr } }
+.pain { background: var(--card); border: var(--bw) solid var(--line); border-radius: var(--r); padding: 26px 24px }
+.pain q { display: block; font: 600 21px/1.4 var(--display); quotes: "「" "」"; color: var(--fg) }
+.pain p { margin: 18px 0 0; padding-top: 16px; border-top: 1px dashed var(--line-strong); color: var(--fg2); font-size: 15px }
+.pain p b { color: var(--accent-ink) }
+
+/* Growth */
+.grow { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 48px }
+@media (max-width: 860px) { .grow { grid-template-columns: 1fr } }
+.grow .feat { display: flex; flex-direction: column }
+.grow h3 { margin-top: 0 }
+.ticks { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; color: var(--fg2); font-size: 15px }
+.ticks li { padding-left: 22px; position: relative }
+.ticks li::before { content: ""; position: absolute; left: 4px; top: .7em; width: 7px; height: 7px; border-radius: 50%; background: var(--accent) }
+.proposal { margin-top: auto; padding-top: 22px }
+.proposal > * { }
+.proposal { display: grid; gap: 8px }
+.proposal .why { font-size: 13px; color: var(--fg3) }
+.proposal .rule { font: 13px/1.6 var(--mono); background: var(--header); border: var(--bw) solid var(--line); border-radius: var(--r-sm); padding: 10px 12px }
+.proposal .acts { display: flex; gap: 8px; font-size: 13px }
+.proposal .acts span { padding: 5px 12px; border-radius: var(--r-sm); border: 1px solid var(--line-strong) }
+.proposal .acts .yes { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600 }
+.donecard { grid-template-columns: 56px 1fr; align-items: center; gap: 14px }
+.donecard img { width: 56px }
+.donecard .streak { font-size: 13px; color: var(--accent-ink); margin-top: 2px }
+
+/* Agents strip */
+.agents { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 36px }
+.agents span { font: 600 15px var(--ui); padding: 10px 18px; border-radius: var(--r); background: var(--card); border: var(--bw) solid var(--line) }
+.agents .main { font-size: 18px; padding: 14px 28px; border-radius: var(--r); border-color: var(--line-strong) }
+.agents-note { color: var(--fg3); font-size: 14.5px; margin-top: 18px }
+
+/* Git ops */
+.gitops { list-style: none; padding: 0; margin: 36px 0 0; display: flex; flex-wrap: wrap; gap: 10px }
+.gitops li { background: var(--card); border: var(--bw) solid var(--line); border-radius: var(--r-sm); padding: 8px 14px; font-size: 15px }
+
+/* Cards pick up the skin's edge treatment */
+.feat, .pain, .loop li, .review, .frame, .gitops li, .agents span, .grow .feat { box-shadow: var(--card-shadow) }
+.shot .frame { box-shadow: var(--shadow) }
+:root[data-skin="pixel"] body { letter-spacing: .02em }
+:root[data-skin="pixel"] h1, :root[data-skin="pixel"] h2 { letter-spacing: 0; font-weight: 400 }
+:root[data-skin="pixel"] .btn { box-shadow: 3px 3px 0 var(--line) !important }
+:root[data-skin="pixel"] .btn:active { transform: translate(3px, 3px); box-shadow: none !important }
+:root[data-skin="pixel"] .eyebrow, :root[data-skin="pixel"] kbd { border-radius: 0 }
+:root[data-skin="zinc"] .kicker { font-family: var(--mono); letter-spacing: .04em; text-transform: uppercase }
+:root[data-skin="zinc"] h1 { letter-spacing: -.035em }
+:root[data-skin="graphite"] body { background:
+  radial-gradient(circle at 18% 32%, color-mix(in srgb, var(--speck-a) 32%, transparent) 0 1.3px, transparent 2.3px) 0 0/53px 61px,
+  radial-gradient(circle at 63% 71%, color-mix(in srgb, var(--added) 25%, transparent) 0 1.1px, transparent 2px) 0 0/71px 47px,
+  radial-gradient(circle at 40% 50%, color-mix(in srgb, var(--fg3) 22%, transparent) 0 .9px, transparent 1.8px) 0 0/37px 43px,
+  var(--canvas) }
+:root[data-skin="graphite"] .btn-primary { color: var(--stone-text); background:
+  radial-gradient(circle at 20% 35%, var(--speck-a) 0 1px, transparent 1.6px) 0 0/13px 11px,
+  radial-gradient(circle at 70% 60%, var(--speck-b) 0 1px, transparent 1.6px) 0 0/17px 9px,
+  linear-gradient(var(--stone-top), var(--stone-bottom));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.35), inset 0 -3px 6px rgba(0,0,0,.22), 0 8px 16px -8px rgba(0,0,0,.55) }
+:root[data-skin="graphite"] .feat, :root[data-skin="graphite"] .pain, :root[data-skin="graphite"] .loop li { border-color: transparent }
+
+/* Theme switcher */
+.skins { position: sticky; top: 60px; z-index: 9; background: color-mix(in srgb, var(--canvas) 86%, transparent);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: var(--bw) solid var(--line) }
+.skins .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px; padding-block: 8px }
+.skins .label { font-size: 12.5px; color: var(--fg3) }
+.seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--card); border: var(--bw) solid var(--line); border-radius: var(--r-btn) }
+.seg button { font: 500 13px var(--ui); color: var(--fg2); background: none; border: 0; border-radius: calc(var(--r-btn) - 3px);
+  padding: 5px 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px }
+.seg button:hover { color: var(--fg) }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); font-weight: 600 }
+.seg .dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15) }
+:root[data-skin="pixel"] .seg .dot { border-radius: 0 }
+@media (max-width: 720px) { .skins { position: static } }
+@media (max-width: 520px) { .skins .label { display: none } .seg button { padding: 5px 9px } }
+
+/* Markdown section */
+.md { display: grid; grid-template-columns: 1.15fr 1fr; gap: 48px; align-items: start; margin-top: 48px }
+@media (max-width: 900px) { .md { grid-template-columns: 1fr; gap: 28px } }
+.doc { background: var(--card); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); overflow: hidden }
+.doc-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--header); border-bottom: var(--bw) solid var(--line); font-size: 12.5px; color: var(--fg3) }
+.doc-head .seg { padding: 2px } .doc-head .seg button { padding: 3px 10px; font-size: 12.5px }
+.doc-head code { font: 12px var(--mono) }
+.doc-body { padding: 22px 26px; min-height: 380px; position: relative }
+.doc-body[hidden] { display: none }
+.read h4 { font: 700 22px/1.3 var(--display); margin: 0 0 10px }
+.read h5 { font: 700 16px var(--display); margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--line) }
+.read p { margin: 0; color: var(--fg); font-size: 14.5px }
+.read blockquote { margin: 0 0 6px; padding-left: 12px; border-left: 3px solid var(--line-strong); color: var(--fg2); font-size: 14px }
+.read ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; font-size: 14.5px }
+.read li { display: flex; gap: 8px; align-items: center }
+.read li i { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--fg3); flex: none }
+.read li.checked { color: var(--fg3); text-decoration: line-through }
+.read li.checked i { background: var(--accent); border-color: var(--accent) }
+.read .new { background: var(--added-bg); box-shadow: -10px 0 0 var(--added-bg), inset 3px 0 0 var(--added); margin-left: -10px; padding-left: 10px }
+.read .gone { color: var(--fg3); text-decoration: line-through; text-decoration-color: var(--removed) }
+.read table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 4px }
+.read th, .read td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line) }
+.read th { color: var(--fg2); font-weight: 600 }
+.read .math { font-family: "Times New Roman", serif; font-style: italic; font-size: 16px }
+.mermaid-mock { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 4px; flex-wrap: wrap }
+.mermaid-mock span { border: 1px solid var(--line-strong); background: var(--header); padding: 4px 10px; border-radius: var(--r-sm) }
+.mermaid-mock b { color: var(--fg3); font-weight: 400 }
+.src { font: 13px/1.85 var(--mono); white-space: pre-wrap; color: var(--fg) }
+.src .h { color: var(--accent-ink); font-weight: 700 }
+.src .m { color: var(--fg3) }
+.src .c { color: var(--added) }
+.anchor { position: relative }
+.slash { position: absolute; left: 0; top: 1.9em; width: 210px; white-space: normal; line-height: 1.5; z-index: 1; background: var(--card); border: var(--bw) solid var(--line-strong);
+  border-radius: var(--r-sm); box-shadow: var(--shadow); padding: 5px; font: 13px var(--ui) }
+.slash > span { padding: 5px 9px; border-radius: calc(var(--r-sm) - 3px); display: flex; justify-content: space-between; color: var(--fg2) }
+.slash > span:first-child { background: var(--accent-soft); color: var(--fg) }
+.slash kbd { font-size: 11px }
+.caret { display: inline-block; width: 2px; height: 1.1em; background: var(--accent); vertical-align: -2px; animation: blink 1s steps(1) infinite }
+@keyframes blink { 50% { opacity: 0 } }
+.md-points h3 { font-size: 17px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px }
+.md-points h3 + .ticks { margin-bottom: 28px }
+
+.reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s, transform .7s cubic-bezier(.2,.8,.2,1) }
+.reveal.on { opacity: 1; transform: none }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important }
+  .reveal { opacity: 1; transform: none }
+}
+</style>
+</head>
+<body>
+
+<nav id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/icon-256.png" alt="">Folmi</a>
+    <ul>
+      <li><a href="#why">为什么</a></li>
+      <li><a href="#loop">怎么用</a></li>
+      <li><a href="#try">试一下</a></li>
+      <li><a href="#markdown">Markdown</a></li>
+      <li><a href="#features">功能</a></li>
+      <li><a href="#faq">问答</a></li>
+    </ul>
+    <a class="btn btn-primary btn-sm cta" href="#download">下载内测版</a>
+  </div>
+</nav>
+
+<div class="skins" role="group" aria-label="页面主题">
+  <div class="wrap">
+    <span class="label">App 的四套主题，这个页面也跟着换：</span>
+    <div class="seg" id="skinSeg">
+      <button data-skin="amber" title="琥珀黄配炭黑，圆润温暖"><span class="dot" style="background:#E9AA47"></span>琥珀</button>
+      <button data-skin="zinc" title="锌灰配莓红，精密紧凑"><span class="dot" style="background:#B8326A"></span>锌莓</button>
+      <button data-skin="pixel" title="方角、硬描边、错位投影"><span class="dot" style="background:#1F6FEB"></span>像素</button>
+      <button data-skin="graphite" title="石墨与石灰，不带主色；颜色只在按钮的矿物颗粒里"><span class="dot" style="background:#32363D"></span>石墨</button>
+    </div>
+    <div class="seg" id="themeSeg">
+      <button data-theme="light">浅色</button>
+      <button data-theme="dark">深色</button>
+    </div>
+  </div>
+</div>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <span class="eyebrow"><b>内测</b>macOS · 给每天和 AI 一起写代码、写文档的人</span>
+    <h1>AI 写得太快，<br><em>你也能跟上。</em></h1>
+    <p class="lede">一轮对话，二十个文件。Folmi 把 AI 改的代码和文档摊开给你：先看要紧的，看不懂的让它说人话，一处一处决定留不留。<kbd>⏎</kbd> 收下，<kbd>⌫</kbd> 丢弃，后悔了随时退回。</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#download">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9 0 0-2.7-1-2.7-4.1zM13.9 4.9c.7-.9 1.2-2 1.1-3.2-1 0-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.1 1.1.1 2.3-.6 3-1.5z"/></svg>
+        下载 macOS 版
+      </a>
+      <a class="btn btn-ghost" href="#try">先在网页里试一下 ↓</a>
+    </div>
+    <p class="hero-meta">主要配合 Claude Code 和 Codex · macOS 14 及以上 · Apple Silicon</p>
+
+    <div class="shot reveal">
+      <div class="glow"></div>
+      <img class="mascot" src="assets/folmi-mascot.svg" alt="">
+      <div class="frame">
+        <img id="shot" src="assets/shot-amber-light.jpg" width="1800" height="1125" alt="Folmi 的主窗口：左边是项目文件，右边是 AI 写的一篇方案，排好版显示，带大纲、流程图和表格">
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="why">
+  <div class="wrap">
+    <div class="kicker">问题</div>
+    <h2>AI 一轮改几十个文件，<br>人很难一处处看完。</h2>
+    <p class="sub">AI 一分钟改完的东西，人要看半小时。于是要么一行行看到累，要么闭着眼全收，直到某天发现它顺手删了你没注意的东西。</p>
+    <div class="pains">
+      <div class="pain reveal">
+        <q>改了几十个文件，从哪看起？</q>
+        <p><b>要紧的排在前面。</b>依赖、构建脚本、配置、大段删除先给你看，旁边写着为什么值得先看。</p>
+      </div>
+      <div class="pain reveal">
+        <q>看不懂它为什么这么改。</q>
+        <p><b>当场问。</b>选中一段，让它说人话、解释这处改动，回答就出现在改动旁边，不用切走。</p>
+      </div>
+      <div class="pain reveal">
+        <q>收完才发现不对。</q>
+        <p><b>每一步都退得回。</b>收下、丢弃都能撤销；AI 的一整轮改动，也能整批退回去。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="loop">
+  <div class="wrap">
+    <div class="kicker">一个循环</div>
+    <h2>AI 照常写，<br>你按自己的节奏看。</h2>
+    <p class="sub">Folmi 不拦着 AI，也不给它加审批。它写完一轮，你看一轮；没看完的就留着，下次接着看。</p>
+    <ol class="loop" style="padding:0">
+      <li class="reveal"><h3>AI 改完</h3><p>Claude Code、Codex 在终端里改完，Folmi 马上就看到；窗口在后台时发通知。</p></li>
+      <li class="reveal"><h3>一处一处看</h3>
+        <ul class="keys"><li><kbd>空格</kbd> 看下一处</li><li><kbd>⏎</kbd> 收下</li><li><kbd>⌫</kbd> 丢弃</li><li><kbd>⌥⌘Z</kbd> 撤销刚才那步</li></ul></li>
+      <li class="reveal"><h3>拿不准就问</h3><p>让 AI 解释这处改动，或者写一句意见，直接送回给它去改。</p></li>
+      <li class="reveal"><h3>收好，交出去</h3><p>收下的就是这次要交的。说明在你看的时候已经写好，一键提交、推送。</p></li>
+    </ol>
+  </div>
+</section>
+
+<section id="try">
+  <div class="wrap demo">
+    <div class="demo-copy">
+      <div class="kicker">试一下</div>
+      <h2>用键盘一处一处看</h2>
+      <p class="sub">这是 AI 刚做的三处改动。点按钮，或者直接按键盘。</p>
+      <ul class="keys-hint">
+        <li><kbd>⏎</kbd><span>收下这一处，它会进入下一次提交。</span></li>
+        <li><kbd>⌫</kbd><span>丢弃这一处。丢掉的也能拿回来。</span></li>
+        <li><kbd>⌘Z</kbd><span>后悔了？撤销刚才那一步。</span></li>
+      </ul>
+    </div>
+    <div class="review reveal" id="review" tabindex="0" aria-label="验收演示：按回车收下，按删除键丢弃，按 Command Z 撤销">
+      <div class="review-head">
+        <span class="title">逐个验收</span>
+        <div class="progress"><span id="count">1 / 3</span><div class="bar"><i id="bar"></i></div></div>
+      </div>
+      <div class="hunks" id="hunks">
+        <div class="done" id="done">
+          <img src="assets/folmi-mascot.svg" alt="">
+          <b>都看完了</b>
+          <span id="summary"></span>
+          <button class="btn btn-ghost btn-sm" id="again">再来一遍</button>
+        </div>
+        <div class="toast" id="toast"></div>
+      </div>
+      <div class="review-foot">
+        <button class="primary" data-act="accept">收下这处 <kbd>⏎</kbd></button>
+        <button data-act="reject">丢弃 <kbd>⌫</kbd></button>
+        <button data-act="undo">撤销 <kbd>⌘Z</kbd></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="markdown">
+  <div class="wrap">
+    <div class="kicker">Markdown</div>
+    <h2>AI 写的文档，在这里读，也在这里改</h2>
+    <p class="sub">方案、计划、说明，AI 写的 Markdown 越来越多。Folmi 默认把它排好版给你读；要改几处，切到编辑，有一套顺手的编辑辅助。</p>
+    <div class="md">
+      <div class="doc reveal">
+        <div class="doc-head">
+          <div class="seg" id="mdSeg"><button data-view="read" aria-pressed="true">阅读</button><button data-view="edit">编辑</button></div>
+          <code>docs/登录重构方案.md</code>
+        </div>
+        <div class="doc-body read" id="mdRead">
+          <h4>登录重构方案</h4>
+          <blockquote>Claude 写于 10 月 19 日。改动范围：Sources/Auth/ 下 4 个文件。</blockquote>
+          <h5>步骤</h5>
+          <ul>
+            <li class="checked"><i></i>把刷新逻辑收进 Session.refresh()</li>
+            <li class="checked"><i></i>刷新期间的请求排队等待</li>
+            <li class="new"><i></i>补测试：过期瞬间同时发出 5 个请求</li>
+          </ul>
+          <h5>流程</h5>
+          <div class="mermaid-mock"><span>请求</span><b>→</b><span>令牌过期？</span><b>→ 是 →</b><span>排队</span><b>→</b><span>刷新一次</span></div>
+          <h5>影响</h5>
+          <table><tr><th>文件</th><th>改动</th><th>风险</th></tr>
+            <tr><td>Session.swift</td><td>+42 −8</td><td>中</td></tr>
+            <tr><td><span class="gone">Token.swift</span> APIClient.swift</td><td>+6 −31</td><td>低</td></tr></table>
+          <p style="margin-top:12px">退避时间 <span class="math">t<sub>n</sub> = min(2<sup>n</sup>·100 ms, 5 s)</span></p>
+        </div>
+        <div class="doc-body" id="mdEdit" hidden>
+<div class="src"><span class="h"># 登录重构方案</span>
+
+<span class="m">&gt;</span> Claude 写于 10 月 19 日。
+
+<span class="h">## 步骤</span>
+
+<span class="m">- [x]</span> 把刷新逻辑收进 <span class="c">`Session.refresh()`</span>
+<span class="m">- [x]</span> 刷新期间的请求排队等待
+<span class="m">- [ ]</span> 补测试：过期瞬间同时发出 5 个请求
+
+<span class="anchor"><span class="m">/</span>表<span class="caret"></span><span class="slash"><span>表格 <kbd>⌥⌘T</kbd></span><span>标题 2 <kbd>⌥⌘2</kbd></span><span>代码块</span><span>图片</span></span></span></div>
+        </div>
+      </div>
+      <div class="md-points">
+        <h3>读</h3>
+        <ul class="ticks">
+          <li>默认排好版显示，公式和 Mermaid 流程图直接画出来。</li>
+          <li>右边有大纲，点标题就跳过去。</li>
+          <li>AI 改了文档，看的是排好版的差异：新加的段落有底色，删掉的内容划线。</li>
+          <li><kbd>⌘⇧Y</kbd> 看这篇文档的每一个版本。</li>
+        </ul>
+        <h3>改</h3>
+        <ul class="ticks">
+          <li>输入 <kbd>/</kbd> 弹出菜单，插入标题、表格、代码块。</li>
+          <li>表格里 <kbd>Tab</kbd> 跳到下一格，最后一格再按一次就加一行。</li>
+          <li>粘贴截图，自动存进 <code>assets/</code> 并插好链接。</li>
+          <li>输入 <code>[[</code> 补全到其他笔记的链接，任务框直接点选。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="kicker">功能</div>
+    <h2>看改动时最常用的几样</h2>
+    <div class="grid">
+      <div class="feat wide reveal">
+        <div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="3"/></svg></div>
+          <h3>接住 AI 的每一轮</h3>
+          <p>AI 每说完一轮话，改动单独成一批：能整批退回，也能回放它这一轮做了什么。危险命令在执行前就拦下。支持 Claude Code 和 Codex。</p>
+        </div>
+        <div class="mini-list">
+          <span class="capsule"><span class="dot"></span>AI 正在改 <em>3 个文件</em></span>
+          <div>↺ 整批退回 <code>第 12 轮 · 5 处</code></div>
+          <div>▶ 回放这一轮</div>
+          <div>⛔ 已拦下 <code>rm -rf build/*</code></div>
+        </div>
+      </div>
+      <div class="feat reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <h3>看过的不用再看</h3>
+        <p>看到哪里记到哪里，像邮件的已读。AI 再改一轮，只有它新动过的那几处会重新出现。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+        <h3>意见直接发回给 AI</h3>
+        <p>在改动上写一句「这里别这么做」，一键送回给 agent 去改，带着文件和行号，不用复制粘贴。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg></div>
+        <h3>终端就在旁边</h3>
+        <p>Claude Code、Codex 在内嵌终端里跑，可以开多个标签。⌘ 点按输出里的 <code>路径:行号</code>，直接跳到那个文件。</p>
+      </div>
+      <div class="feat reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div>
+        <h3>打开和切换都很快</h3>
+        <p>原生 macOS 应用，不用 Electron。打开就是上次的样子，十万行的改动也顺着滚。变慢的改动不合入。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="grow">
+  <div class="wrap">
+    <div class="kicker">越用越顺手</div>
+    <h2>AI 会照你的习惯改进，<br>你也看得到自己每天做了多少</h2>
+    <p class="sub">你每一次收下、丢弃，和顺手写下的原因，Folmi 都记着，用来让下一轮 AI 写得更合你的意。</p>
+    <div class="grow">
+      <div class="feat reveal">
+        <h3>AI 这边：把你的习惯写成规则</h3>
+        <ul class="ticks">
+          <li>同一类改动你连着丢掉几次，比如 lockfile、调试输出，Folmi 会提议一条规则。</li>
+          <li>丢弃时按 <kbd>R</kbd> 写一句原因，这些原因也会拿来归纳规则。</li>
+          <li>你同意了，才写进项目的 CLAUDE.md 或 AGENTS.md，Claude Code 和 Codex 下一轮就照着做。</li>
+          <li>「记住了什么」里能看到每一条规则，随时删掉。</li>
+        </ul>
+        <div class="proposal">
+          <div class="why">最近 3 次都丢弃了 lockfile 的改动</div>
+          <div class="rule">不要改 package-lock.json，除非我明确要求。</div>
+          <div class="acts"><span class="yes">写进 CLAUDE.md</span><span>不用</span></div>
+        </div>
+      </div>
+      <div class="feat reveal">
+        <h3>你这边：每天做了多少，心里有数</h3>
+        <ul class="ticks">
+          <li>看完一轮有一张收工卡片，写着今天验收、撤回、提交了多少。</li>
+          <li>连续几天在这里验收，也会记着。</li>
+          <li>AI 的每一轮改动都能回放，回头看它是怎么一步步改的。</li>
+        </ul>
+        <div class="proposal donecard">
+          <img src="assets/folmi-mascot.svg" alt="">
+          <div><b>都看完了</b><div class="why">今天验收 42 处 · 撤回 3 处 · 提交 5 次</div><div class="streak">连续 6 天在这里验收</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="agents">
+  <div class="wrap center">
+    <div class="kicker">配合哪些 AI</div>
+    <h2>主要配合 Claude Code 和 Codex</h2>
+    <p class="sub">这两个接得最深：每一轮改动单独成批，能整批退回、能回放；评论直接发回给它；规则写进它会读的 CLAUDE.md / AGENTS.md。</p>
+    <div class="agents reveal">
+      <span class="main">Claude Code</span><span class="main">Codex</span>
+    </div>
+    <p class="agents-note">Cursor、Gemini CLI、Aider 等其他 AI 改的文件，也能在 Folmi 里看、收下、丢弃。</p>
+  </div>
+</section>
+
+<section id="git">
+  <div class="wrap">
+    <div class="kicker">Git</div>
+    <h2>常用的 Git 操作也都有</h2>
+    <p class="sub">不用再开别的 Git 客户端。Folmi 底下就是 Git：你在终端里敲 git 命令，Folmi 里看到的是同一份状态。</p>
+    <ul class="gitops reveal">
+      <li>按行暂存</li><li>提交和推送</li><li>拉取，处理冲突</li><li>切换和新建分支</li><li>历史和提交图</li>
+      <li>撤销提交、挑选提交</li><li>改提交说明</li><li>收起改动（stash）</li><li>大仓库模式</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">我们不做的</div>
+    <h2>不做的事</h2>
+    <div class="nots">
+      <div class="reveal"><b>不替你写代码</b><p>写代码交给你喜欢的 AI。Folmi 只管一件事：让你看明白它写了什么。</p></div>
+      <div class="reveal"><b>不给 AI 加审批</b><p>AI 照常写，不用等你点头。你看你的，没看完的一直留着。</p></div>
+      <div class="reveal"><b>不是又一个编辑器</b><p>没有插件市场、没有一堆面板。能改，但它首先是用来看的。</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+  <div class="download reveal" id="download">
+    <div>
+      <div class="kicker" style="color:var(--accent)">v0.5.1 · 内测中</div>
+      <h2>下载 Folmi</h2>
+      <p class="sub">内测版已使用 Developer ID 签名，尚未完成 Apple 公证。首次打开可能被 macOS 阻止，请按安装说明在「系统设置 → 隐私与安全」中手动允许。</p>
+      <div class="hero-actions" style="justify-content:flex-start">
+        <a class="btn btn-primary" href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA.dmg" id="dl" download>下载内测版 DMG</a>
+        <a class="btn btn-ghost" href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA-安装说明.html">安装说明</a>
+      </div>
+      <p class="hero-meta"><a href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA-安装说明.txt">纯文本安装说明</a> · <a href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA.dmg.sha256" download>SHA256 校验文件</a></p>
+      <div class="req"><span>macOS 14 Sonoma 及以上</span><span>Apple Silicon</span><span>项目需要用 Git 管理（不用会 Git）</span></div>
+    </div>
+    <img class="big" src="assets/icon-256.png" alt="Folmi 图标">
+  </div>
+</div>
+
+<section id="faq" style="padding-top:110px">
+  <div class="wrap center">
+    <div class="kicker">问答</div>
+    <h2>常见问题</h2>
+  </div>
+  <div class="wrap">
+    <div class="faq">
+      <details><summary>支持哪些 AI？</summary><p>主要配合 Claude Code 和 Codex：每一轮改动单独成批、整批退回、回放、评论发回、规则写进 CLAUDE.md / AGENTS.md。其他 AI，或者你自己改的文件，也都能看、收下、丢弃，只是没有按轮次接入。</p></details>
+      <details><summary>我不太会 Git，能用吗？</summary><p>能。Folmi 底下用 Git 记录每一处改动，但你只需要看、收下、丢弃。收下的就是下一次要提交的内容，提交说明也替你写好了。项目需要先用 Git 管理起来，第一次打开时 Folmi 会检查。</p></details>
+      <details><summary>我的代码会被上传吗？</summary><p>Folmi 自己不上传任何东西。只有你用到解释、说人话、写提交说明这些 AI 功能时，相关内容才会发给你配置的模型，或者本机的 <code>claude</code>；发送前会先检查里面有没有密钥。</p></details>
+      <details><summary>「丢弃」了还能找回来吗？</summary><p>能。每一步收下、丢弃都记着，<kbd>⌥⌘Z</kbd> 撤回。AI 的一整轮改动也能整批退回。</p></details>
+      <details><summary>打开时提示「无法验证开发者」怎么办？</summary><p>内测版已使用 Developer ID 签名，尚未完成 Apple 公证。确认下载来源可信且 SHA256 校验一致后，先尝试打开 DMG 或已安装的 Folmi；若被阻止，进入「系统设置 → 隐私与安全」，找到对应提示并选择「仍要打开」。具体步骤见<a href="downloads/Folmi-v0.5.1-macOS-arm64-SIGNED-NOT-NOTARIZED-BETA-安装说明.html">安装说明</a>。</p></details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/icon-256.png" alt="">Folmi</a>
+    <span>为 macOS 而做 · © 2026</span>
+    <div class="right"><a href="#download">下载</a><a href="#faq">问答</a></div>
+  </div>
+</footer>
+
+<script>
+// Nav border once scrolled.
+const nav = document.getElementById('nav');
+addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), { passive: true });
+
+// Fade sections in as they enter the viewport.
+const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target) } }), { rootMargin: '0px 0px -8% 0px' });
+document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+// Review demo: three hunks, accept / reject / undo.
+const HUNKS = [
+  { file: 'Sources/Auth/Session.swift', note: '第 42 行', lines: [
+    ['ctx', 'func refresh() async throws {'],
+    ['del', '    let token = try await api.refresh(old)'],
+    ['add', '    guard let old = store.token else { return }'],
+    ['add', '    let token = try await api.refresh(old)'],
+    ['add', '    store.token = token'],
+    ['ctx', '}'] ] },
+  { file: 'README.md', note: '第 8 行', lines: [
+    ['ctx', '## 安装'],
+    ['del', '运行 make install。'],
+    ['add', '运行 `./scripts/install.sh`，会先检查依赖。'],
+    ['add', ''],
+    ['add', '需要 macOS 14 及以上。'],
+    ['ctx', '## 使用'] ] },
+  { file: 'scripts/deploy.sh', note: '第 3 行', lines: [
+    ['ctx', 'set -euo pipefail'],
+    ['del', 'rm -rf dist'],
+    ['add', 'rm -rf "$HOME"/dist   # ← 这处最好别收'],
+    ['ctx', 'npm run build'] ] },
+];
+const hunksEl = document.getElementById('hunks'), bar = document.getElementById('bar'), count = document.getElementById('count');
+const done = document.getElementById('done'), toast = document.getElementById('toast'), summary = document.getElementById('summary');
+let index = 0, history = [], current = null, toastTimer;
+
+function esc(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) }
+function render(from) {
+  const h = HUNKS[index];
+  const el = document.createElement('div');
+  el.className = 'hunk' + (from ? ' in' : '');
+  el.innerHTML = `<div class="file">${esc(h.file)} <span>${h.note}</span></div><div class="code">${h.lines.map(([k, t]) => `<div class="${k}">${esc(t) || ' '}</div>`).join('')}</div>`;
+  hunksEl.insertBefore(el, done);
+  if (from) requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('in')));
+  current = el;
+}
+function update() {
+  bar.style.width = (history.length / HUNKS.length * 100) + '%';
+  count.textContent = index < HUNKS.length ? `${index + 1} / ${HUNKS.length}` : `${HUNKS.length} / ${HUNKS.length}`;
+  const finished = index >= HUNKS.length;
+  done.classList.toggle('show', finished);
+  if (finished) {
+    const a = history.filter(x => x === 'accept').length, r = history.length - a;
+    summary.textContent = `收下 ${a} 处，丢弃 ${r} 处。提交说明已经写好了。`;
+  }
+}
+function say(text) { toast.textContent = text; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 1400) }
+function act(kind) {
+  if (kind === 'undo') {
+    if (!history.length) return say('没有可以撤销的');
+    if (current) current.remove();
+    history.pop(); index--; render(true); update(); say('已撤销，回到这一处');
+    return;
+  }
+  if (index >= HUNKS.length) return;
+  const old = current; old.classList.add(kind === 'accept' ? 'out-accept' : 'out-reject');
+  setTimeout(() => old.remove(), 400);
+  history.push(kind); index++; current = null;
+  say(kind === 'accept' ? '已收下 · 会进下一次提交' : '已丢弃 · ⌘Z 可撤回');
+  if (index < HUNKS.length) render(true);
+  update();
+}
+document.querySelectorAll('.review-foot button').forEach(b => b.addEventListener('click', () => act(b.dataset.act)));
+document.getElementById('again').addEventListener('click', () => { hunksEl.querySelectorAll('.hunk').forEach(h => h.remove()); index = 0; history = []; render(false); update() });
+
+// Keys work while the demo is on screen and nothing else is focused for typing.
+let demoVisible = false;
+new IntersectionObserver(([e]) => demoVisible = e.isIntersecting, { threshold: .4 }).observe(document.getElementById('review'));
+addEventListener('keydown', e => {
+  if (!demoVisible || e.target.closest('input, textarea, summary')) return;
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); act('undo') }
+  else if (e.key === 'Enter' && !e.metaKey) { e.preventDefault(); act('accept') }
+  else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); act('reject') }
+});
+render(false); update();
+
+// Theme switcher: skin and light/dark, saved per visitor; the screenshot follows.
+const root = document.documentElement, shot = document.getElementById('shot');
+function applySkin() {
+  const { skin, theme } = root.dataset;
+  document.querySelectorAll('#skinSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.skin === skin));
+  document.querySelectorAll('#themeSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.theme === theme));
+  shot.src = `assets/shot-${skin}-${theme}.jpg`;
+  try { localStorage.setItem('folmi-skin', skin); localStorage.setItem('folmi-theme', theme) } catch (e) {}
+}
+document.querySelectorAll('#skinSeg button').forEach(b => b.addEventListener('click', () => { root.dataset.skin = b.dataset.skin; applySkin() }));
+document.querySelectorAll('#themeSeg button').forEach(b => b.addEventListener('click', () => { root.dataset.theme = b.dataset.theme; applySkin() }));
+applySkin();
+// Warm the other screenshots so switching does not flash.
+addEventListener('load', () => setTimeout(() => ['amber','zinc','pixel','graphite'].forEach(s => ['light','dark'].forEach(m => { new Image().src = `assets/shot-${s}-${m}.jpg` })), 1200));
+
+// Markdown card: 阅读 / 编辑.
+document.querySelectorAll('#mdSeg button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('#mdSeg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  document.getElementById('mdRead').hidden = b.dataset.view !== 'read';
+  document.getElementById('mdEdit').hidden = b.dataset.view !== 'edit';
+}));
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "name": "Folmi",
+  "rig": "folmi-mascot.svg",
+  "provenance": "Simplified editable vector redraw of approved D3; not an exact trace or replacement for the generated App icon.",
+  "palette": { "charcoal": "#222429", "amber": "#E9AA47", "highlight": "#FFF4DC" },
+  "parts": ["pose", "body", "ear", "eyes", "eye-left", "eye-right", "eyelids", "tail", "accent"],
+  "anchors": { "pose": [274, 260], "ear": [290, 83], "eyes": [368, 114], "tail": [274, 340] },
+  "rules": {
+    "defaultState": "idle",
+    "transitionMs": 180,
+    "interruptRule": "Higher priority wins; a task lifecycle event may replace working or thinking. Error and attention remain until acknowledged. Idle never interrupts an active task.",
+    "eventQueue": "Do not queue repeated success, greeting, or attention animations. Coalesce repeated events. One visible mascot per surface.",
+    "placement": "Titlebar or reserved accessory space; never over terminal output, text selection, or input.",
+    "minimumAnimatedSizePx": 32,
+    "smallSizeRule": "Below 32 px use a still silhouette. At 16 px omit highlights and use open or closed eyes only.",
+    "blink": { "intervalMs": 7200, "durationMs": 180, "enabledStates": ["idle", "working", "thinking", "attention", "error", "greeting"] },
+    "reducedMotion": { "honorSystem": true, "disableAllAnimations": true, "disableTransitions": true, "keepStaticExpression": true, "keepTextStatus": true },
+    "pause": "Freeze animation time and preserve the selected state; do not cancel a task.",
+    "colorRule": "Use amber and charcoal in every state. No flashing, red alarm, purple, or forest green."
+  },
+  "states": {
+    "idle": { "label": "待命", "durationMs": 7200, "loop": true, "priority": 0, "trigger": "No active task", "motion": "Still body; one short blink per cycle. No constant bobbing.", "reducedPose": "Open eyes, relaxed ear", "exit": "Any task or event" },
+    "working": { "label": "工作中", "durationMs": 3200, "loop": true, "priority": 20, "trigger": "A real operation starts", "motion": "Eyes look slightly down; tail makes a quiet 2 degree sweep. No fabricated progress.", "reducedPose": "Open eyes looking down", "exit": "Operation completion, error, or cancel" },
+    "thinking": { "label": "思考中", "durationMs": 4800, "loop": true, "priority": 20, "trigger": "AI request is actually pending", "motion": "Eyes glance upward; ear moves once gently each cycle.", "reducedPose": "Eyes looking up", "exit": "Response, failure, or cancel" },
+    "success": { "label": "已完成", "durationMs": 900, "loop": false, "priority": 40, "trigger": "A verified operation succeeds", "motion": "One small nod and brief amber rays; happy closed eyes.", "reducedPose": "Happy closed eyes, no rays", "exit": "Return to the previous sustained state after 900 ms" },
+    "attention": { "label": "需要你看看", "durationMs": 1200, "loop": false, "priority": 60, "trigger": "An actionable decision requires the user", "motion": "Ear lifts once; head leans 2 degrees, then holds still.", "reducedPose": "Open eyes, ear raised", "exit": "User acknowledges or resolves the decision" },
+    "error": { "label": "遇到问题", "durationMs": 450, "loop": false, "priority": 80, "trigger": "An actual operation fails", "motion": "Ear lowers once and eyes narrow; no shaking, flashing, or bouncing.", "reducedPose": "Narrow eyes, ear lowered", "exit": "User acknowledges, retries, or dismisses the error" },
+    "sleep": { "label": "休息", "durationMs": 5200, "loop": true, "priority": 5, "trigger": "The window is inactive and no operation is running", "motion": "Closed eyes with less than 1 percent breathing scale; stop entirely while offscreen.", "reducedPose": "Closed relaxed eyes", "exit": "Window focus or a task starts" },
+    "greeting": { "label": "你好呀", "durationMs": 1100, "loop": false, "priority": 10, "trigger": "First intentional reveal of the session", "motion": "One light tail wave and 3 degree lean; never on each keystroke or tab switch.", "reducedPose": "Open friendly eyes", "exit": "Return to idle after 1100 ms" }
+  }
+}

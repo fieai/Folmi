@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="54.444 39.444 431.112 431.112" role="img" aria-label="Folmi menu bar template">
+  <!-- Generated from Mascot/folmi-mascot.svg; body, tail and eye geometry share that source. -->
+  <!-- Ear shading, eye highlights, eyelids and accents are omitted at menu-bar sizes. -->
+  <defs><mask id="eyes" maskUnits="userSpaceOnUse" x="54" y="39" width="432" height="432">
+    <rect x="54" y="39" width="432" height="432" fill="white"/>
+    <ellipse cx="351" cy="119" rx="12.15" ry="16.8" fill="black"/>
+    <ellipse cx="386" cy="109" rx="10.8" ry="15.6" fill="black"/>
+  </mask></defs>
+  <g fill="black" mask="url(#eyes)"><path d="M237 333H311V355C311 416 278 449 224 449C180 449 147 429 138 395C132 373 140 353 155 351C171 349 177 363 184 375C194 392 204 397 216 393C233 387 237 375 237 355Z"/><path d="M238 205V169C238 100 278 61 338 61C385 61 408 91 408 119C408 151 390 164 355 165C322 164 312 173 311 204V210H356C377 210 386 219 386 234C386 251 377 260 357 260H311V351H237V271C237 263 234 260 226 260H204C182 260 175 251 175 235C175 218 183 210 205 210H230C236 210 238 208 238 205Z"/></g>
+</svg>

@@ -1,0 +1,24 @@
+{
+  "tool": "image_gen.imagegen",
+  "approvedReference": "folmi-d3-approved.png",
+  "selectedPalette": {
+    "charcoal": "#222429",
+    "amber": "#E9AA47"
+  },
+  "prompts": [
+    {
+      "output": "folmi-app-icon-master.png",
+      "prompt": "Use case: background-extraction / precise-object-edit. Input image is the FINAL APPROVED Folmi macOS app icon, preserve its exact character identity, lowercase f silhouette, all proportions, little folded ear, two black oval eyes, curled lower-left tail, amber satin shading and charcoal rounded-square tile. Prepare this SAME approved artwork for production. Remove ONLY the outside white presentation canvas and outside cast shadow, replacing them with genuinely transparent alpha. The charcoal rounded square itself and the whole amber familiar MUST remain opaque, unchanged. One front-facing icon centered on a square transparent canvas; tile occupies about 82 percent of canvas width with even transparent margins, no extra inset tile, no extra outer background. Clean antialiased silhouette edges, no white fringe. Keep charcoal #222429 and amber #E9AA47. No green or purple anywhere. No redesign, no text, no new details, no additional symbols, no frame and no watermark. This is an extraction of the chosen app icon, not a new concept."
+    },
+    {
+      "output": "rejected-mascot-cutout",
+      "prompt": "Use case: background-extraction / identity-preserve. Extract ONLY the exact amber lowercase-f familiar from the APPROVED Folmi app icon reference. Remove the charcoal rounded-square tile, white presentation background and all cast shadows to real transparent alpha. Keep ONLY the amber f creature itself: same clear horizontal crossbar, upper right rounded hook/head with tiny folded ear at upper-left, exactly two black oval eyes, long straight stem, lower-left curled tail. Preserve exact shape, character proportions, amber color #E9AA47 and subtle satin relief. Do not add legs, mouth, nose or anything else. The two BLACK EYES remain opaque black; do not punch transparent holes through them. Center this single mascot on square transparent canvas, entire familiar visible, fills about 78 percent of canvas height, no text, no backdrop, no ground shadow, no icon tile. No purple, no green. Clean antialiased silhouette edges without white or dark halos. This is an identity-preserving cutout, not a redesign."
+    }
+  ],
+  "notes": [
+    "The approved D3 reference remains unchanged.",
+    "The transparent App icon master was prepared with built-in imagegen.",
+    "The raster mascot extraction was rejected for colored edge artifacts, including a cleanup retry. It is not shipped.",
+    "Shipping mascot PNGs are rendered from the editable layered SVG; the SVG is a simplified animation redraw rather than an exact trace."
+  ]
+}

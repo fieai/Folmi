@@ -1,0 +1,9 @@
+# 性能门槛：名称<TAB>中位数上限（毫秒）。scripts/perf.sh 带 --budget 时超出任一项就失败。
+# 依据 2026-10-17 实测中位数加约 30% 余量（启动缓存修好、恢复 Markdown 时提前预热 WebKit 之后）；数字变好后可以往下收。
+launch.firstContentFrame	1100
+launch.readerPainted	1450
+switch.diffFrame	80
+switch.reader again	150
+switch.reader first	200
+switch.reader fromCode	150
+switch.refreshFrame	50

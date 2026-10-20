@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" role="img" aria-label="Folmi，琥珀色的小写 f 精灵">
+  <!-- Animation rig: a simplified vector redraw of approved D3, not an exact trace. -->
+  <!-- Coordinates are stable animation anchors; colors stay charcoal and amber. -->
+  <g id="folmi-pose" data-part="pose">
+    <g id="folmi-tail" data-part="tail" fill="#E9AA47">
+      <path d="M237 333H311V355C311 416 278 449 224 449C180 449 147 429 138 395C132 373 140 353 155 351C171 349 177 363 184 375C194 392 204 397 216 393C233 387 237 375 237 355Z"/>
+    </g>
+    <g id="folmi-body" data-part="body" fill="#E9AA47">
+      <path d="M238 205V169C238 100 278 61 338 61C385 61 408 91 408 119C408 151 390 164 355 165C322 164 312 173 311 204V210H356C377 210 386 219 386 234C386 251 377 260 357 260H311V351H237V271C237 263 234 260 226 260H204C182 260 175 251 175 235C175 218 183 210 205 210H230C236 210 238 208 238 205Z"/>
+      <path d="M264 146C271 106 300 83 337 81" stroke="#FFD58D" stroke-width="7" stroke-linecap="round" opacity=".32"/>
+    </g>
+    <g id="folmi-ear" data-part="ear">
+      <path d="M295 77C281 87 263 104 253 123C246 136 236 143 228 138C218 131 223 117 231 105C247 84 269 75 295 77Z" fill="#E9AA47"/>
+      <path d="M290 82C280 102 269 123 253 132" stroke="#BA7A29" stroke-width="4" stroke-linecap="round" opacity=".55"/>
+    </g>
+    <g id="folmi-eyes" data-part="eyes">
+      <g data-part="eye-left" transform="rotate(-12 351 119)">
+        <ellipse cx="351" cy="119" rx="9" ry="14" fill="#222429"/>
+        <ellipse cx="353" cy="114" rx="2" ry="3" fill="#FFF4DC" opacity=".9"/>
+      </g>
+      <g data-part="eye-right" transform="rotate(-12 386 109)">
+        <ellipse cx="386" cy="109" rx="8" ry="13" fill="#222429"/>
+        <ellipse cx="388" cy="104" rx="1.8" ry="2.8" fill="#FFF4DC" opacity=".9"/>
+      </g>
+    </g>
+    <g id="folmi-eyelids" data-part="eyelids" stroke="#222429" stroke-width="5" stroke-linecap="round" opacity="0">
+      <path d="M344 121Q351 125 358 119M379 111Q386 115 393 109"/>
+    </g>
+  </g>
+  <g id="folmi-accent" data-part="accent" stroke="#E9AA47" stroke-width="5" stroke-linecap="round" opacity="0">
+    <path d="M419 65V49M434 72L445 61M426 89H442"/>
+  </g>
+</svg>

@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Folmi · 小精灵动作室</title>
+  <style>
+    :root { color-scheme: light; --charcoal:#222429; --amber:#E9AA47; --paper:#f5f3ef; --ink:#25272b; --muted:#6c6d72; --line:#dedbd5; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; line-height:1.6; }
+    button,input { font:inherit; }
+    button { cursor:pointer; }
+    button:focus-visible,input:focus-visible { outline:3px solid #a26413; outline-offset:4px; }
+    main { width:min(1160px,calc(100% - 48px)); margin:56px auto 64px; }
+    .eyebrow { color:#8b602c; font:600 12px/1.4 ui-monospace,SFMono-Regular,monospace; letter-spacing:2px; }
+    h1 { margin:12px 0 8px; font-size:clamp(30px,4vw,46px); line-height:1.2; letter-spacing:-1.5px; }
+    .intro { max-width:740px; color:var(--muted); margin:0 0 28px; }
+    .workshop { display:grid; grid-template-columns:1.05fr 1fr; gap:24px; }
+    .stage { min-height:460px; border-radius:28px; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; background:var(--charcoal); color:#f6f1e8; overflow:hidden; border:1px solid #35373d; transition:background .18s; }
+    .stage.light { background:#eeebe5; color:var(--ink); border-color:#d7d2c9; }
+    .stage .creature { width:285px; height:285px; }
+    .stage-caption { margin-top:12px; display:flex; gap:10px; align-items:center; font-weight:500; }
+    .stage-caption span:first-child { width:6px; height:6px; border-radius:50%; background:var(--amber); }
+    .stage .technical { color:inherit; opacity:.55; font:11px/1.4 ui-monospace,SFMono-Regular,monospace; position:absolute; bottom:21px; }
+    .stage-top { position:absolute; top:20px; left:24px; font-size:12px; opacity:.55; }
+    .right { padding:4px 0; }
+    .section-label { font-size:12px; color:var(--muted); margin:0 0 10px; font-weight:600; }
+    .states { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+    .states button { border:1px solid var(--line); background:#fcfbf8; border-radius:12px; min-height:60px; padding:9px 4px; font-size:13px; color:var(--ink); }
+    .states button small { display:block; color:var(--muted); font:10px/1.4 ui-monospace,SFMono-Regular,monospace; }
+    .states button[aria-pressed="true"] { background:var(--charcoal); color:#ffce83; border-color:var(--charcoal); }
+    .states button[aria-pressed="true"] small { color:#c4aa83; }
+    .state-detail { min-height:113px; padding:19px 0 16px; }
+    .state-detail h2 { margin:0 0 3px; font-size:20px; }
+    .state-detail p { font-size:13px; color:var(--muted); margin:0; }
+    .badges { display:flex; gap:7px; margin-top:11px; flex-wrap:wrap; }
+    .badge { border:1px solid var(--line); border-radius:6px; padding:2px 7px; font:11px/1.6 ui-monospace,SFMono-Regular,monospace; color:#636368; }
+    .toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:14px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+    .play { background:var(--amber); color:#332313; border:0; border-radius:9px; padding:8px 15px; font-size:13px; font-weight:600; min-width:90px; }
+    .replay { background:transparent; color:var(--ink); border:1px solid var(--line); border-radius:9px; padding:7px 13px; font-size:13px; }
+    label { display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; }
+    input { accent-color:#a26413; width:16px; height:16px; }
+    .backgrounds { display:flex; gap:9px; align-items:center; margin-top:16px; font-size:12px; color:var(--muted); }
+    .backgrounds button { border:1px solid var(--line); border-radius:20px; padding:5px 12px; font-size:12px; background:transparent; color:var(--ink); }
+    .backgrounds button[aria-pressed="true"] { border-color:#9c6a27; box-shadow:inset 0 0 0 1px #9c6a27; }
+    #playback-status { margin-top:13px; font-size:12px; color:var(--muted); min-height:20px; }
+    .below { margin-top:40px; display:grid; grid-template-columns:1fr 1.05fr; gap:24px; }
+    .below h2 { font-size:17px; margin:0 0 14px; }
+    .size-strip { background:#eae6df; border:1px solid var(--line); border-radius:20px; min-height:195px; display:flex; align-items:center; justify-content:space-evenly; gap:8px; padding:14px; }
+    .size-item { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; align-self:flex-end; gap:8px; }
+    .size-item span { color:var(--muted); font:11px/1.4 ui-monospace,SFMono-Regular,monospace; }
+    .size-strip .creature { flex:none; }
+    .terminal { background:#1b1d21; color:#e5e5e7; border:1px solid #35373d; border-radius:16px; overflow:hidden; }
+    .terminal-title { height:49px; display:flex; align-items:center; padding:0 16px; gap:7px; background:#282a2f; }
+    .traffic { width:8px; height:8px; border-radius:50%; background:#66666a; }
+    .terminal-title .name { margin-left:8px; font-size:11px; color:#b4b4ba; }
+    .terminal-status { margin-left:auto; display:flex; align-items:center; gap:5px; font-size:11px; color:#e4be81; }
+    .terminal-status .creature { width:32px; height:32px; }
+    .terminal pre { margin:0; padding:17px 21px; min-height:143px; white-space:pre-wrap; font:12px/1.9 ui-monospace,SFMono-Regular,Consolas,monospace; color:#c1c2c7; }
+    .hint { font-size:12px; color:var(--muted); margin:10px 0 0; }
+    footer { margin-top:36px; padding-top:22px; border-top:1px solid var(--line); font-size:12px; color:var(--muted); }
+    a { color:#80531d; text-underline-offset:3px; }
+    .creature { display:block; overflow:visible; }
+    .creature [data-part="pose"] { transform-box:fill-box; transform-origin:53% 51%; }
+    .creature [data-part="tail"] { transform-box:fill-box; transform-origin:82% 8%; }
+    .creature [data-part="ear"] { transform-box:fill-box; transform-origin:90% 10%; }
+    .creature [data-part="eyes"] { transform-box:fill-box; transform-origin:50% 50%; animation:blink 7.2s infinite; }
+    .creature [data-part="accent"] { transform-box:fill-box; transform-origin:0% 100%; }
+    [data-state="working"] .creature [data-part="eyes"] { transform:translateY(3px); }
+    [data-state="working"] .creature [data-part="tail"] { animation:work-tail 3.2s ease-in-out infinite; }
+    [data-state="thinking"] .creature [data-part="eyes"] { transform:translate(-2px,-3px); }
+    [data-state="thinking"] .creature [data-part="ear"] { animation:think-ear 4.8s ease-in-out infinite; }
+    [data-state="success"] .creature [data-part="pose"] { animation:success-nod .9s ease-out 1; }
+    [data-state="success"] .creature [data-part="eyes"], [data-state="sleep"] .creature [data-part="eyes"] { opacity:0; animation:none; }
+    [data-state="success"] .creature [data-part="eyelids"], [data-state="sleep"] .creature [data-part="eyelids"] { opacity:1; }
+    [data-state="success"] .creature [data-part="accent"] { animation:success-rays .9s ease-out 1; }
+    [data-state="attention"] .creature [data-part="pose"] { animation:attention-lean 1.2s ease-out 1 forwards; }
+    [data-state="attention"] .creature [data-part="ear"] { transform:rotate(9deg); }
+    [data-state="error"] .creature [data-part="ear"] { animation:error-ear .45s ease-out 1 forwards; }
+    [data-state="error"] .creature [data-part="eyes"] { transform:scaleY(.65); }
+    [data-state="sleep"] .creature [data-part="pose"] { animation:sleep-breath 5.2s ease-in-out infinite; }
+    [data-state="greeting"] .creature [data-part="pose"] { animation:greeting-lean 1.1s ease-out 1; }
+    [data-state="greeting"] .creature [data-part="tail"] { animation:greeting-tail 1.1s ease-in-out 1; }
+    [data-playing="false"] .creature * { animation-play-state:paused!important; }
+    [data-reduced="true"] .creature *, .creature.still * { animation:none!important; transition:none!important; }
+    [data-reduced="true"][data-state="attention"] .creature [data-part="pose"], [data-state="attention"] .creature.still [data-part="pose"] { transform:rotate(2deg); }
+    [data-reduced="true"][data-state="error"] .creature [data-part="ear"], [data-state="error"] .creature.still [data-part="ear"] { transform:rotate(-7deg); }
+    [data-reduced="true"] .creature [data-part="accent"], .creature.still [data-part="accent"] { opacity:0!important; }
+    @keyframes blink { 0%,93.5%,96%,100% { scale:1 1; } 94.6%,95% { scale:1 .08; } }
+    @keyframes work-tail { 0%,30%,100% { transform:rotate(0); } 45% { transform:rotate(2deg); } 65% { transform:rotate(-1deg); } }
+    @keyframes think-ear { 0%,55%,100% { transform:rotate(0); } 64% { transform:rotate(5deg); } 75% { transform:rotate(0); } }
+    @keyframes success-nod { 0%,100% { transform:rotate(0); } 32% { transform:rotate(4deg) translateY(2px); } 65% { transform:rotate(-1deg); } }
+    @keyframes success-rays { 0%,100% { opacity:0; transform:scale(.8); } 35%,65% { opacity:1; transform:scale(1); } }
+    @keyframes attention-lean { from { transform:rotate(0); } to { transform:rotate(2deg); } }
+    @keyframes error-ear { from { transform:rotate(0); } to { transform:rotate(-7deg); } }
+    @keyframes sleep-breath { 0%,100% { transform:scale(1); } 50% { transform:scale(1.008); } }
+    @keyframes greeting-lean { 0%,100% { transform:rotate(0); } 35% { transform:rotate(-3deg); } 70% { transform:rotate(1deg); } }
+    @keyframes greeting-tail { 0%,100% { transform:rotate(0); } 25% { transform:rotate(5deg); } 55% { transform:rotate(-3deg); } 80% { transform:rotate(2deg); } }
+    @media (prefers-reduced-motion:reduce) { body:not([data-reduced="false"]) * { animation:none!important; transition:none!important; } }
+    @media (max-width:760px) { main { width:calc(100% - 28px); margin:30px auto; } .workshop,.below { grid-template-columns:1fr; } .stage { min-height:370px; } .stage .creature { width:245px; height:245px; } .states { grid-template-columns:repeat(4,1fr); } .below { margin-top:28px; } }
+  </style>
+</head>
+<body data-state="idle" data-playing="true" data-reduced="false">
+<main>
+  <header>
+    <div class="eyebrow">FOLMI / MOTION STUDY 01</div>
+    <h1>一个安静、有点好奇的 f。</h1>
+    <p class="intro">炭黑与琥珀。把动作留给眼睛、折耳和卷尾，让它在你需要时回应，平常安静地陪着。以下为设计预览，尚未接入 App 任务。</p>
+  </header>
+  <div class="workshop">
+    <div class="stage" id="stage">
+      <span class="stage-top">D3 · 琥珀 F 精灵</span>
+      <div class="mascot-slot hero" aria-label="Folmi 大尺寸动作预览"></div>
+      <div class="stage-caption"><span></span><span id="stage-label">待命</span></div>
+      <span class="technical">CHARCOAL #222429 &nbsp; / &nbsp; AMBER #E9AA47</span>
+    </div>
+    <div class="right">
+      <p class="section-label">选择状态</p>
+      <div class="states" role="group" aria-label="精灵状态">
+        <button type="button" data-select="idle" aria-pressed="true">待命<small>idle</small></button>
+        <button type="button" data-select="working" aria-pressed="false">工作中<small>working</small></button>
+        <button type="button" data-select="thinking" aria-pressed="false">思考中<small>thinking</small></button>
+        <button type="button" data-select="success" aria-pressed="false">已完成<small>success</small></button>
+        <button type="button" data-select="attention" aria-pressed="false">需要你<small>attention</small></button>
+        <button type="button" data-select="error" aria-pressed="false">遇到问题<small>error</small></button>
+        <button type="button" data-select="sleep" aria-pressed="false">休息<small>sleep</small></button>
+        <button type="button" data-select="greeting" aria-pressed="false">你好呀<small>greeting</small></button>
+      </div>
+      <div class="state-detail">
+        <h2 id="state-name">待命</h2>
+        <p id="state-description">身体保持安静，每隔一会儿眨一下眼。没有常驻跳动。</p>
+        <div class="badges"><span class="badge" id="duration">7200 ms</span><span class="badge" id="loop">循环</span><span class="badge" id="priority">优先级 0</span></div>
+      </div>
+      <div class="toolbar">
+        <button type="button" class="play" id="play" aria-pressed="false">暂停动作</button>
+        <button type="button" class="replay" id="replay">重新播放</button>
+        <label><input type="checkbox" id="reduce">减少动态</label>
+      </div>
+      <div class="backgrounds" role="group" aria-label="预览背景">
+        背景 <button type="button" data-background="dark" aria-pressed="true">炭黑</button><button type="button" data-background="light" aria-pressed="false">浅灰</button>
+      </div>
+      <div id="playback-status" role="status" aria-live="polite">循环预览 · 待命</div>
+      <p class="hint">单次动作结束后保留表情，方便比较。真实业务应在完成后切回持续状态；暂停仅控制此预览。</p>
+    </div>
+  </div>
+  <div class="below">
+    <section aria-labelledby="sizes-title">
+      <h2 id="sizes-title">缩小以后，还是那个 f。</h2>
+      <div class="size-strip">
+        <div class="size-item"><div class="mascot-slot" data-size="128"></div><span>128</span></div>
+        <div class="size-item"><div class="mascot-slot" data-size="64"></div><span>64</span></div>
+        <div class="size-item"><div class="mascot-slot" data-size="32"></div><span>32</span></div>
+        <div class="size-item"><div class="mascot-slot" data-size="24"></div><span>24</span></div>
+        <div class="size-item"><div class="mascot-slot" data-size="16"></div><span>16</span></div>
+      </div>
+      <p class="hint">32 px 起播放动作；16 / 24 px 始终静止，避免细节颤动。16 px 去掉高光。</p>
+    </section>
+    <section aria-labelledby="terminal-title">
+      <h2 id="terminal-title">在标题栏留一个小位置。</h2>
+      <div class="terminal">
+        <div class="terminal-title"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><span class="name">模拟终端</span><span class="terminal-status"><span class="mascot-slot" data-size="32"></span><span id="terminal-label">待命</span></span></div>
+        <pre id="terminal-output">$ git diff --stat
+[模拟输出] 等待查看改动
+
+此处只演示位置，不执行命令。</pre>
+      </div>
+      <p class="hint">角色占用独立配件位，文字区保持原样。状态文案和角色同时出现。</p>
+    </section>
+  </div>
+  <footer>可动画 SVG 是依照 D3 制作的简化矢量重绘，非自动精确描摹。<a href="folmi-motion.md">动作规范</a> · <a href="../../Sources/Folmi/Resources/Brand/Mascot/folmi-mascot.svg">分层 SVG</a> · <a href="../../Sources/Folmi/Resources/Brand/Mascot/motion.json">状态参数 JSON</a></footer>
+</main>
+<template id="mascot-art">
+  <svg class="creature" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" aria-hidden="true">
+    <g data-part="pose">
+      <g data-part="tail" fill="#E9AA47"><path d="M237 333H311V355C311 416 278 449 224 449C180 449 147 429 138 395C132 373 140 353 155 351C171 349 177 363 184 375C194 392 204 397 216 393C233 387 237 375 237 355Z"/></g>
+      <g data-part="body" fill="#E9AA47"><path d="M238 205V169C238 100 278 61 338 61C385 61 408 91 408 119C408 151 390 164 355 165C322 164 312 173 311 204V210H356C377 210 386 219 386 234C386 251 377 260 357 260H311V351H237V271C237 263 234 260 226 260H204C182 260 175 251 175 235C175 218 183 210 205 210H230C236 210 238 208 238 205Z"/><path d="M264 146C271 106 300 83 337 81" stroke="#FFD58D" stroke-width="7" stroke-linecap="round" opacity=".32"/></g>
+      <g data-part="ear"><path d="M295 77C281 87 263 104 253 123C246 136 236 143 228 138C218 131 223 117 231 105C247 84 269 75 295 77Z" fill="#E9AA47"/><path d="M290 82C280 102 269 123 253 132" stroke="#BA7A29" stroke-width="4" stroke-linecap="round" opacity=".55"/></g>
+      <g data-part="eyes"><g data-part="eye-left" transform="rotate(-12 351 119)"><ellipse cx="351" cy="119" rx="9" ry="14" fill="#222429"/><ellipse cx="353" cy="114" rx="2" ry="3" fill="#FFF4DC" opacity=".9"/></g><g data-part="eye-right" transform="rotate(-12 386 109)"><ellipse cx="386" cy="109" rx="8" ry="13" fill="#222429"/><ellipse cx="388" cy="104" rx="1.8" ry="2.8" fill="#FFF4DC" opacity=".9"/></g></g>
+      <g data-part="eyelids" stroke="#222429" stroke-width="5" stroke-linecap="round" opacity="0"><path d="M344 121Q351 125 358 119M379 111Q386 115 393 109"/></g>
+    </g>
+    <g data-part="accent" stroke="#E9AA47" stroke-width="5" stroke-linecap="round" opacity="0"><path d="M419 65V49M434 72L445 61M426 89H442"/></g>
+  </svg>
+</template>
+<script>
+  // The manifest is deliberately inline: direct file:// playback needs no fetch.
+  // Keep durations, looping and priorities aligned with Brand/Mascot/motion.json.
+  const states = {
+    idle:{label:'待命',durationMs:7200,loop:true,priority:0,description:'身体保持安静，每隔一会儿眨一下眼。没有常驻跳动。',terminal:'等待查看改动'},
+    working:{label:'工作中',durationMs:3200,loop:true,priority:20,description:'低头专注一点，尾巴轻轻扫过。动作不代表进度。',terminal:'正在读取改动（模拟）'},
+    thinking:{label:'思考中',durationMs:4800,loop:true,priority:20,description:'视线往上，折耳轻动，像在琢磨你的问题。',terminal:'等待 AI 回应（模拟）'},
+    success:{label:'已完成',durationMs:900,loop:false,priority:40,description:'开心地闭眼，轻点一次头。琥珀光线短暂出现。',terminal:'已完成改动摘要（模拟）'},
+    attention:{label:'需要你看看',durationMs:1200,loop:false,priority:60,description:'耳朵抬起，轻轻偏一下头，随后安静等待你的决定。',terminal:'有一项决定需要你确认（模拟）'},
+    error:{label:'遇到问题',durationMs:450,loop:false,priority:80,description:'折耳垂下来，眼睛收窄。保持稳定，不抖屏、不红闪。',terminal:'读取遇到问题，请查看详情（模拟）'},
+    sleep:{label:'休息',durationMs:5200,loop:true,priority:5,description:'闭眼休息，只有很轻的呼吸。离屏后应完全暂停。',terminal:'当前没有任务（模拟）'},
+    greeting:{label:'你好呀',durationMs:1100,loop:false,priority:10,description:'尾巴挥一下，身体轻轻偏过来。每次会话只打一次招呼。',terminal:'Folmi 已准备好（模拟）'}
+  };
+  const body=document.body, template=document.getElementById('mascot-art');
+  const systemReduce=matchMedia('(prefers-reduced-motion: reduce)');
+  let current='idle', playing=true, reduced=systemReduce.matches, finished=false;
+  let manuallySetReduce=false;
+  document.querySelectorAll('.mascot-slot').forEach(slot=>{
+    const art=template.content.firstElementChild.cloneNode(true);
+    const size=Number(slot.dataset.size||0);
+    if(size){art.style.width=size+'px';art.style.height=size+'px';}
+    if(size && size<32) art.classList.add('still');
+    if(size===16) art.querySelectorAll('[fill="#FFF4DC"], [stroke="#FFD58D"]').forEach(n=>n.remove());
+    slot.append(art);
+  });
+  function announce(){
+    const state=states[current];
+    document.getElementById('playback-status').textContent=reduced?'已减少动态 · 静态表情与文字保留':!playing?'动作已暂停 · 任务示例不受影响':finished?'单次动作已结束 · 保留表情':(state.loop?'循环预览':'单次动作')+' · '+state.label;
+  }
+  function selectState(key){
+    current=key;finished=false;
+    // Restart only when explicitly selecting or replaying a state.
+    body.dataset.state='reset';void body.offsetWidth;body.dataset.state=key;
+    const state=states[key];
+    document.querySelectorAll('[data-select]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.select===key)));
+    document.getElementById('stage-label').textContent=state.label;
+    document.getElementById('terminal-label').textContent=state.label;
+    document.getElementById('state-name').textContent=state.label;
+    document.getElementById('state-description').textContent=state.description;
+    document.getElementById('duration').textContent=state.durationMs+' ms';
+    document.getElementById('loop').textContent=state.loop?'循环':'仅一次';
+    document.getElementById('priority').textContent='优先级 '+state.priority;
+    document.getElementById('terminal-output').textContent='$ git diff --stat\n[模拟输出] '+state.terminal+'\n\n此处只演示位置，不执行命令。';
+    announce();
+  }
+  document.querySelectorAll('[data-select]').forEach(button=>button.addEventListener('click',()=>selectState(button.dataset.select)));
+  document.getElementById('play').addEventListener('click',()=>{
+    playing=!playing;body.dataset.playing=String(playing);
+    const button=document.getElementById('play');button.textContent=playing?'暂停动作':'继续动作';button.setAttribute('aria-pressed',String(!playing));announce();
+  });
+  document.getElementById('replay').addEventListener('click',()=>selectState(current));
+  const reduce=document.getElementById('reduce');
+  function applyReduced(value){reduced=value;reduce.checked=value;body.dataset.reduced=String(value);announce();}
+  reduce.addEventListener('change',()=>{manuallySetReduce=true;applyReduced(reduce.checked);});
+  systemReduce.addEventListener('change',event=>{if(!manuallySetReduce) applyReduced(event.matches);});
+  document.querySelectorAll('[data-background]').forEach(button=>button.addEventListener('click',()=>{
+    document.getElementById('stage').classList.toggle('light',button.dataset.background==='light');
+    document.querySelectorAll('[data-background]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));
+  }));
+  document.querySelector('.hero').addEventListener('animationend',event=>{
+    const endNames={success:'success-nod',attention:'attention-lean',error:'error-ear',greeting:'greeting-lean'};
+    if(event.animationName===endNames[current]){finished=true;announce();}
+  });
+  // Pause all visible previews while the page is hidden without changing user controls.
+  document.addEventListener('visibilitychange',()=>{
+    body.dataset.playing=String(playing&&!document.hidden);
+  });
+  applyReduced(reduced);
+  window.folmiPreview={states,selectState,get state(){return current;},get reduced(){return reduced;},get playing(){return playing;}};
+</script>
+</body>
+</html>

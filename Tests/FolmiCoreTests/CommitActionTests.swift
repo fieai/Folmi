@@ -1,0 +1,153 @@
+import XCTest
+@testable import FolmiCore
+
+private final class ActionFixture {
+    let directory: URL
+    let home: URL
+    let environment: [String: String]
+    let repo: GitRepository
+    init(directoryName: String = "repo") throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("folmi-test-" + UUID().uuidString, isDirectory: true)
+        directory = temp.appendingPathComponent(directoryName, isDirectory: true)
+        home = temp.appendingPathComponent("isolated-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        environment = ["HOME": home.path, "XDG_CONFIG_HOME": home.appendingPathComponent(".config").path,
+                       "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"]
+        repo = GitRepository(url: directory, environment: environment)
+        _ = try git(["init", "--template=", "--initial-branch=main"])
+        _ = try git(["config", "user.name", "Folmi Test"])
+        _ = try git(["config", "user.email", "folmi@example.invalid"])
+        _ = try git(["config", "core.hooksPath", "/dev/null"])
+        _ = try git(["config", "commit.gpgsign", "false"])
+    }
+    deinit { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+    @discardableResult func git(_ args: [String]) throws -> String { try GitProcess(directory: directory, environment: environment).run(args).text }
+    func write(_ path: String, _ text: String) throws {
+        let url = directory.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url)
+    }
+    func read(_ path: String) throws -> String { try String(contentsOf: directory.appendingPathComponent(path), encoding: .utf8) }
+    func initial(_ path: String = "sample.txt", _ text: String = "one\ntwo\nthree\nfour\nfive\nsix\n") throws {
+        try write(path, text); try git(["add", "--", path]); try git(["commit", "-m", "Initial"])
+    }
+    func index(_ path: String = "sample.txt") throws -> String { try git(["show", ":" + path]) }
+}
+
+
+
+final class CommitActionTests: XCTestCase {
+    private func head(_ f: ActionFixture) throws -> String { try f.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines) }
+    private func fingerprint(_ f: ActionFixture) async throws -> String { try await f.repo.load().fingerprint }
+
+    func testRewordChangesOnlyTheLatestUnpushedMessage() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write("sample.txt", "changed\n"); try f.git(["commit", "-am", "Second"])
+        let second = try head(f)
+        // Staged work stays staged and out of the reworded commit.
+        try f.write("other.txt", "x\n"); try f.git(["add", "other.txt"])
+        let new = try await f.repo.reword(second, message: "Second, better\n", expectedFingerprint: try await fingerprint(f))
+        XCTAssertNotEqual(new, second)
+        XCTAssertEqual(try f.git(["log", "-1", "--format=%B"]).trimmingCharacters(in: .whitespacesAndNewlines), "Second, better")
+        XCTAssertEqual(try f.git(["show", "--name-only", "--format=", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines), "sample.txt")
+        XCTAssertEqual(try f.git(["diff", "--cached", "--name-only"]).trimmingCharacters(in: .whitespacesAndNewlines), "other.txt")
+        // Not the latest commit: refused.
+        let first = try f.git(["rev-parse", "HEAD~1"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        do { _ = try await f.repo.reword(first, message: "x", expectedFingerprint: try await fingerprint(f)); XCTFail("只能改最新提交") }
+        catch {}
+    }
+
+    func testRewordRefusesAPushedCommit() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let remote = f.directory.deletingLastPathComponent().appendingPathComponent("remote.git")
+        try f.git(["init", "--bare", "--template=", remote.path])
+        try f.git(["remote", "add", "origin", remote.path]); try f.git(["push", "-q", "origin", "main"]); try f.git(["fetch", "-q", "origin"])
+        let ability = try await f.repo.abilities(of: try head(f))
+        XCTAssertTrue(ability.pushed); XCTAssertTrue(ability.isHead)
+        do { _ = try await f.repo.reword(try head(f), message: "x", expectedFingerprint: try await fingerprint(f)); XCTFail("已推送不能改") }
+        catch {}
+        let unpushed = try await f.repo.load().unpushed
+        XCTAssertEqual(unpushed, 0)
+    }
+
+    func testRevertAndCherryPickLandInTheStagingArea() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write("sample.txt", "one\nTWO\nthree\nfour\nfive\nsix\n"); try f.git(["commit", "-am", "Shout two"])
+        let shout = try head(f)
+        let staged = try await f.repo.applyCommit(shout, kind: .revert, expectedFingerprint: try await fingerprint(f))
+        XCTAssertEqual(staged, ["sample.txt"])
+        XCTAssertEqual(try f.index(), "one\ntwo\nthree\nfour\nfive\nsix\n")
+        XCTAssertEqual(try head(f), shout, "没有自动提交")
+        let message = try await f.repo.suggestedMessage(for: shout, kind: .revert)
+        XCTAssertTrue(message.hasPrefix("Revert \"Shout two\""), message)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent(".git/REVERT_HEAD").path))
+
+        // Cherry-pick a commit from another branch.
+        try f.git(["reset", "-q", "--hard", "HEAD"])
+        try f.git(["switch", "-q", "-c", "side"]); try f.write("side.txt", "side\n"); try f.git(["add", "side.txt"]); try f.git(["commit", "-qm", "Side file"])
+        let side = try head(f)
+        try f.git(["switch", "-q", "main"])
+        let onMain = try await f.repo.abilities(of: side)
+        XCTAssertFalse(onMain.onCurrentBranch)
+        let picked = try await f.repo.applyCommit(side, kind: .cherryPick, expectedFingerprint: try await fingerprint(f))
+        XCTAssertEqual(picked, ["side.txt"])
+        XCTAssertEqual(try f.read("side.txt"), "side\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent(".git/CHERRY_PICK_HEAD").path))
+    }
+
+    func testApplyNeedsACleanTreeAndRollsBackAConflict() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write("sample.txt", "one\nTWO\nthree\nfour\nfive\nsix\n"); try f.git(["commit", "-am", "Shout two"])
+        let shout = try head(f)
+        try f.write("sample.txt", "dirty\n")
+        do { _ = try await f.repo.applyCommit(shout, kind: .revert, expectedFingerprint: try await fingerprint(f)); XCTFail("工作区不干净") }
+        catch {}
+        XCTAssertEqual(try f.read("sample.txt"), "dirty\n", "用户的改动不能动")
+        try f.git(["checkout", "--", "sample.txt"])
+        // A later commit rewrites the same line, so reverting the earlier one conflicts.
+        try f.write("sample.txt", "one\nTwo!\nthree\nfour\nfive\nsix\n"); try f.git(["commit", "-am", "Again"])
+        let before = try head(f)
+        do { _ = try await f.repo.applyCommit(shout, kind: .revert, expectedFingerprint: try await fingerprint(f)); XCTFail("应当冲突") }
+        catch { XCTAssertTrue("\(error)".contains("冲突") || (error as? LocalizedError)?.errorDescription?.contains("冲突") == true, "\(error)") }
+        XCTAssertEqual(try head(f), before)
+        let files = try await f.repo.load().files
+        XCTAssertTrue(files.isEmpty, "冲突后恢复原样")
+    }
+
+    func testBranchFromACommitAndCompareTwoCommits() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let first = try head(f)
+        try f.write("a.txt", "a\n"); try f.git(["add", "a.txt"]); try f.git(["commit", "-qm", "Add a"])
+        try f.write("sample.txt", "changed\n"); try f.git(["commit", "-qam", "Change sample"])
+        try await f.repo.createBranch("fix/old", at: first)
+        XCTAssertEqual(try f.git(["rev-parse", "fix/old"]).trimmingCharacters(in: .whitespacesAndNewlines), first)
+        XCTAssertEqual(try f.git(["branch", "--show-current"]).trimmingCharacters(in: .whitespacesAndNewlines), "main", "不切换")
+        do { try await f.repo.createBranch("fix/old", at: first); XCTFail("重名") } catch {}
+        do { try await f.repo.createBranch("bad name", at: first); XCTFail("无效名") } catch {}
+        let compared = try await f.repo.compareDetail(base: first, target: try head(f))
+        XCTAssertEqual(Set(compared.files.map(\.path)), ["a.txt", "sample.txt"])
+        let diff = try await f.repo.compareDiff(base: first, target: try head(f), file: try XCTUnwrap(compared.files.first { $0.path == "sample.txt" }))
+        XCTAssertTrue(diff.rawPatch.contains("+changed"))
+    }
+
+    func testUndoTakesARevertBackOut() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write("new.txt", "new\n"); try f.git(["add", "new.txt"]); try f.git(["commit", "-qm", "Add new"])
+        let added = try head(f)
+        // What the app captures before reverting: index and work tree of the commit's files.
+        let step = UndoStep.group([try await f.repo.captureIndex(["new.txt"]), try await f.repo.captureWorktree(["new.txt"])])
+        _ = try await f.repo.applyCommit(added, kind: .revert, expectedFingerprint: try await fingerprint(f))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("new.txt").path))
+        _ = try await f.repo.undo(step)
+        XCTAssertEqual(try f.read("new.txt"), "new\n")
+        let files = try await f.repo.load().files
+        XCTAssertTrue(files.isEmpty, "\(files)")
+    }
+}

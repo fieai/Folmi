@@ -1,0 +1,5 @@
+The bundled fusion-pixel-12px-monospaced-zh_hans.otf is a subset of Fusion Pixel Font 2026.09.25
+(https://github.com/TakWolf/fusion-pixel-font): only ASCII / Latin-1, punctuation and symbols, the GB2312
+characters and the characters used by Folmi's interface are kept, and hinting is dropped. No glyph was
+changed. It is distributed under the same SIL Open Font License 1.1 (OFL.txt). The original file is kept in the
+source repository at third_party/fonts/; scripts/subset-pixel-font.py makes the subset.

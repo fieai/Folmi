@@ -1,0 +1,25 @@
+.build/
+dist/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+.DS_Store
+site/downloads/
+__pycache__/
+
+# Local only: server deploy, signing / notarization, and development records
+scripts/deploy.sh
+scripts/deploy-site.py
+scripts/deploy-dmg.py
+scripts/test-deploy.py
+scripts/beta.sh
+scripts/beta-dmg/
+scripts/release.sh
+scripts/test-release.sh
+docs/distribution.md
+docs/distribution.html
+docs/verification*
+docs/test-output-*
+docs/build-output-*
+docs/source-manifest-*
+docs/progress-v0.5.md
+docs/acceptance-v0.6.md

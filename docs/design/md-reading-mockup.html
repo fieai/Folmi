@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark" data-glass="on" data-mode="read">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markdown 阅读编辑样式稿</title>
+<style>
+:root {
+  --font: -apple-system, "PingFang SC", "SF Pro Text", sans-serif;
+  --mono: "SF Mono", Menlo, monospace;
+}
+[data-theme="dark"] {
+  --wall: radial-gradient(1200px 700px at 15% 10%, #3a4a78 0%, transparent 60%),
+          radial-gradient(900px 600px at 90% 90%, #5b3a6e 0%, transparent 60%),
+          linear-gradient(160deg, #1d2740, #241c33);
+  --win: rgba(30, 33, 42, .55);
+  --rail: rgba(40, 44, 56, .28);
+  --card: rgba(24, 26, 32, .80);
+  --card-read: rgba(24, 26, 32, .86);
+  --term: rgba(14, 15, 19, .93);
+  --hair: rgba(255, 255, 255, .09);
+  --edge: rgba(255, 255, 255, .10);
+  --text: #e8e9ed; --text2: #a3a7b3; --text3: #6f7480;
+  --accent: #5aa2ff; --accent-bg: rgba(90, 162, 255, .16);
+  --add: #4cc38a; --mod: #e9a35a; --del: #ef6b6b;
+  --sel: rgba(90, 162, 255, .28);
+  --code: rgba(255, 255, 255, .045);
+  --pop: rgba(48, 51, 62, .78);
+  --chip: rgba(255, 255, 255, .06);
+}
+[data-theme="light"] {
+  --wall: radial-gradient(1200px 700px at 15% 10%, #b9d0ff 0%, transparent 60%),
+          radial-gradient(900px 600px at 90% 90%, #f1c8e0 0%, transparent 60%),
+          linear-gradient(160deg, #dfe7f5, #efe4f0);
+  --win: rgba(246, 247, 250, .55);
+  --rail: rgba(255, 255, 255, .30);
+  --card: rgba(255, 255, 255, .80);
+  --card-read: rgba(255, 255, 255, .88);
+  --term: rgba(250, 250, 252, .95);
+  --hair: rgba(0, 0, 0, .08);
+  --edge: rgba(255, 255, 255, .75);
+  --text: #1d1e22; --text2: #5c606b; --text3: #9195a0;
+  --accent: #1f6fe0; --accent-bg: rgba(31, 111, 224, .10);
+  --add: #1f9d62; --mod: #c9771c; --del: #d24545;
+  --sel: rgba(31, 111, 224, .18);
+  --code: rgba(0, 0, 0, .04);
+  --pop: rgba(255, 255, 255, .82);
+  --chip: rgba(0, 0, 0, .05);
+}
+[data-glass="off"] { --win: #23262f; --rail: #262a34; --card: #1b1d23; --card-read: #1b1d23; --term: #121317; --pop: #30333e; }
+[data-theme="light"][data-glass="off"] { --win: #eef0f4; --rail: #e9ecf1; --card: #fff; --card-read: #fff; --term: #fafafc; --pop: #fff; }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body { background: var(--wall); background-attachment: fixed; font-family: var(--font); color: var(--text);
+  padding: 28px 16px 40px; -webkit-font-smoothing: antialiased; }
+.controls { max-width: 1320px; margin: 0 auto 16px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; color: var(--text); font-size: 13px; }
+.controls .group { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--win); backdrop-filter: blur(20px); border: 1px solid var(--hair); }
+.controls button { font: inherit; color: var(--text2); background: transparent; border: 0; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+.controls button.on { background: var(--chip); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair); }
+.controls .label { color: var(--text2); margin-left: 6px; }
+
+.window { min-width: 1180px; max-width: 1320px; height: 880px; margin: 0 auto; display: grid;
+  grid-template-columns: 272px minmax(0, 1fr); grid-template-rows: 46px minmax(0, 1fr); gap: 10px; padding: 0 10px 10px;
+  border-radius: 16px; overflow: hidden; background: var(--win);
+  backdrop-filter: blur(48px) saturate(1.7); -webkit-backdrop-filter: blur(48px) saturate(1.7);
+  box-shadow: 0 30px 80px rgba(0,0,0,.35), inset 0 1px 0 var(--edge), 0 0 0 1px var(--hair); }
+.titlebar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 0 6px; font-size: 12.5px; color: var(--text2); white-space: nowrap; }
+.lights { display: flex; gap: 8px; margin-right: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.titlebar b { color: var(--text); font-weight: 600; font-size: 13px; }
+.branch { font-family: var(--mono); font-size: 11px; color: var(--text2); background: var(--chip); padding: 2px 7px; border-radius: 5px; }
+.search { display: flex; align-items: center; gap: 8px; width: 340px; margin: 0 auto; border-radius: 8px; padding: 5px 10px; background: var(--chip); box-shadow: inset 0 0 0 1px var(--hair); color: var(--text3); }
+.search kbd { margin-left: auto; font-family: var(--font); font-size: 11px; }
+.panes { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--chip); }
+.panes span { padding: 3px 9px; border-radius: 6px; }
+.panes span.on { background: var(--card); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair); }
+
+.col { display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; }
+.right { display: grid; grid-template-rows: minmax(0, 1fr) 236px; gap: 10px; min-height: 0; min-width: 0; }
+
+.card { background: var(--card); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  box-shadow: inset 0 1px 0 var(--edge), 0 0 0 1px var(--hair), 0 6px 18px rgba(0,0,0,.14);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+.card.focus { box-shadow: inset 0 1px 0 var(--edge), 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent), 0 6px 18px rgba(0,0,0,.14); }
+.chead { white-space: nowrap; height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; font-size: 12px; color: var(--text2); }
+.chead .t { color: var(--text); font-weight: 600; font-size: 13px; }
+.chead .sub { color: var(--text3); }
+.chead .sp { flex: 1; }
+.hb { color: var(--text3); font-size: 13px; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; }
+.hb:hover { background: var(--chip); color: var(--text); }
+
+/* files */
+.files { flex: 0 0 44%; }
+.tree { flex: 1; overflow: auto; padding: 0 6px 8px; }
+.item { display: flex; align-items: center; gap: 7px; padding: 4px 8px; border-radius: 7px; font-size: 13px; color: var(--text); cursor: default; white-space: nowrap; }
+.item .ic { width: 12px; color: var(--text3); font-size: 11px; text-align: center; flex: none; }
+.item.d1 { padding-left: 26px; } .item.d2 { padding-left: 44px; }
+.item.dir { color: var(--text2); }
+.item .dot { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.item.on { background: var(--accent-bg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* changes */
+.changes { flex: 1; }
+.seg { display: flex; margin: 0 10px 6px; padding: 2px; border-radius: 7px; background: var(--chip); font-size: 12px; }
+.seg span { flex: 1; text-align: center; padding: 4px 0; border-radius: 5px; color: var(--text2); }
+.seg span.on { background: var(--card); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair); }
+.chg { display: flex; align-items: center; gap: 8px; padding: 5px 14px; font-size: 12.5px; white-space: nowrap; }
+.chg .st { font-family: var(--mono); font-size: 11px; width: 12px; }
+.chg .n { margin-left: auto; font-family: var(--mono); font-size: 11px; }
+.chg.on { background: var(--accent-bg); }
+.commit { margin: auto 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+.commit .cbox { border-radius: 9px; background: var(--chip); box-shadow: inset 0 0 0 1px var(--hair); padding: 8px 10px; font-size: 12px; color: var(--text3); height: 64px; }
+.commit .row { display: flex; gap: 6px; font-size: 12px; }
+.commit .row span { padding: 5px 10px; border-radius: 7px; background: var(--chip); color: var(--text2); }
+.commit .row .go { margin-left: auto; background: var(--accent); color: #fff; }
+
+/* editor card */
+.tabs { display: flex; align-items: center; gap: 2px; }
+.tab { padding: 4px 10px; border-radius: 6px; font-size: 12px; color: var(--text2); display: flex; align-items: center; gap: 6px; }
+.tab.on { background: var(--chip); color: var(--text); }
+.tab .m { width: 6px; height: 6px; border-radius: 50%; background: var(--mod); }
+.mode { display: flex; padding: 2px; border-radius: 7px; background: var(--chip); margin-left: auto; }
+.mode button { font: inherit; font-size: 12px; border: 0; background: transparent; color: var(--text2); padding: 3px 12px; border-radius: 5px; cursor: pointer; }
+.mode button.on { background: var(--card-read); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair), 0 1px 2px rgba(0,0,0,.15); }
+.iconbtn { color: var(--text3); font-size: 12px; padding: 3px 6px; border-radius: 5px; }
+.ebody { border-top: 1px solid var(--hair); position: relative; flex: 1; min-height: 0; background: var(--card-read); display: flex; }
+.scroll { flex: 1; overflow: auto; min-width: 0; }
+.outline { width: 170px; flex: none; border-left: 1px solid var(--hair); padding: 14px 10px; font-size: 12px; color: var(--text2); }
+.outline div { padding: 4px 8px; border-radius: 5px; }
+.outline .on { color: var(--text); background: var(--chip); }
+.outline .l2 { padding-left: 18px; }
+
+.banner { white-space: nowrap; position: sticky; top: 0; z-index: 3; margin: 10px 14px 0; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 9px;
+  background: var(--pop); backdrop-filter: blur(20px) saturate(1.6); -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow: inset 0 1px 0 var(--edge), 0 0 0 1px var(--hair), 0 6px 18px rgba(0,0,0,.18); font-size: 12.5px; }
+.banner .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.banner a { color: var(--accent); text-decoration: none; }
+.banner .sp { flex: 1; }
+
+/* read mode */
+.doc { max-width: 680px; margin: 0 auto; padding: 26px 40px 60px; font-size: 15.5px; line-height: 1.75; }
+.doc h1 { font-size: 30px; line-height: 1.25; margin: 6px 0 4px; letter-spacing: -.01em; }
+.meta { white-space: nowrap; font-size: 12px; color: var(--text3); margin-bottom: 18px; display: flex; gap: 10px; }
+.meta .p { color: var(--mod); }
+.doc h2 { font-size: 19px; margin: 28px 0 8px; }
+.doc p { margin: 0 0 12px; }
+.chgline { position: relative; }
+.chgline::before { content: ""; position: absolute; left: -16px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--add); }
+.chgline.m::before { background: var(--mod); }
+mark.s { background: var(--sel); color: inherit; border-radius: 2px; padding: 1px 0; }
+.selpop { position: absolute; z-index: 4; display: flex; gap: 2px; padding: 4px; border-radius: 9px; font-size: 12.5px;
+  background: var(--pop); backdrop-filter: blur(20px) saturate(1.6); -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow: inset 0 1px 0 var(--edge), 0 0 0 1px var(--hair), 0 8px 24px rgba(0,0,0,.25); white-space: nowrap; }
+.selpop span { padding: 4px 9px; border-radius: 6px; }
+.selpop span.pri { background: var(--accent-bg); color: var(--accent); }
+.task { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
+.box { width: 17px; height: 17px; border-radius: 5px; border: 1.5px solid var(--text3); flex: none; display: grid; place-items: center; font-size: 11px; color: #fff; }
+.box.x { background: var(--accent); border-color: var(--accent); }
+.task.done span { color: var(--text3); text-decoration: line-through; }
+pre.code { position: relative; font-family: var(--mono); font-size: 13px; line-height: 1.6; background: var(--code); border: 1px solid var(--hair); border-radius: 9px; padding: 14px 16px; margin: 8px 0 14px; overflow: auto; }
+pre.code .lang { position: absolute; right: 10px; top: 8px; font-family: var(--font); font-size: 11px; color: var(--text3); }
+.kw { color: #c678dd; } .ty { color: #61afef; } .cm { color: var(--text3); }
+[data-theme="light"] .kw { color: #a626a4; } [data-theme="light"] .ty { color: #4078f2; }
+table.t { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 6px 0 14px; }
+table.t th, table.t td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--hair); }
+table.t th { color: var(--text2); font-weight: 600; }
+code.i { font-family: var(--mono); font-size: .88em; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+
+/* edit mode */
+.src { display: grid; grid-template-columns: 52px minmax(0, 1fr); font-family: var(--mono); font-size: 13.5px; line-height: 1.75; padding: 16px 0 60px; }
+.gut { text-align: right; padding-right: 12px; color: var(--text3); font-size: 12px; position: relative; }
+.gut div { position: relative; }
+.gut div, .lines > div { height: 26px; line-height: 26px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.gut .a::after, .gut .mm::after { content: ""; position: absolute; right: 2px; top: 4px; bottom: 4px; width: 3px; border-radius: 2px; background: var(--add); }
+.gut .mm::after { background: var(--mod); }
+.lines { padding-right: 30px; max-width: 760px; white-space: pre-wrap; }
+.lines .h1 { font-size: 20px; font-weight: 700; }
+.lines .h2 { font-size: 15.5px; font-weight: 700; }
+.mk { color: var(--text3); font-weight: 400; }
+.cur { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.caret { display: inline-block; width: 2px; height: 1.15em; vertical-align: -3px; background: var(--accent); animation: b 1s steps(1) infinite; }
+@keyframes b { 50% { opacity: 0; } }
+.fmt { position: absolute; z-index: 4; display: flex; gap: 2px; padding: 4px; border-radius: 9px; font-size: 12.5px; font-family: var(--font);
+  background: var(--pop); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  box-shadow: inset 0 1px 0 var(--edge), 0 0 0 1px var(--hair), 0 8px 24px rgba(0,0,0,.25); }
+.fmt span { padding: 3px 8px; border-radius: 5px; color: var(--text2); }
+
+[data-mode="read"] .editonly, [data-mode="edit"] .readonly { display: none !important; }
+
+/* terminal */
+.term { background: var(--term); }
+.tbody { border-top: 1px solid var(--hair); flex: 1; overflow: hidden; padding: 10px 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.65; color: var(--text); }
+.tbody .d { color: var(--text3); } .tbody .g { color: var(--add); } .tbody .a { color: var(--accent); } .tbody .o { color: var(--mod); }
+.status { display: flex; gap: 14px; font-size: 11px; color: var(--text3); padding: 0 6px; }
+
+.notes { max-width: 1320px; margin: 18px auto 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.notes div { background: var(--win); backdrop-filter: blur(20px); border: 1px solid var(--hair); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.6; color: var(--text2); }
+.notes b { color: var(--text); display: block; margin-bottom: 2px; }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <div class="group" id="g-mode"><button data-v="read" class="on">阅读</button><button data-v="edit">编辑</button></div>
+  <div class="group" id="g-theme"><button data-v="dark" class="on">深色</button><button data-v="light">浅色</button></div>
+  <div class="group" id="g-glass"><button data-v="on" class="on">玻璃</button><button data-v="off">实色</button></div>
+  <span class="label">⌘E 切换阅读 / 编辑 · 在正文里双击也会进入编辑并把光标放到双击处</span>
+</div>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+    <b>notes-app</b><span class="branch">feat/export</span><span>↻ 刚刚刷新</span>
+    <div class="search">⌕ 打开文件、搜索全文… <kbd>⌘P</kbd></div>
+    <div class="panes"><span class="on">文件</span><span class="on">改动</span><span class="on">编辑器</span><span class="on">终端</span></div>
+    <span>历史</span><span>交付…</span>
+  </div>
+
+  <div class="col">
+    <div class="card files">
+      <div class="chead"><span class="t">文件</span><span class="sub">notes-app</span><span class="sp"></span><span class="hb">＋</span><span class="hb">⋯</span><span class="hb">⤢</span></div>
+      <div class="tree">
+        <div class="item dir"><span class="ic">▾</span>docs</div>
+        <div class="item d1 on"><span class="ic">▤</span>export-spec.md<span class="dot" style="background:var(--mod)"></span></div>
+        <div class="item d1"><span class="ic">▤</span>roadmap.md</div>
+        <div class="item d1 dir"><span class="ic">▸</span>notes</div>
+        <div class="item dir"><span class="ic">▾</span>Sources</div>
+        <div class="item d1 dir"><span class="ic">▾</span>Export</div>
+        <div class="item d2"><span class="ic">{}</span>ExportService.swift<span class="dot" style="background:var(--add)"></span></div>
+        <div class="item d2"><span class="ic">{}</span>PDFRenderer.swift</div>
+        <div class="item dir"><span class="ic">▸</span>Tests</div>
+        <div class="item"><span class="ic">▤</span>CHANGELOG.md<span class="dot" style="background:var(--mod)"></span></div>
+        <div class="item"><span class="ic">▤</span>README.md</div>
+      </div>
+    </div>
+
+    <div class="card changes">
+      <div class="chead"><span class="t">改动</span><span class="sub">3 个文件</span><span class="sp"></span><span class="hb" title="全部改动">≡</span><span class="hb">⋯</span><span class="hb">⤢</span></div>
+      <div class="seg"><span class="on">工作区 3</span><span>暂存区 1</span></div>
+      <div class="chg on"><span class="st" style="color:var(--mod)">M</span>docs/export-spec.md<span class="n"><span style="color:var(--add)">+6</span> <span style="color:var(--del)">−2</span></span></div>
+      <div class="chg"><span class="st" style="color:var(--mod)">M</span>CHANGELOG.md<span class="n"><span style="color:var(--add)">+3</span></span></div>
+      <div class="chg"><span class="st" style="color:var(--add)">A</span>Sources/…/ExportService.swift<span class="n"><span style="color:var(--add)">+48</span></span></div>
+      <div class="commit">
+        <div class="cbox">提交说明（⌘↵ 提交）</div>
+        <div class="row"><span>全部暂存</span><span class="go">提交</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="right">
+      <div class="card focus">
+        <div class="chead">
+          <div class="tabs"><span class="tab on"><span class="m"></span>export-spec.md</span><span class="tab">ExportService.swift</span><span class="tab">差异</span></div>
+          <div class="mode" id="modeToggle"><button data-v="read" class="on">阅读</button><button data-v="edit">编辑</button></div>
+          <span class="hb" title="大纲">☰</span><span class="hb">⋯</span><span class="hb">⤢</span>
+        </div>
+        <div class="ebody">
+          <div class="scroll">
+            <div class="banner">
+              <span class="dot"></span>
+              <span>Claude 刚修改了这个文件 · 已自动刷新（+6 −2）</span>
+              <span class="sp"></span>
+              <a href="#">查看改动</a><a href="#" style="color:var(--text2)">忽略</a>
+            </div>
+
+            <!-- 阅读 -->
+            <article class="doc readonly" style="position:relative">
+              <h1>导出为 PDF</h1>
+              <div class="meta"><span>docs/export-spec.md</span><span>·</span><span class="p">工作区有 2 处改动</span><span>·</span><span>约 3 分钟阅读</span></div>
+              <p class="chgline m">用户可以把当前 Markdown 文档一键导出为 PDF，<mark class="s">保留标题层级、代码块高亮和图片</mark>。导出应在一秒内开始，不阻塞编辑。</p>
+              <div class="selpop" style="left:300px; top:58px"><span class="pri">发到终端</span><span>复制为引用</span><span>评论</span><span>编辑这里</span></div>
+
+              <h2>验收标准</h2>
+              <div class="task done"><span class="box x">✓</span><span>菜单「文件 → 导出 PDF」，快捷键 ⇧⌘E</span></div>
+              <div class="task done"><span class="box x">✓</span><span>中文字体不乱码</span></div>
+              <div class="task chgline"><span class="box"></span><span>超过 50 页时显示进度</span></div>
+              <div class="task chgline"><span class="box"></span><span>导出失败时给出可读的错误信息</span></div>
+
+              <h2>接口</h2>
+              <pre class="code"><span class="lang">swift · 复制</span><span class="kw">func</span> export(_ doc: <span class="ty">Document</span>, to url: <span class="ty">URL</span>) <span class="kw">throws</span>
+<span class="cm">// 失败时抛出 ExportError，附带可读描述</span></pre>
+
+              <h2>格式对照</h2>
+              <table class="t">
+                <tr><th>元素</th><th>PDF 中</th><th>备注</th></tr>
+                <tr><td>标题</td><td>书签 + 目录</td><td>H1–H3</td></tr>
+                <tr><td>代码块</td><td>保留高亮</td><td>等宽字体 <code class="i">SF Mono</code></td></tr>
+                <tr><td>图片</td><td>按页宽缩放</td><td>只读项目内图片</td></tr>
+              </table>
+
+              <h2>不做</h2>
+              <p>不支持自定义页眉页脚；不做批量导出。</p>
+            </article>
+
+            <!-- 编辑 -->
+            <div class="src editonly" style="position:relative">
+              <div class="gut">
+                <div>1</div><div>2</div><div class="mm">3</div><div>4</div><div>5</div><div>6</div><div>7</div><div class="a">8</div><div class="a">9</div><div>10</div><div>11</div><div>12</div><div>13</div><div>14</div><div>15</div><div>16</div><div>17</div><div>18</div><div>19</div>
+              </div>
+              <div class="lines"><div class="h1"><span class="mk"># </span>导出为 PDF</div><div> </div><div class="cur">用户可以把当前 Markdown 文档一键导出为 PDF，<mark class="s">保留标题层级、代码块高亮和图片</mark><span class="caret"></span>。导出应在一秒内开始，不阻塞编辑。</div><div> </div><div class="h2"><span class="mk">## </span>验收标准</div><div><span class="mk">- [x] </span>菜单「文件 → 导出 PDF」，快捷键 ⇧⌘E</div><div><span class="mk">- [x] </span>中文字体不乱码</div><div><span class="mk">- [ ] </span>超过 50 页时显示进度</div><div><span class="mk">- [ ] </span>导出失败时给出可读的错误信息</div><div> </div><div class="h2"><span class="mk">## </span>接口</div><div><span class="mk">```swift</span></div><div><span class="kw">func</span> export(_ doc: <span class="ty">Document</span>, to url: <span class="ty">URL</span>) <span class="kw">throws</span></div><div><span class="cm">// 失败时抛出 ExportError，附带可读描述</span></div><div><span class="mk">```</span></div><div> </div><div class="h2"><span class="mk">## </span>格式对照</div><div><span class="mk">| </span>元素   <span class="mk">| </span>PDF 中      <span class="mk">| </span>备注 <span class="mk">|</span></div><div><span class="mk">| ---- | ---------- | ---- |</span></div></div>
+              <div class="fmt" style="left:250px; top:40px"><span>正文 ▾</span><span><b>B</b></span><span><i>I</i></span><span><s>S</s></span><span>`</span><span>🔗</span></div>
+            </div>
+          </div>
+          <nav class="outline readonly">
+            <div class="on">导出为 PDF</div>
+            <div class="l2">验收标准</div>
+            <div class="l2">接口</div>
+            <div class="l2">格式对照</div>
+            <div class="l2">不做</div>
+          </nav>
+        </div>
+      </div>
+
+    <div class="card term">
+      <div class="chead"><span class="t">终端</span><span class="sub">Folmi</span><span class="tab on" style="margin-left:6px">claude</span><span class="tab">zsh</span><span class="hb">＋</span><span class="sp"></span><span class="hb">⋯</span><span class="hb">⤢</span><span class="hb">×</span></div>
+      <div class="tbody">
+        <div><span class="a">❯</span> 给导出功能补上验收标准的后两条</div>
+        <div class="d">  ⎿ 读取 docs/export-spec.md</div>
+        <div class="d">  ⎿ 编辑 docs/export-spec.md <span class="g">+6</span> <span style="color:var(--del)">−2</span></div>
+        <div>  已补充「超过 50 页时显示进度」和「导出失败时给出可读的错误信息」。</div>
+        <div><span class="a">❯</span> <span class="o">&gt; docs/export-spec.md 第 3 行：「保留标题层级、代码块高亮和图片」</span><span class="caret"></span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="notes">
+  <div><b>层级</b>整窗一层真模糊做底；四个块各自是一块较实的玻璃，块与块之间留 10pt 缝隙透出底层。层级靠“底 → 块 → 浮层”三档透明度，而不是靠分割线。</div>
+  <div><b>阅读</b>只读排版，左侧细条标出工作区改动的段落；选中文字浮出「发到终端 / 复制为引用 / 评论 / 编辑这里」。任务框仍可点。</div>
+  <div><b>编辑</b>源码 + 轻量着色：标记符变灰、标题加大、行号栏改动标记；保留格式条、/ 菜单、列表续写、表格 Tab。</div>
+  <div><b>左列</b>上面目录树（可拖短），下面改动 + 提交说明。目录树里的圆点和改动列表同源，点哪个都在编辑器打开。以后的 AI 对话框可以作为终端块里的一个标签，或终端下方再加一块。</div>
+  <div><b>外部改动</b>文件被 Claude 或别的程序改了：顶部玻璃横幅，可直接跳到差异；编辑模式下有未保存内容时改为提示冲突。</div>
+</div>
+
+<script>
+const root = document.documentElement;
+function bind(id, attr) {
+  document.querySelectorAll(id + ' button').forEach(b => b.addEventListener('click', () => set(attr, b.dataset.v)));
+}
+function set(attr, v) {
+  root.setAttribute('data-' + attr, v);
+  const groups = attr === 'mode' ? ['#g-mode', '#modeToggle'] : ['#g-' + attr];
+  groups.forEach(g => document.querySelectorAll(g + ' button').forEach(x => x.classList.toggle('on', x.dataset.v === v)));
+}
+bind('#g-mode', 'mode'); bind('#modeToggle', 'mode'); bind('#g-theme', 'theme'); bind('#g-glass', 'glass');
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e') { e.preventDefault(); set('mode', root.dataset.mode === 'read' ? 'edit' : 'read'); }
+});
+document.querySelector('.doc').addEventListener('dblclick', () => set('mode', 'edit'));
+</script>
+</body>
+</html>
