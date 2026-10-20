@@ -15,7 +15,7 @@
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-222429)
 ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 
-[官网](https://folmi.mindmesh.site) · [下载](https://github.com/fieai/Folmi/releases/latest) · [功能](#功能) · [从源码构建](#从源码构建) · [产品方向](docs/direction.md) · [更新记录](CHANGELOG.md)
+[官网](https://folmi.mindmesh.site) · [下载](https://github.com/fieai/Folmi/releases/latest) · [功能](#功能) · [对比](#和-cursorvs-code-有什么不同) · [从源码构建](#从源码构建) · [产品方向](docs/direction.md) · [更新记录](CHANGELOG.md)
 
 </div>
 
@@ -77,6 +77,23 @@ Folmi 把这一轮改动摊开：要紧的排在前面，看不懂的当场让 A
     <td><img src="site/assets/shot-pixel-light.jpg" alt="像素主题"></td>
   </tr>
 </table>
+
+## 和 Cursor、VS Code 有什么不同
+
+Cursor 和 VS Code 是用来写代码的编辑器；Folmi 是用来看 AI 改了什么、决定留不留的。三者可以一起开，不用二选一。
+
+| | **Folmi** | Cursor | VS Code |
+| --- | --- | --- | --- |
+| 它是什么 | 看改动、收改动的 macOS 原生应用 | 带 AI 的代码编辑器，基于 VS Code | 通用代码编辑器，靠扩展接 AI |
+| 谁来写代码 | 终端里的 Claude Code、Codex，或任何别的 AI | 主要是 Cursor 自带的 agent | Copilot 或其他扩展 |
+| 看 AI 的改动 | 一处一处过，全用键盘；要紧的排在前面并写明原因 | 在编辑器里逐块接受或拒绝自带 agent 的改动 | 在差异编辑器里保留或撤销 Copilot 的改动 |
+| 终端里 Claude Code / Codex 改的文件 | 按轮次接入：整批退回、回放、拦危险命令 | 当作普通文件改动，在源代码管理面板里看 | 同左 |
+| 反馈给 AI | 评论带文件和行号发回终端；反复丢弃的改动归纳成规则写进 `CLAUDE.md` / `AGENTS.md` | 在自带的对话里说 | 在 Copilot 对话里说 |
+| AI 写的 Markdown | 默认阅读视图：公式、Mermaid、渲染后的差异 | Markdown 预览，公式和 Mermaid 通常要装扩展 | 同左 |
+| 写代码本身 | 能改，但不做 LSP、格式化器、插件 | 完整的编辑、补全、调试、插件 | 同左 |
+| 技术和体积 | Swift 原生，DMG 约 9 MB | Electron，安装包上百 MB | 同左 |
+
+如果你主要在终端里用 Claude Code 或 Codex，Folmi 补上的是「看」这一步；写代码时还是用你顺手的编辑器。
 
 ## 安装
 
