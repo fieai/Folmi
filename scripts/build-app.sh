@@ -47,6 +47,9 @@ mkdir -p "$app_dir/Contents/MacOS"
 mkdir -p "$app_dir/Contents/Resources"
 cp "$binary_dir/Folmi" "$app_dir/Contents/MacOS/Folmi"
 cp "$binary_dir/folmi-hook" "$app_dir/Contents/MacOS/folmi-hook"
+# Release binaries keep their local symbols (over half of Folmi's size); crash reports still symbolicate from
+# the .dSYM next to the build products. Strip before signing.
+/usr/bin/strip -x "$app_dir/Contents/MacOS/Folmi" "$app_dir/Contents/MacOS/folmi-hook"
 /usr/bin/install -m 644 "$app_icon" "$app_dir/Contents/Resources/Folmi.icns"
 for resource_bundle in "$binary_dir"/SwiftTerm_*.bundle(N); do
   if [[ -d "$app_dir/${resource_bundle:t}" ]]; then
@@ -54,11 +57,19 @@ for resource_bundle in "$binary_dir"/SwiftTerm_*.bundle(N); do
   fi
   /usr/bin/ditto "$resource_bundle" "$app_dir/Contents/Resources/${resource_bundle:t}"
 done
-# The app target's reader assets, fonts and Folmi brand resources.
-for resource_bundle in "$binary_dir"/Folmi_*.bundle(N); do
-  /bin/rm -rf "$app_dir/Contents/Resources/${resource_bundle:t}"
-  /usr/bin/ditto "$resource_bundle" "$app_dir/Contents/Resources/${resource_bundle:t}"
-done
+# The app target's reader assets, fonts and Folmi brand resources. Only Folmi_Folmi.bundle: a glob would also
+# pick up bundles that older target names left in the build folder.
+resource_bundle="$binary_dir/Folmi_Folmi.bundle"
+if [[ ! -d "$resource_bundle" ]]; then print -u2 "缺少资源包：$resource_bundle"; exit 1; fi
+/usr/bin/ditto "$resource_bundle" "$app_dir/Contents/Resources/${resource_bundle:t}"
+# Brand/ also holds the icon sources and exports for docs/brand; the app reads only the menu bar mark and the
+# small mascots (AppResources.swift, TerrazzoParticles.swift). The Dock icon is the Folmi.icns installed above.
+brand_dir="$(/usr/bin/find "$app_dir/Contents/Resources/${resource_bundle:t}" -type d -name Brand -print -quit)"
+if [[ -n "$brand_dir" ]]; then
+  for entry in "$brand_dir"/*(N); do
+    [[ "${entry:t}" == (MenuBar|UI) ]] || /bin/rm -rf "$entry"
+  done
+fi
 /usr/bin/install -m 644 "$app_root/.build/checkouts/SwiftTerm/LICENSE" "$app_dir/Contents/Resources/SwiftTerm-LICENSE.txt"
 /usr/bin/install -m 644 "$app_root/licenses/KaTeX-LICENSE.txt" "$app_dir/Contents/Resources/KaTeX-LICENSE.txt"
 /usr/bin/install -m 644 "$app_root/licenses/Mermaid-LICENSE.txt" "$app_dir/Contents/Resources/Mermaid-LICENSE.txt"
