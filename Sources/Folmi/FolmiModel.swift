@@ -24,6 +24,10 @@ final class FolmiModel {
             if snapshot?.fingerprint != oldValue?.fingerprint { editorWorkspace?.indexRevision &+= 1 }
             if hasSnapshot != (snapshot != nil) { hasSnapshot = snapshot != nil }
             if snapshot?.fingerprint != oldValue?.fingerprint || snapshot?.branch != oldValue?.branch { schedulePublishShared() }
+            if snapshot?.head != oldValue?.head || snapshot?.ahead != oldValue?.ahead || snapshot?.upstream != oldValue?.upstream { refreshInReview() }
+            if let snapshot, let path = repositoryURL?.path, RailEntry.canonical(snapshot.root.path) == RailEntry.canonical(path) {
+                board.patch(path: path, snapshot: snapshot, inReview: inReviewCount)
+            }
         }
     }
     /// Whether a repository is loaded. Views that only need this read it instead of `snapshot`, so a status refresh
@@ -230,6 +234,8 @@ final class FolmiModel {
     var aiBatches: [AIBatch] = []
     /// 全部改动 narrowed to one AI turn (its id), or nil for everything.
     var turnFilter: String?
+    /// Commits ahead of the upstream that are already up for review on Gerrit (see `refreshInReview`).
+    var inReviewCount = 0
     var capsule: AIActivityCapsule?
     @ObservationIgnored var dismissedCapsule: String?
     @ObservationIgnored var aiBatchStore: [String: [AIBatch]] = [:]

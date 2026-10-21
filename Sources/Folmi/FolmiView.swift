@@ -132,10 +132,13 @@ private struct BranchMenu: View {
     var body: some View {
         let _ = PerfLog.body("BranchMenu")
         if let snapshot = model.snapshot {
-            let unpushed = snapshot.unpushed ?? 0
+            let unpushed = model.unpushedCount, inReview = model.inReviewCount
             Menu {
                 if unpushed > 0 {
                     Button("推送 \(unpushed) 个提交…", action: model.prepareDelivery)
+                }
+                if inReview > 0 {
+                    Text("\(inReview) 个提交在评审中")
                 }
                 if snapshot.upstream != nil {
                     let behind = snapshot.behind ?? 0
@@ -181,6 +184,7 @@ private struct BranchMenu: View {
                     Image(systemName: "arrow.triangle.branch")
                     (Text(snapshot.branch.isEmpty ? "尚无分支" : snapshot.branch)
                      + Text(unpushed > 0 ? "  ↑\(unpushed)" : "").foregroundColor(Color.theme(model.theme, \.modified))
+                     + Text(inReview > 0 ? "  评审中 \(inReview)" : "").foregroundColor(.secondary)
                      + Text((snapshot.behind ?? 0) > 0 ? "  ↓\(snapshot.behind ?? 0)" : "").foregroundColor(.secondary))
                         .monospacedDigit()
                         .lineLimit(1)
@@ -189,6 +193,7 @@ private struct BranchMenu: View {
             .labelStyle(.titleAndIcon)
             .disabled(model.busy || (snapshot.branches.isEmpty && unpushed == 0 && snapshot.upstream == nil))
             .help(unpushed > 0 ? "\(unpushed) 个提交还没推送；点开可推送、拉取或切换分支"
+                  : inReview > 0 ? "\(inReview) 个提交已推到 Gerrit 等待评审，合并后会自动消失"
                   : ((snapshot.behind ?? 0) > 0 ? "远端有 \(snapshot.behind ?? 0) 个新提交；点开可拉取" : "切换本地分支；未提交改动由 Git 检查"))
         }
     }
@@ -697,8 +702,12 @@ private struct FolmiStatusBar: View {
                                 Text("暂存 \(model.stagedCount)").contentTransition(.numericText())
                             }
                         }
-                        if let unpushed = snapshot.unpushed, unpushed > 0 {
-                            Text("↑\(unpushed) 未推送").foregroundStyle(ThemeColor(token: .modified)).contentTransition(.numericText())
+                        if model.unpushedCount > 0 {
+                            Text("↑\(model.unpushedCount) 未推送").foregroundStyle(ThemeColor(token: .modified)).contentTransition(.numericText())
+                        }
+                        if model.inReviewCount > 0 {
+                            Text("评审中 \(model.inReviewCount)").contentTransition(.numericText())
+                                .help("已推到 Gerrit 等待评审的提交，合并后会自动消失")
                         }
                         if let behind = snapshot.behind, behind > 0 {
                             Button(action: model.preparePull) { Text("↓\(behind) 可拉取").contentTransition(.numericText()) }

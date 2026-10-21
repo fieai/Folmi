@@ -18,31 +18,53 @@ final class ProjectBoard {
         var upstream: String?
         /// A linked worktree of `parent`, not a project of its own.
         var parent: String?
+        /// A worktree's commits no other branch has (see `WorktreeStatus.ownCommits`).
+        var ownCommits = 0
+        /// Of the commits ahead, those already up for review on Gerrit (`FolmiModel.inReview`).
+        var inReview = 0
+        /// Commits ahead still waiting for a push.
+        var pending: Int { max(0, (ahead ?? 0) - inReview) }
         var aiRunning = false
         var aiLabel: String?
         var aiDate: Date?
         var error: String?
         var id: String { path }
-        var needsAttention: Bool { changes > 0 || (ahead ?? 0) > 0 || (behind ?? 0) > 0 || aiRunning || error != nil }
-        /// A linked worktree waiting on you: work not yet committed or pushed, or an agent at it. Being behind is left
-        /// out — a worktree cut from an older commit trails its upstream by hundreds with nothing to do.
-        var worktreeNeedsAttention: Bool { changes > 0 || (ahead ?? 0) > 0 || aiRunning || error != nil }
-        var isTrackingSynchronized: Bool { ahead == 0 && behind == 0 }
+        var needsAttention: Bool { changes > 0 || pending > 0 || (behind ?? 0) > 0 || aiRunning || error != nil }
+        /// A linked worktree waiting on you: uncommitted work or commits no other branch has (the same test as the
+        /// project rail's 待看, `WorktreeStatus.hasWork`), or an agent at it. Being behind is left out, and so is being
+        /// ahead of an upstream: most worktree branches have none, and those that do are counted by their own commits.
+        var worktreeNeedsAttention: Bool { changes > 0 || ownCommits > 0 || aiRunning || error != nil }
+        var isTrackingSynchronized: Bool { pending == 0 && behind == 0 }
         var statusSummary: String {
             guard error == nil else { return "项目状态读取失败" }
             let workspace = changes == 0 ? "工作区干净" : "\(changes) 个文件有改动"
             guard let ahead, let behind else {
                 return "\(workspace) · " + (upstream == nil ? "未设置上游分支" : "未取得上游比较")
             }
-            if isTrackingSynchronized { return "\(workspace) · 与本地追踪分支一致" }
-            let sync = [ahead > 0 ? "待推送 \(ahead) 个提交" : nil,
+            let review = inReview > 0 ? " · 评审中 \(inReview) 个提交" : ""
+            if isTrackingSynchronized { return "\(workspace) · " + (inReview > 0 ? "其余与本地追踪分支一致" : "与本地追踪分支一致") + review }
+            let sync = [pending > 0 ? "待推送 \(pending) 个提交" : nil,
                         behind > 0 ? "待拉取 \(behind) 个提交" : nil].compactMap { $0 }.joined(separator: "，")
-            return "\(workspace) · \(sync)"
+            return "\(workspace) · \(sync)" + review
         }
     }
     private(set) var rows: [Row] = []
     private(set) var updated: Date?
+    /// A refresh is reading the projects; the rows on screen are from `updated` until it ends.
+    private(set) var refreshing = false
     @ObservationIgnored private var task: Task<Void, Never>?
+
+    func setRowsForTesting(_ rows: [Row]) { self.rows = rows }
+
+    /// The open project's row from the main window's own state, which is always the newest (it refreshes on every
+    /// file change and after each fetch), so the menu bar never contradicts the window between two board refreshes.
+    func patch(path: String, snapshot: RepositorySnapshot, inReview: Int) {
+        guard let index = rows.firstIndex(where: { $0.path == path }) else { return }
+        var row = rows[index]
+        row.branch = snapshot.branch; row.upstream = snapshot.upstream
+        row.ahead = snapshot.ahead; row.behind = snapshot.behind; row.changes = snapshot.files.count; row.inReview = inReview
+        if row != rows[index] { rows[index] = row }
+    }
 
     func worktrees(of project: Row) -> [Row] { rows.filter { $0.parent == project.path } }
 
@@ -53,21 +75,29 @@ final class ProjectBoard {
 
     func refresh(projects: [ProjectPreferences]) {
         guard task == nil else { return }
-        let list = projects.map { ($0.rootPath, $0.name, $0.isDemo ? $0.environment : [:]) }
+        let list = projects.map { ($0.rootPath, $0.name, $0.isDemo ? $0.environment : [:], $0.reviewWatches) }
+        refreshing = true
         task = Task { [weak self] in
             var result: [Row] = []
-            for (path, name, environment) in list {
+            for (path, name, environment, watches) in list {
                 let root = URL(fileURLWithPath: path)
                 var row = await Self.read(root: root, name: name, environment: environment)
+                if (row.ahead ?? 0) > 0, !watches.isEmpty {
+                    row.inReview = await Task.detached(priority: .utility) { FolmiModel.inReview(root: root, environment: environment, watches: watches) }.value
+                }
                 result.append(row)
-                for worktree in await Self.worktrees(root: root, environment: environment) where worktree != path {
-                    row = await Self.read(root: URL(fileURLWithPath: worktree), name: (worktree as NSString).lastPathComponent, environment: environment)
+                let repository = GitRepository(url: root, environment: environment)
+                let infos = ((try? await repository.worktrees()) ?? []).filter { $0.path != path && FileManager.default.fileExists(atPath: $0.path) }
+                let statuses = Dictionary(await repository.worktreeStatuses(infos).map { ($0.info.path, $0) }, uniquingKeysWith: { a, _ in a })
+                for info in infos {
+                    row = await Self.read(root: URL(fileURLWithPath: info.path), name: (info.path as NSString).lastPathComponent, environment: environment)
                     row.parent = path
+                    row.ownCommits = statuses[info.path]?.ownCommits ?? 0
                     result.append(row)
                 }
             }
             guard let self else { return }
-            self.rows = result; self.updated = Date(); self.task = nil
+            self.rows = result; self.updated = Date(); self.task = nil; self.refreshing = false
         }
     }
 
@@ -103,11 +133,6 @@ final class ProjectBoard {
         return AIEventStore.parse(data).events.last
     }
 
-    private static func worktrees(root: URL, environment: [String: String]) async -> [String] {
-        guard let text = try? await CommandRunner.git(["worktree", "list", "--porcelain"], at: root, environment: environment) else { return [] }
-        return text.components(separatedBy: "\n").filter { $0.hasPrefix("worktree ") }.map { String($0.dropFirst(9)) }
-            .filter { FileManager.default.fileExists(atPath: $0) }
-    }
 }
 
 /// The rows of the board, for the menu bar window and the overview sheet.
@@ -127,7 +152,7 @@ struct ProjectBoardList: View {
                 Button { onOpen(row) } label: {
                     HStack(spacing: 8) {
                         Circle().fill(ThemeColor(token: row.error != nil ? .removed
-                                                 : row.aiRunning || (row.ahead ?? 0) > 0 || (row.behind ?? 0) > 0 ? .modified
+                                                 : row.aiRunning || row.pending > 0 || (row.behind ?? 0) > 0 ? .modified
                                                  : row.changes > 0 ? .accent
                                                  : row.upstream == nil || row.ahead == nil || row.behind == nil ? .secondaryText : .added))
                             .frame(width: 7, height: 7)
@@ -153,7 +178,8 @@ struct ProjectBoardList: View {
                         Spacer(minLength: 6)
                         if let error = row.error { Text(error).themedFont(.caption2, points: 10).foregroundStyle(.themed(.removed)) }
                         if row.changes > 0 { Text("\(row.changes) 改动").themedFont(.caption2.monospacedDigit(), points: 10).foregroundStyle(.secondary) }
-                        if let ahead = row.ahead, ahead > 0 { Text("↑\(ahead)").themedFont(.caption2.monospacedDigit(), points: 10).foregroundStyle(.themed(.modified)) }
+                        if row.pending > 0 { Text("↑\(row.pending)").themedFont(.caption2.monospacedDigit(), points: 10).foregroundStyle(.themed(.modified)) }
+                        if row.inReview > 0 { Text("评审中 \(row.inReview)").themedFont(.caption2.monospacedDigit(), points: 10).foregroundStyle(.secondary) }
                         if let behind = row.behind, behind > 0 { Text("↓\(behind)").themedFont(.caption2.monospacedDigit(), points: 10).foregroundStyle(.themed(.modified)) }
                         if !row.needsAttention && row.isTrackingSynchronized { Image(systemName: "checkmark").font(.caption2).foregroundStyle(.themed(.added)).help("工作区干净，与最近 fetch 的本地追踪分支一致") }
                     }
@@ -211,8 +237,12 @@ struct MenuBarBoard: View {
                 NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
                 model.openBoardRow(row)
             }, compact: true)
-            Text("同步状态来自最近 fetch；刷新不访问远端。")
-                .themedFont(.caption2, points: 10).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                if model.board.refreshing { ProgressView().controlSize(.mini); Text("正在读取各项目…") }
+                else if let updated = model.board.updated { Text("更新于 \(updated.formatted(date: .omitted, time: .shortened))") }
+                Text("· 远端状态来自最近一次取回")
+            }
+            .themedFont(.caption2, points: 10).foregroundStyle(.secondary)
             Divider()
             HStack {
                 Button("随手记一条…（⌃⌥⌘I）") { InboxPanel.shared.show(model: model) }.buttonStyle(.pressable).themedFont(.callout, points: 12)

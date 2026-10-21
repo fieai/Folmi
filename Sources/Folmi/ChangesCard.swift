@@ -432,8 +432,8 @@ struct CommitSection: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity.combined(with: .offset(y: -4)))
             }
-            } else if !model.isComposingCommit, (model.snapshot?.unpushed ?? 0) > 0 {
-                Button("推送 \(model.snapshot?.unpushed ?? 0) 个提交…", action: model.prepareDelivery)
+            } else if !model.isComposingCommit, model.unpushedCount > 0 {
+                Button("推送 \(model.unpushedCount) 个提交…", action: model.prepareDelivery)
                     .controlSize(.small).disabled(model.busy)
             }
             CommitExclusionNote(model: model)
@@ -453,7 +453,7 @@ struct CommitSection: View {
     /// Why the button cannot act yet, or nothing once it can.
     private var commitHint: Hint? {
         if model.busy { return Hint(text: "操作完成后可继续提交。", symbol: "hourglass") }
-        let unpushed = model.snapshot?.unpushed ?? 0
+        let unpushed = model.unpushedCount
         if !model.isComposingCommit && unpushed > 0 { return Hint(text: "推送前会先预览要执行的命令，确认后才运行。") }
         if model.snapshot?.files.contains(where: \.isConflict) == true { return Hint(text: "仓库仍有冲突，请先解决冲突。", symbol: "exclamationmark.triangle", blocking: true) }
         if model.stagedCount == 0 && !model.amendLast {
@@ -478,7 +478,7 @@ struct CommitActionButton: View {
 
     var body: some View {
         let _ = PerfLog.body("CommitActionButton")
-        let unpushed = model.snapshot?.unpushed ?? 0
+        let unpushed = model.unpushedCount
         let phase: Phase = justCommitted != nil ? .committed : (!model.isComposingCommit && unpushed > 0 ? .push : .commit)
         let terrazzo = model.theme == .terrazzo
         let colors = model.theme.definition.colors(dark: colorScheme == .dark)

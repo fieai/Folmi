@@ -266,9 +266,12 @@ struct DoneState: View {
                 }
                 Text("今天都收好了").themedFont(.title3.weight(.semibold), points: 15)
                 if let line = model.daySummaryLine {
-                    Text(line + (summary?.hasUpstream == true && (summary?.commitsToday ?? 0) > 0 ? "，都已推送" : ""))
+                    Text(line + (summary?.hasUpstream == true && (summary?.commitsToday ?? 0) > 0 && model.inReviewCount == 0 ? "，都已推送" : ""))
                         .themedFont(.callout, points: 12).foregroundStyle(.secondary)
                         .contentTransition(.numericText())
+                }
+                if model.inReviewCount > 0 {
+                    Text("\(model.inReviewCount) 个提交在评审中，合并后会自动消失").themedFont(.callout, points: 12).foregroundStyle(.secondary)
                 }
                 StreakLine(days: model.dailyStats.streak())
             } else {

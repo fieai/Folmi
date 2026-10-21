@@ -483,7 +483,7 @@ extension FolmiModel {
         let tally = reviewTally
         guard tally.remaining > 0 else { openingBanner = nil; return }
         // Where things were left: what waits for review, plus commits made but not pushed yet.
-        let unpushed = snapshot?.unpushed ?? 0
+        let unpushed = unpushedCount
         let tail = unpushed > 0 ? " · \(unpushed) 个提交没推送" : ""
         if let last = aiBatches.last(where: { $0.stopped != nil && !$0.undone && !$0.paths.isEmpty }) {
             openingBanner = "\(last.agentTitle) 改完了\(last.label) · \(tally.remaining) 处等你验收" + tail

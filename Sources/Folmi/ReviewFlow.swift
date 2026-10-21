@@ -358,13 +358,14 @@ extension FolmiModel {
         guard let snapshot else { return nil }
         let start = Calendar.current.startOfDay(for: Date())
         let today = snapshot.commits.filter { ($0.date ?? .distantPast) >= start }.count
-        return DaySummary(commitsToday: today, unpushed: snapshot.ahead, behind: snapshot.behind, hasUpstream: snapshot.upstream != nil)
+        return DaySummary(commitsToday: today, unpushed: snapshot.ahead.map { _ in unpushedCount }, behind: snapshot.behind, hasUpstream: snapshot.upstream != nil)
     }
     /// Nothing left locally or in the known upstream state: clean worktree, no pending push/pull and no stash.
     /// Upstream counts reflect the local tracking branch from the most recent fetch.
     var isAllDone: Bool {
         guard let snapshot, snapshot.files.isEmpty else { return false }
-        return (snapshot.ahead ?? 0) == 0 && (snapshot.behind ?? 0) == 0 && stashedCount == 0
+        // Commits up for review on Gerrit are done on this side: they wait on the reviewers, not on you.
+        return unpushedCount == 0 && (snapshot.behind ?? 0) == 0 && stashedCount == 0
     }
     var stashedCount: Int { snapshot?.stashCount ?? 0 }
 

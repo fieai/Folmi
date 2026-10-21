@@ -52,6 +52,7 @@ extension FolmiModel {
             watches.insert(watch, at: 0)
             if watches.count > ReviewWatch.limit { watches.removeLast(watches.count - ReviewWatch.limit) }
         }
+        refreshInReview()
     }
 
     /// Runs after each background fetch: drops reviews that landed or expired, and merges the others against their
@@ -73,6 +74,7 @@ extension FolmiModel {
         }
         guard repositoryURL == root else { return }
         updateWatches(root) { $0 = updated }
+        refreshInReview()
     }
 
     enum ReviewCheck: Equatable { case landed, unknown, checked(base: String, conflicts: [String]?) }
@@ -106,6 +108,45 @@ extension FolmiModel {
             return .checked(base: base, conflicts: Array(Set(files)).sorted())
         default: return .unknown
         }
+    }
+
+    /// Commits ahead of the upstream that are not waiting to be pushed: they went to Gerrit for review
+    /// (`refs/for/…`), so the branch stays ahead until the review is merged.
+    var unpushedCount: Int { max(0, (snapshot?.unpushed ?? 0) - inReviewCount) }
+
+    /// Works out `inReviewCount` for the open project, off the main thread.
+    func refreshInReview() {
+        guard let root = repositoryURL else { inReviewCount = 0; return }
+        let watches = reviewWatches, environment = commandEnvironment
+        guard !watches.isEmpty, (snapshot?.ahead ?? 0) > 0 else { if inReviewCount != 0 { inReviewCount = 0 }; return }
+        Task { [weak self] in
+            let count = await Task.detached(priority: .utility) { Self.inReview(root: root, environment: environment, watches: watches) }.value
+            guard let self, self.repositoryURL == root else { return }
+            if self.inReviewCount != count { self.inReviewCount = count }
+            if let snapshot = self.snapshot { self.board.patch(path: root.path, snapshot: snapshot, inReview: count) }
+        }
+    }
+
+    /// How many commits between the upstream and HEAD a pushed review covers: a review's commit that HEAD still
+    /// contains, counted from the upstream (pushing HEAD to refs/for/… puts every commit ahead up for review). Only
+    /// reviews aimed at the branch's own upstream count.
+    nonisolated static func inReview(root: URL, environment: [String: String], watches: [ReviewWatch]) -> Int {
+        func git(_ arguments: [String]) -> (status: Int32, text: String)? {
+            var env = ProcessInfo.processInfo.environment
+            environment.forEach { env[$0.key] = $0.value }
+            env["LC_ALL"] = "C"; env["GIT_TERMINAL_PROMPT"] = "0"
+            guard let result = try? ProcessExecutor.run(executable: URL(fileURLWithPath: "/usr/bin/git"), arguments: arguments, directory: root,
+                                                        environment: env, timeout: 15, stdoutLimit: 64 * 1024, stderrLimit: 16 * 1024) else { return nil }
+            return (result.status, String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        guard let upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]), upstream.status == 0 else { return 0 }
+        var most = 0
+        for watch in watches where "\(watch.remote)/\(watch.branch)" == upstream.text {
+            guard git(["merge-base", "--is-ancestor", watch.commit, "HEAD"])?.status == 0,
+                  let count = git(["rev-list", "--count", "@{upstream}..\(watch.commit)"]), count.status == 0 else { continue }
+            most = max(most, Int(count.text) ?? 0)
+        }
+        return most
     }
 
     /// 变基并重新推送: the push sheet for this review's remote and branch; its button stops at the rebase choice.

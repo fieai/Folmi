@@ -40,6 +40,8 @@ extension FolmiModel {
         guard repositoryURL == root else { return }
         lastFetch = Date(); fetchProblem = result
         refreshInBackground()
+        // Other projects' ahead / behind come from their tracking branches too: re-read them for the menu bar.
+        if !gitStartupState.blocksGit { board.refresh(projects: projects) }
         if result == nil { await checkReviewWatches(root: root) }
     }
 
