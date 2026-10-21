@@ -66,4 +66,18 @@ final class ProjectBoardStatusTests: XCTestCase {
             XCTAssertEqual(board.attentionCount, 0)
         }
     }
+
+    /// Commits up for review keep the branch ahead but are nothing to push: no attention, said as 评审中.
+    func testCommitsInReviewAreNotPending() async {
+        await MainActor.run {
+            var row = ProjectBoard.Row(path: "/p", name: "P")
+            row.upstream = "origin/master"; row.ahead = 2; row.behind = 0; row.inReview = 2
+            XCTAssertEqual(row.pending, 0)
+            XCTAssertFalse(row.needsAttention)
+            XCTAssertEqual(row.statusSummary, "工作区干净 · 与本地追踪分支一致 · 评审中 2 个提交")
+            row.ahead = 3
+            XCTAssertTrue(row.needsAttention)
+            XCTAssertEqual(row.statusSummary, "工作区干净 · 待推送 1 个提交 · 评审中 2 个提交")
+        }
+    }
 }

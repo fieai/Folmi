@@ -38,11 +38,11 @@ final class ProjectBoard {
         var statusSummary: String {
             guard error == nil else { return "项目状态读取失败" }
             let workspace = changes == 0 ? "工作区干净" : "\(changes) 个文件有改动"
-            guard let ahead, let behind else {
+            guard ahead != nil, let behind else {
                 return "\(workspace) · " + (upstream == nil ? "未设置上游分支" : "未取得上游比较")
             }
             let review = inReview > 0 ? " · 评审中 \(inReview) 个提交" : ""
-            if isTrackingSynchronized { return "\(workspace) · " + (inReview > 0 ? "其余与本地追踪分支一致" : "与本地追踪分支一致") + review }
+            if isTrackingSynchronized { return "\(workspace) · " + "与本地追踪分支一致" + review }
             let sync = [pending > 0 ? "待推送 \(pending) 个提交" : nil,
                         behind > 0 ? "待拉取 \(behind) 个提交" : nil].compactMap { $0 }.joined(separator: "，")
             return "\(workspace) · \(sync)" + review

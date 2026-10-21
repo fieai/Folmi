@@ -217,4 +217,53 @@ final class ReviewWatchTests: XCTestCase {
         await model.checkReviewWatches(root: root)
         XCTAssertTrue(model.reviewWatches.isEmpty)
     }
+
+    /// Commits pushed to Gerrit for review are 评审中, not 待推送: the branch stays ahead until the review is merged.
+    @MainActor
+    func testCommitsUpForReviewAreNotUnpushed() async throws {
+        let settings = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-InReview-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: settings, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: settings) }
+        let demo = try await DemoRepository.create(remoteUpdates: true)
+        defer { try? FileManager.default.removeItem(at: demo.root.deletingLastPathComponent()) }
+        func git(_ arguments: [String]) async throws -> String {
+            try await CommandRunner.git(arguments, at: demo.root, environment: demo.environment).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        _ = try await git(["add", "-A"])
+        _ = try await git(["commit", "--quiet", "-m", "评审中的提交"])
+        let reviewed = try await git(["rev-parse", "HEAD"])
+
+        let model = FolmiModel(store: WorkspaceStore(url: settings.appendingPathComponent("workspace.json")))
+        model.open(demo.root, environment: demo.environment, demo: true)
+        let deadline = Date().addingTimeInterval(10)
+        func settle(_ condition: @escaping () -> Bool = { true }) async throws {
+            while model.busy || model.snapshot == nil || !condition() {
+                guard Date() < deadline else { throw FolmiFailure(message: "timeout") }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        try await settle()
+        let root = try XCTUnwrap(model.repositoryURL)
+        XCTAssertEqual(model.unpushedCount, 1)
+
+        // Pushed to refs/for/main: still ahead, but up for review.
+        await model.watchReview(commit: reviewed, remote: "demo", branch: "main", root: root)
+        try await settle { model.inReviewCount == 1 }
+        XCTAssertEqual(model.unpushedCount, 0)
+        XCTAssertEqual(FolmiModel.inReview(root: root, environment: demo.environment, watches: model.reviewWatches), 1)
+
+        // A new commit on top is waiting for a push; the reviewed one is still in review.
+        try "再改一处\n".write(to: demo.root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        _ = try await git(["commit", "--quiet", "-am", "还没推的提交"])
+        try await model.reload()
+        try await settle { model.snapshot?.ahead == 2 && model.inReviewCount == 1 }
+        XCTAssertEqual(model.unpushedCount, 1)
+
+        // Amending the reviewed commit away: nothing on the branch is in review any more.
+        _ = try await git(["reset", "--quiet", "--soft", "HEAD~2"])
+        _ = try await git(["commit", "--quiet", "-m", "改写过的提交"])
+        try await model.reload()
+        try await settle { model.inReviewCount == 0 }
+        XCTAssertEqual(model.unpushedCount, 1)
+    }
 }
