@@ -130,6 +130,16 @@ open -n dist/Folmi-EditorPreview.app --args --demo --workspace-file /tmp/Folmi-D
 ./scripts/check.sh    # SKIP_PERF=1 跳过性能门槛
 ```
 
+### 发版
+
+改了什么写在 [CHANGELOG.md](CHANGELOG.md) 的「## 未发布」里（`python3 scripts/bump.py draft` 可以按提交起个草稿），然后一条命令：
+
+```sh
+./scripts/ship.sh minor    # 或 patch、major、0.8.0；--dry-run 先看每一步
+```
+
+它会跑测试，把 `VERSION` 和 CHANGELOG 改成新版本并打 tag，打包签名 DMG、发布到官网（官网的更新记录和版本号由 CHANGELOG 生成），推送，再建 GitHub Release。打包和上传用的 `deploy.sh` 等脚本不在仓库里，只在发版的机器上。
+
 ## 项目结构
 
 ```text

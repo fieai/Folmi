@@ -26,6 +26,9 @@ jobs:
           path: .build
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
+      # The website's 更新记录 is generated from CHANGELOG.md; a changelog edit without regenerating fails here.
+      - name: Website changelog
+        run: python3 scripts/site-changelog.py --check
       - name: Build
         run: swift build --product Folmi
       # The Git and core logic. The app's view tests draw real windows and read them back, which a CI runner
