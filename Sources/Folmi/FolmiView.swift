@@ -667,6 +667,7 @@ private struct FolmiStatusBar: View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 8) {
+                if model.updater.enabled { UpdateStatusItem(updater: model.updater) }
                 if model.theme.style.companion {
                     CompanionStatusItem(model: model)
                 } else if model.busy {

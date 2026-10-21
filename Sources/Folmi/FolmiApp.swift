@@ -40,6 +40,7 @@ struct FolmiApp: App {
                     // WebKit takes ~0.3 s of the main thread to start; that waits until the first screen is up, unless
                     // the first screen is a Markdown document in reading mode (warmed above, beside the status read).
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { ReaderWebViewPool.warm() }
+                    model.updater.startChecking()
                     // The menu bar icon follows every project's status; plain `git status`, every two minutes.
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .seconds(5))
@@ -76,6 +77,10 @@ struct FolmiApp: App {
 struct FolmiCommands: Commands {
     let model: FolmiModel
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("检查更新…") { model.updater.showPanel = true; Task { await model.updater.check() } }
+                .disabled(!model.updater.enabled)
+        }
         CommandGroup(replacing: .appSettings) {
             Button("设置…") { model.showSettings = true }.keyboardShortcut(",")
         }

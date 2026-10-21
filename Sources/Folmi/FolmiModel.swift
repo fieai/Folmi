@@ -252,6 +252,8 @@ final class FolmiModel {
     var aiAssist: AIAssistState?
     /// All projects and worktrees, for the menu bar and the overview.
     let board = ProjectBoard()
+    /// New Folmi versions; checking starts from the app's window task, so tests never reach the network.
+    let updater = AppUpdater()
     var showOverview = false
     var showDocHistory = false
     /// A note being written on text selected in the Markdown reader.
