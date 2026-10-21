@@ -83,6 +83,8 @@ final class FolmiModel {
     var deliveryKind: DeliveryKind = .push { didSet { deliveryPlan = nil } }
     var deliveryRemote = "" { didSet { deliveryPlan = nil } }
     var deliveryBranch = "" { didSet { deliveryPlan = nil } }
+    /// Branches the chosen remote has (its remote-tracking refs, as of the last fetch), for the branch menu.
+    var deliveryRemoteBranches: [String] = []
     var scriptPath = "" { didSet { deliveryPlan = nil } }
     var scriptArguments = "" { didSet { deliveryPlan = nil } }
     var profileName = ""

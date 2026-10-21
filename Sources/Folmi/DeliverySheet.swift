@@ -29,7 +29,7 @@ struct DeliverySheet: View {
     private var placeholder: String {
         if model.deliveryKind == .script { return "点「预览命令」：锁定当前提交，并在这里列出命令。这一步什么都不会执行。" }
         let command = (try? model.makeDelivery())?.display ?? "填好远程和分支后，这里显示要执行的命令。"
-        return command + "\n\n点「\(runTitle)」时先锁定当前提交、取回远端的 \(model.deliveryBranch.isEmpty ? "目标分支" : model.deliveryBranch)，再推送；远端有你没有的新提交时会停下来，让你选择先变基还是直接推。"
+        return command + "\n\n点「\(runTitle)」时先锁定当前提交、取回远端的\(model.deliveryBranch.isEmpty ? "目标分支" : " \(model.deliveryBranch) ")，再推送；远端有你没有的新提交时会停下来，让你选择先变基还是直接推。"
     }
 
     var body: some View {
@@ -77,7 +77,28 @@ struct DeliverySheet: View {
                     }
                     VStack(alignment: .leading, spacing: 5) {
                         Text(model.deliveryKind == .gerrit ? "评审的目标分支" : "推到哪个分支").themedFont(.caption, points: 10).foregroundStyle(.secondary)
-                        TextField("例如 main", text: $model.deliveryBranch).themedTextField()
+                        HStack(spacing: 4) {
+                            TextField("例如 main", text: $model.deliveryBranch).themedTextField()
+                            // The remote's branches to pick from; typing a new name still pushes to a new branch.
+                            Menu {
+                                if model.deliveryRemoteBranches.isEmpty {
+                                    Text(model.deliveryRemote.isEmpty ? "先选择远程" : "\(model.deliveryRemote) 上还没有取回过的分支")
+                                }
+                                ForEach(model.deliveryRemoteBranches, id: \.self) { branch in
+                                    Button { model.deliveryBranch = branch } label: {
+                                        if branch == model.deliveryBranch { Label(branch, systemImage: "checkmark") } else { Text(branch) }
+                                    }
+                                }
+                            } label: { Image(systemName: "chevron.down") }
+                                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                                .help("选择 \(model.deliveryRemote) 上已有的分支（来自最近一次取回）；也可以直接输入新分支名")
+                                .accessibilityLabel("选择远端分支")
+                        }
+                        if !model.deliveryBranch.isEmpty, !model.deliveryRemoteBranches.isEmpty,
+                           !model.deliveryRemoteBranches.contains(model.deliveryBranch.trimmingCharacters(in: .whitespaces)) {
+                            Text(model.deliveryKind == .gerrit ? "\(model.deliveryRemote) 上没有这个分支，Gerrit 会拒绝评审" : "\(model.deliveryRemote) 上没有这个分支，推送会新建它")
+                                .themedFont(.caption, points: 10).foregroundStyle(ThemeColor(token: .modified))
+                        }
                     }
                 }
                 .disabled(model.busy)
@@ -191,6 +212,9 @@ struct DeliverySheet: View {
         }
         .padding(22)
         .frame(width: 650)
+        // Another remote has other branches; switching to a review fills its default branch if none is set.
+        .onChange(of: model.deliveryRemote) { _, _ in Task { await model.loadDeliveryTargets() } }
+        .onChange(of: model.deliveryKind) { _, _ in Task { await model.loadDeliveryTargets() } }
     }
 }
 

@@ -5,7 +5,48 @@ import SwiftUI
 
 /// 交付: pushing or running a delivery script, with saved profiles and a preflight check.
 extension FolmiModel {
-    func prepareDelivery() { guard !busy, snapshot != nil else { return }; deliveryPlan = nil; showDelivery = true }
+    func prepareDelivery() {
+        guard !busy, snapshot != nil else { return }
+        deliveryPlan = nil; showDelivery = true
+        Task { await loadDeliveryTargets() }
+    }
+
+    /// The current branch's upstream split into remote and branch ("origin/feature/x" → origin, feature/x), when that
+    /// remote is one of the project's.
+    var upstreamTarget: (remote: String, branch: String)? {
+        guard let snapshot, let upstream = snapshot.upstream else { return nil }
+        // Longest remote name first: a remote may itself contain a slash.
+        guard let remote = snapshot.remotes.sorted(by: { $0.count > $1.count }).first(where: { upstream.hasPrefix($0 + "/") }) else { return nil }
+        return (remote, String(upstream.dropFirst(remote.count + 1)))
+    }
+
+    /// Fills what the push sheet starts with, without overwriting what the user picked or typed: the remote of the
+    /// branch's upstream (else origin), and the branch it tracks there; with no upstream, a push goes to a branch of
+    /// the same name and a review to the remote's default branch. Then lists the remote's branches for the menu.
+    func loadDeliveryTargets() async {
+        guard let snapshot, let root = repositoryURL else { return }
+        if deliveryRemote.isEmpty || !snapshot.remotes.contains(deliveryRemote) {
+            deliveryRemote = upstreamTarget?.remote ?? (snapshot.remotes.contains("origin") ? "origin" : snapshot.remotes.first ?? "")
+        }
+        let remote = deliveryRemote
+        guard !remote.isEmpty, !remote.hasPrefix("-") else { deliveryRemoteBranches = []; return }
+        let listed = (try? await CommandRunner.git(["for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/\(remote)/"], at: root, environment: commandEnvironment)) ?? ""
+        let branches = listed.components(separatedBy: "\n").filter { !$0.isEmpty && $0 != "HEAD" }.sorted()
+        let head = (try? await CommandRunner.git(["symbolic-ref", "--quiet", "--short", "refs/remotes/\(remote)/HEAD"], at: root, environment: commandEnvironment))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard repositoryURL == root, deliveryRemote == remote else { return }
+        deliveryRemoteBranches = branches
+        guard deliveryBranch.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        if let upstream = upstreamTarget, upstream.remote == remote {
+            deliveryBranch = upstream.branch
+        } else if deliveryKind == .push, !snapshot.branch.isEmpty, snapshot.branch != "(detached)", snapshot.branch != "HEAD" {
+            deliveryBranch = snapshot.branch
+        } else if let head, head.hasPrefix(remote + "/") {
+            deliveryBranch = String(head.dropFirst(remote.count + 1))
+        } else if let main = ["main", "master"].first(where: branches.contains) {
+            deliveryBranch = main
+        }
+    }
 
     func chooseScript() {
         guard !busy else { return }

@@ -159,6 +159,41 @@ final class DeliveryTests: XCTestCase {
         XCTAssertEqual(pushed.prefix(40), Substring(model.snapshot?.head ?? "-"))
     }
 
+    /// The push sheet starts on the upstream's remote and branch and lists that remote's branches; with no upstream a
+    /// push targets the same-named branch and a review the remote's main branch.
+    @MainActor
+    func testPushSheetPicksRemoteAndBranch() async throws {
+        let settings = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-Targets-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: settings, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: settings) }
+        let demo = try await DemoRepository.create(remoteUpdates: true)
+        defer { try? FileManager.default.removeItem(at: demo.root.deletingLastPathComponent()) }
+        let model = FolmiModel(store: WorkspaceStore(url: settings.appendingPathComponent("workspace.json")))
+        model.open(demo.root, environment: demo.environment, demo: true)
+        let deadline = Date().addingTimeInterval(10)
+        while model.busy || model.snapshot == nil { guard Date() < deadline else { return XCTFail("open") }; try await Task.sleep(nanoseconds: 20_000_000) }
+        model.deliveryRemote = ""; model.deliveryBranch = ""
+
+        await model.loadDeliveryTargets()
+        XCTAssertEqual(model.deliveryRemote, "demo")
+        XCTAssertEqual(model.deliveryBranch, "main")
+        XCTAssertEqual(model.deliveryRemoteBranches, ["main"])
+
+        // A branch with no upstream.
+        _ = try await CommandRunner.git(["switch", "--quiet", "-c", "feature/x"], at: demo.root, environment: demo.environment)
+        try await model.reload()
+        model.deliveryBranch = ""; model.deliveryKind = .push
+        await model.loadDeliveryTargets()
+        XCTAssertEqual(model.deliveryBranch, "feature/x", "推送到同名分支")
+        model.deliveryBranch = ""; model.deliveryKind = .gerrit
+        await model.loadDeliveryTargets()
+        XCTAssertEqual(model.deliveryBranch, "main", "评审默认给远端的主分支")
+        // What the user typed is kept.
+        model.deliveryBranch = "release"
+        await model.loadDeliveryTargets()
+        XCTAssertEqual(model.deliveryBranch, "release")
+    }
+
     @MainActor
     func testGerritReviewLinksAreReadFromPushOutput() {
         let output = "remote: Processing changes: refs: 1, new: 1\nremote:\nremote:   https://gerrit.example/c/algo/hr/+/4521 修复 [NEW]\nremote:\n"
