@@ -2,9 +2,7 @@
 
 每个版本改了什么。版本号见 [VERSION](VERSION)，安装包在 [Releases](https://github.com/fieai/Folmi/releases)。
 
-## 未发布
-
-下一个版本会带上这些，还没有安装包。
+## 0.7.0 — 2026-10-21
 
 ### 新增
 
