@@ -304,6 +304,10 @@ final class FolmiModel {
     @ObservationIgnored var editors: [String: EditorWorkspace] = [:]
     @ObservationIgnored var terminals: [String: [TerminalSession]] = [:]
     @ObservationIgnored var selectedTerminals: [String: UUID] = [:]
+    /// Each project's terminal columns (向左拆分 / 向右拆分), holding its session ids.
+    var terminalColumns: [String: PaneColumns] = [:]
+    /// Whether the editor and terminal cards are wide enough for one more column.
+    var splitRoom: [FolmiPane: Bool] = [:]
     @ObservationIgnored var editorObservers: [String: AnyCancellable] = [:]
     @ObservationIgnored var searchTask: Task<Void, Never>?
     @ObservationIgnored var searchWorker: Task<ProjectSearchResult, Error>?
@@ -570,7 +574,7 @@ final class FolmiModel {
             editor.markdownReading = preferences.markdownReading
             editor.showsOutline = preferences.markdownOutline
             editor.outlineWidth = preferences.markdownOutlineWidth
-            editor.restoreSession(tabs: settings.editorTabs, selectedPath: settings.selectedEditorPath)
+            editor.restoreSession(tabs: settings.editorTabs, selectedPath: settings.selectedEditorPath, columns: settings.editorColumns)
             editors[state.root.path] = editor
             // Only what the rest of the window shows from the editor is forwarded; text, caret and scroll changes stay
             // inside the editor card instead of re-rendering the diff, file tree and terminal on every keystroke.
@@ -817,7 +821,8 @@ final class FolmiModel {
             if editorWorkspace?.documents.isEmpty == true { editSelectedFiles() }
             else { content = .editor }
         } else {
-            if content == .editor, let path = editorWorkspace?.selectedDocumentID,
+            // With a 差异 column beside the files, 差异 only moves to that column; the diff keeps what it shows.
+            if content == .editor, editorWorkspace?.columns.hasDiff != true, let path = editorWorkspace?.selectedDocumentID,
                selectedFileIDs.count <= 1 || !selectedFileIDs.contains(path) { targetDiff(path: path) }
             content = .diff
         }

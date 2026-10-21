@@ -168,6 +168,7 @@ extension FolmiModel {
         editors.removeValue(forKey: path)
         terminals.removeValue(forKey: path)?.forEach { $0.stop() }
         selectedTerminals.removeValue(forKey: path)
+        terminalColumns.removeValue(forKey: path)
         terminalTabsCleared.remove(path)
         undoStacks.removeValue(forKey: path); redoStacks.removeValue(forKey: path)
         aiBatchStore.removeValue(forKey: path); aiEventOffsets.removeValue(forKey: path)

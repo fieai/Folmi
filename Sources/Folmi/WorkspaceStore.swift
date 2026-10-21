@@ -63,6 +63,9 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     var largeRepositoryDeclined = false
     /// Gerrit reviews pushed from here, checked against their target after each fetch (see `ReviewWatch`).
     var reviewWatches: [ReviewWatch] = []
+    /// The editor's columns (tabs are project paths) and the terminal's (tabs are places in `terminalTabs`); nil: not split.
+    var editorColumns: PaneColumns?
+    var terminalColumns: PaneColumns?
 
     init(rootPath: String, name: String, isDemo: Bool = false, environment: [String: String] = [:],
          draftMessage: String = "", amendLast: Bool = false, deliveryProfiles: [DeliveryProfile] = [],
@@ -84,6 +87,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case rootPath, name, isDemo, environment, draftMessage, amendLast, deliveryProfiles, selectedProfileID, lastArea, editorTabs, selectedEditorPath, reviewComments, terminalTabs
         case terminalDirectories, reviewedLines, lastContent, selectedChangePath, largeRepository, largeRepositoryDeclined, reviewWatches
+        case editorColumns, terminalColumns
     }
 
     init(from decoder: Decoder) throws {
@@ -109,6 +113,8 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
         largeRepository = (try? values.decodeIfPresent(Bool.self, forKey: .largeRepository)) ?? false
         largeRepositoryDeclined = (try? values.decodeIfPresent(Bool.self, forKey: .largeRepositoryDeclined)) ?? false
         reviewWatches = (try? values.decodeIfPresent([ReviewWatch].self, forKey: .reviewWatches)) ?? []
+        editorColumns = try? values.decodeIfPresent(PaneColumns.self, forKey: .editorColumns)
+        terminalColumns = try? values.decodeIfPresent(PaneColumns.self, forKey: .terminalColumns)
     }
 }
 

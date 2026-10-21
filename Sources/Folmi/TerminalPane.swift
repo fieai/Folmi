@@ -338,6 +338,12 @@ struct TerminalTabButton: View {
     let select: () -> Void
     let rename: () -> Void
     let close: () -> Void
+    var canSplit = false
+    var canMoveLeft = false
+    var canMoveRight = false
+    /// 向左拆分 / 向右拆分 and 移到左边一栏 / 右边一栏 from the tab's menu; nil hides them.
+    var split: ((Bool) -> Void)?
+    var move: ((Bool) -> Void)?
     var body: some View {
         let _ = PerfLog.body("TerminalTabButton")
         PaneTab(title: title, italic: !session.isRunning, selected: selected, action: select)
@@ -346,6 +352,13 @@ struct TerminalTabButton: View {
             .contextMenu {
                 Button("重命名…", action: rename)
                 Button("关闭这个终端", action: close)
+                if let split {
+                    Divider()
+                    Button("向左拆分") { split(false) }.disabled(!canSplit)
+                    Button("向右拆分（⌘\\）") { split(true) }.disabled(!canSplit)
+                }
+                if let move, canMoveLeft { Button("移到左边一栏") { move(false) } }
+                if let move, canMoveRight { Button("移到右边一栏") { move(true) } }
             }
             .help(title + "\n当前目录：\(session.currentDirectory?.path ?? session.root.path)")
             .accessibilityLabel("终端 \(title)")

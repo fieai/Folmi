@@ -85,10 +85,19 @@ private extension Double {
 @MainActor
 final class PaneFocusTracker: ObservableObject {
     private var anchors: [FolmiPane: WeakView] = [:]
+    /// A split card's columns, so a click also makes its column the active one.
+    private var columnAnchors: [UUID: (pane: FolmiPane, view: WeakView)] = [:]
     private var monitor: Any?
     var onClick: ((FolmiPane) -> Void)?
+    var onColumnClick: ((FolmiPane, UUID) -> Void)?
+    /// The column keyboard focus should go to when a card is focused.
+    var activeColumn: ((FolmiPane) -> UUID?)?
 
     func register(_ view: NSView, for pane: FolmiPane) { anchors[pane] = WeakView(view: view) }
+    func register(_ view: NSView, for pane: FolmiPane, column: UUID) {
+        columnAnchors = columnAnchors.filter { $0.value.view.view != nil }
+        columnAnchors[column] = (pane, WeakView(view: view))
+    }
 
     func start() {
         guard monitor == nil else { return }
@@ -103,6 +112,10 @@ final class PaneFocusTracker: ObservableObject {
     }
 
     private func handle(_ event: NSEvent) {
+        for (column, anchor) in columnAnchors {
+            guard let view = anchor.view.view, view.window === event.window, !view.isHiddenOrHasHiddenAncestor else { continue }
+            if view.bounds.contains(view.convert(event.locationInWindow, from: nil)) { onColumnClick?(anchor.pane, column); break }
+        }
         for (pane, anchor) in anchors {
             guard let view = anchor.view, view.window === event.window, !view.isHiddenOrHasHiddenAncestor else { continue }
             if view.bounds.contains(view.convert(event.locationInWindow, from: nil)) { onClick?(pane); return }
@@ -111,7 +124,8 @@ final class PaneFocusTracker: ObservableObject {
 
     /// Moves keyboard focus to the main control inside the card: terminal, editor text, then the file list.
     func makeFirstResponder(_ pane: FolmiPane, preferCommitEditor: Bool = false) {
-        guard let anchor = anchors[pane]?.view, let window = anchor.window, let root = window.contentView else { return }
+        let column = activeColumn?(pane).flatMap { columnAnchors[$0]?.view.view }
+        guard let anchor = column ?? anchors[pane]?.view, let window = anchor.window, let root = window.contentView else { return }
         var candidates: [NSView] = []
         func collect(_ view: NSView) {
             // A hidden view (the editor behind the reading view, or the reverse) takes nothing, nor do its subviews.
@@ -145,16 +159,20 @@ final class PaneFocusTracker: ObservableObject {
     private struct WeakView { weak var view: NSView? }
 }
 
-/// Transparent, click-through view placed behind a card to report its frame.
+/// Transparent, click-through view placed behind a card (or one column of a split card) to report its frame.
 struct PaneAnchor: NSViewRepresentable {
     let pane: FolmiPane
+    var column: UUID?
     let tracker: PaneFocusTracker
     func makeNSView(context: Context) -> NSView {
         let view = PassthroughView()
-        tracker.register(view, for: pane)
+        register(view)
         return view
     }
-    func updateNSView(_ nsView: NSView, context: Context) { tracker.register(nsView, for: pane) }
+    func updateNSView(_ nsView: NSView, context: Context) { register(nsView) }
+    private func register(_ view: NSView) {
+        if let column { tracker.register(view, for: pane, column: column) } else { tracker.register(view, for: pane) }
+    }
     private final class PassthroughView: NSView {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }

@@ -142,9 +142,17 @@ extension FolmiModel {
             let names = terminalTabsCleared.contains(root.path) ? [] : project?.terminalTabs ?? []
             let directories = terminalTabsCleared.contains(root.path) ? [] : project?.terminalDirectories ?? []
             terminalTabsCleared.remove(root.path)
-            terminals[root.path] = (names.isEmpty ? [""] : names).enumerated().map { index, name in
+            let sessions = (names.isEmpty ? [""] : names).enumerated().map { index, name in
                 makeTerminal(root: root, name: name, directory: directories.indices.contains(index) ? directories[index] : "")
             }
+            terminals[root.path] = sessions
+            // Saved columns name tabs by their place in the list; they get this launch's session ids.
+            if !names.isEmpty, let saved = project?.terminalColumns {
+                var layout = saved.mapTabs { Int($0).flatMap { sessions.indices.contains($0) ? sessions[$0].id.uuidString : nil } }
+                layout.keep(sessions.map(\.id.uuidString))
+                terminalColumns[root.path] = layout
+                if let selected = layout.selected.flatMap(UUID.init(uuidString:)) { selectedTerminals[root.path] = selected }
+            } else { terminalColumns[root.path] = nil }
         }
         syncTerminalTabs()
     }
@@ -163,7 +171,13 @@ extension FolmiModel {
         guard let root = repositoryURL?.path else { terminalTabs = []; terminalSession = nil; return }
         let tabs = terminals[root] ?? []
         if terminalTabs.map(\.id) != tabs.map(\.id) { terminalTabs = tabs }
-        let selected = tabs.first { $0.id == selectedTerminals[root] } ?? tabs.first
+        // The columns hold every tab once; a new tab joins the active column, and the selected tab's column becomes active.
+        let ids = tabs.map(\.id.uuidString)
+        var layout = terminalColumns[root] ?? PaneColumns(tabs: ids, selected: selectedTerminals[root]?.uuidString)
+        layout.keep(ids)
+        if let wanted = selectedTerminals[root]?.uuidString, ids.contains(wanted), layout.selected != wanted { layout.select(wanted) }
+        if terminalColumns[root] != layout { terminalColumns[root] = layout }
+        let selected = tabs.first { $0.id.uuidString == layout.selected } ?? tabs.first
         if terminalSession !== selected { terminalSession = selected }
         selectedTerminals[root] = selected?.id
     }
@@ -175,6 +189,7 @@ extension FolmiModel {
         current.stop()
         let replacement = makeTerminal(root: root, name: current.name)
         terminals[root.path]?[index] = replacement
+        terminalColumns[root.path]?.replace(current.id.uuidString, with: replacement.id.uuidString)
         selectedTerminals[root.path] = replacement.id
         syncTerminalTabs()
     }
@@ -209,7 +224,12 @@ extension FolmiModel {
         guard let root = repositoryURL?.path, var tabs = terminals[root], let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs.remove(at: index).stop()
         terminals[root] = tabs
-        if selectedTerminals[root] == id { selectedTerminals[root] = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id }
+        if var layout = terminalColumns[root] {
+            // The tab beside it in the same column takes its place.
+            layout.remove(id.uuidString)
+            terminalColumns[root] = layout
+            selectedTerminals[root] = layout.selected.flatMap(UUID.init(uuidString:)) ?? tabs.first?.id
+        } else if selectedTerminals[root] == id { selectedTerminals[root] = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id }
         syncTerminalTabs()
         if tabs.isEmpty {
             // Reopening starts one fresh tab rather than last session's set.

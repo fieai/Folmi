@@ -13,9 +13,10 @@ struct EditorCard: View {
         folmiCard(.editor, model: model, tracker: tracker) {
             EditorCardTabs(model: model)
         } accessory: {
+            if let editor = model.editorWorkspace { EditorSplitMenu(model: model, workspace: editor) }
             ReviewCommentsMenu(model: model)
         } content: {
-            EditorCardPage(model: model)
+            EditorCardPage(model: model, tracker: tracker)
         }
     }
 }
@@ -123,28 +124,23 @@ struct ReviewCommentsMenu: View {
 
 struct EditorCardPage: View {
     let model: FolmiModel
+    let tracker: PaneFocusTracker
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let _ = PerfLog.body("EditorCardPage")
-        VStack(spacing: 0) {
-            if model.content == .editor, let editor = model.editorWorkspace {
-                HStack {
-                    EditorTabStrip(workspace: editor, onSave: model.fileDidSave).id(editor.root.path)
-                }.frame(height: Metrics.paneHeader).folmiSurface(.navigation)
-                Divider()
-            }
         // Switching 编辑 / 差异 / 全部改动 / 历史 cross-fades; the pages stay the same views otherwise.
+        // 编辑 and 差异 share one page, so moving between a file column and the 差异 column keeps both.
+        let editorPage = model.content == .editor || model.content == .diff
         ZStack {
-            if model.content == .editor, let editor = model.editorWorkspace {
-                FileEditorPane(workspace: editor, onSave: model.fileDidSave).id(editor.root.path).transition(.opacity)
+            if editorPage, let editor = model.editorWorkspace {
+                EditorOrDiffPage(model: model, workspace: editor, tracker: tracker).id(editor.root.path).transition(.opacity)
             } else if model.content == .allChanges {
                 AllChangesView(model: model).id(model.repositoryURL?.path).transition(.opacity)
             } else if model.content == .history {
                 HistoryView(model: model).id(model.repositoryURL?.path).transition(.opacity)
             } else { DiffPane(model: model).transition(.opacity) }
         }
-        .animation(reduceMotion ? nil : Motion.state, value: model.content)
-        }
+        .animation(reduceMotion ? nil : Motion.state, value: editorPage ? FolmiContent.editor : model.content)
     }
 }
 
@@ -213,6 +209,13 @@ struct DiffToolbar: View {
                        action: model.toggleStageSelectedFiles)
                     .controlSize(.small).disabled(model.busy)
             }
+            if let diff, diff.file.worktreeCode != "D", diff.file.indexCode != "D" {
+                Button { model.editBeside(diff) } label: {
+                    Label("在旁边编辑", systemImage: "rectangle.split.2x1").labelStyle(.titleAndIcon)
+                }
+                .controlSize(.small)
+                .help("在差异旁边打开这个文件，跳到第一处改动，边看边改")
+            }
             if let diff, rendered {
                 Button(diff.area == .staged ? "取消暂存" : "暂存文件") {
                     diff.area == .staged ? model.unstageFile(diff.file) : model.stageFile(diff.file)
@@ -246,18 +249,27 @@ struct TerminalCard: View {
     var body: some View {
         let _ = PerfLog.body("TerminalCard")
         if let terminal = model.terminalSession {
+            let columns = model.repositoryURL.flatMap { model.terminalColumns[$0.path] } ?? PaneColumns()
             folmiCard(.terminal, model: model, tracker: tracker) {
-                let titles = TerminalSession.distinctTitles(model.terminalTabs.map(\.displayTitle))
-                PaneTabGroup {
-                    ForEach(Array(model.terminalTabs.enumerated()), id: \.element.id) { index, session in
-                        TerminalTabButton(session: session, title: titles[index], selected: session === terminal && !model.aiTabSelected,
-                                          select: { model.selectTerminalTab(session.id) },
-                                          rename: { terminalName = session.name; renamingTerminal = session },
-                                          close: { model.closeTerminalTab(session.id) })
+                if columns.isSplit {
+                    // Each column has its own tabs; the header keeps only the card's name.
+                    PaneTitle(title: "终端", detail: "\(model.terminalTabs.count) 个")
+                } else {
+                    let titles = TerminalSession.distinctTitles(model.terminalTabs.map(\.displayTitle))
+                    PaneTabGroup {
+                        ForEach(Array(model.terminalTabs.enumerated()), id: \.element.id) { index, session in
+                            TerminalTabButton(session: session, title: titles[index], selected: session === terminal && !model.aiTabSelected,
+                                              select: { model.selectTerminalTab(session.id) },
+                                              rename: { terminalName = session.name; renamingTerminal = session },
+                                              close: { model.closeTerminalTab(session.id) },
+                                              canSplit: columns.canSplit,
+                                              split: { model.splitTerminal(toRight: $0, tab: session.id) })
+                        }
+                        PaneTab(title: "AI", selected: model.aiTabSelected) { model.openAgentTab() }
                     }
-                    PaneTab(title: "AI", selected: model.aiTabSelected) { model.openAgentTab() }
                 }
             } accessory: {
+                SplitMenu(reason: model.splitBlockedReason(.terminal)) { model.splitTerminal(toRight: $0) }
                 PaneIconButton(symbol: "text.bubble", help: "说人话：把终端里选中的内容讲明白") {
                     if let text = model.terminalSelection, !text.isEmpty { model.assist(.plain, text: text, source: "终端选中内容") }
                     else { NSSound.beep() }
@@ -269,10 +281,19 @@ struct TerminalCard: View {
                 PaneIconButton(symbol: "plus", help: "新建终端标签（⌃⇧`）", action: model.newTerminalTab)
                 PaneIconButton(symbol: "arrow.counterclockwise", help: "重开这个终端（替换当前 shell）", action: model.restartTerminal)
             } content: {
-                ZStack {
-                    TerminalPane(session: terminal).id(terminal.id).opacity(model.aiTabSelected ? 0 : 1)
-                        .allowsHitTesting(!model.aiTabSelected)
-                    if model.aiTabSelected { AgentPane(model: model).background(Color.theme(model.theme, \.card)) }
+                if columns.isSplit {
+                    TerminalColumnsView(model: model, columns: columns, tracker: tracker) { session in
+                        terminalName = session.name; renamingTerminal = session
+                    }
+                } else {
+                    ZStack {
+                        TerminalPane(session: terminal).id(terminal.id).opacity(model.aiTabSelected ? 0 : 1)
+                            .allowsHitTesting(!model.aiTabSelected)
+                        if model.aiTabSelected { AgentPane(model: model).background(Color.theme(model.theme, \.card)) }
+                    }
+                    // The width check runs here too, so the split button knows whether a second column fits.
+                    .background { GeometryReader { geometry in Color.clear.onAppear { noteRoom(geometry.size.width) }
+                        .onChange(of: geometry.size.width) { _, width in noteRoom(width) } } }
                 }
             }
             .alert("重命名终端标签", isPresented: Binding(get: { renamingTerminal != nil }, set: { if !$0 { renamingTerminal = nil } })) {
@@ -283,5 +304,9 @@ struct TerminalCard: View {
                 Text("留空则显示程序设置的标题。")
             }
         }
+    }
+    private func noteRoom(_ width: CGFloat) {
+        let room = Double(width) / 2 >= ColumnMetrics.terminalMinimum
+        if model.splitRoom[.terminal] != room { model.splitRoom[.terminal] = room }
     }
 }

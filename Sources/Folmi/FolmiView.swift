@@ -238,6 +238,8 @@ private struct FolmiMain: View {
                 // The tracker outlives this closure; it must not keep the model alive.
                 weak let target = model
                 paneTracker.onClick = { target?.notePaneClicked($0) }
+                paneTracker.onColumnClick = { target?.noteColumnClicked($0, $1) }
+                paneTracker.activeColumn = { target?.activeColumnID($0) }
                 paneTracker.start()
             }
             .onDisappear { paneTracker.stop() }

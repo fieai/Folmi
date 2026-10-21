@@ -21,6 +21,9 @@ struct MarkdownReaderView: NSViewRepresentable {
     var isMarkdown = true
     /// When the file last changed on disk under the reader (an agent edited it); its changed blocks light up.
     var externalChange: Date?
+    /// The editor column showing this reader; only the active column's reader answers ⌘F and reveals.
+    var column: UUID?
+    var isActiveColumn: Bool { column == nil || column == workspace.columns.activeID }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -76,7 +79,7 @@ struct MarkdownReaderView: NSViewRepresentable {
         func update(_ view: MarkdownReaderView) {
             let previous = parent
             parent = view
-            view.workspace.openReaderFind = { [weak self] in self?.openFind() }
+            if view.isActiveColumn { view.workspace.openReaderFind = { [weak self] in self?.openFind() } }
             updateActive(view)
             guard loaded, view.isMarkdown else { return }
             let style = MarkdownReaderPage.style(theme: view.theme, presentation: view.presentation)
@@ -94,7 +97,8 @@ struct MarkdownReaderView: NSViewRepresentable {
             }
             if view.navigationRevision != navigationRevision {
                 navigationRevision = view.navigationRevision
-                if !documentChanged, let state = view.workspace.tabStates[view.documentID] {
+                if !documentChanged, view.workspace.navigationColumn == nil || view.column == nil || view.workspace.navigationColumn == view.column,
+                   let state = view.workspace.tabStates[view.documentID] {
                     scroll(toLine: line(at: state.selectionLocation), smooth: true)
                 }
             }
@@ -191,7 +195,7 @@ struct MarkdownReaderView: NSViewRepresentable {
                     }
                 }
                 guard let self, !Task.isCancelled, !self.dismantled, let parent = self.parent, parent.documentID == path else { return }
-                parent.workspace.outline.update(documentID: path, layout: layout,
+                parent.workspace.outline(for: parent.column).update(documentID: path, layout: layout,
                                                 caret: self.offset(ofLine: parent.workspace.readerTopLine[path] ?? line ?? 0))
             }
         }
@@ -257,7 +261,7 @@ struct MarkdownReaderView: NSViewRepresentable {
             case "top":
                 if let line = body["line"] as? Int {
                     workspace.readerTopLine[id] = line
-                    workspace.outline.updateCaret(offset(ofLine: line))
+                    workspace.outline(for: parent.column).updateCaret(offset(ofLine: line))
                 }
             case "edit":
                 guard let first = body["line"] as? Int else { workspace.editMarkdown(at: nil, in: id); return }

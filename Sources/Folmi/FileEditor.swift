@@ -8,6 +8,8 @@ import FolmiCore
 struct FileEditorPane: View {
     @ObservedObject var workspace: EditorWorkspace
     var onSave: () -> Void
+    /// The column this pane shows; nil shows the active column's file.
+    var column: UUID?
     @Environment(\.folmiTheme) private var theme
     @State private var syntaxStatus = "词法高亮"
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -15,7 +17,7 @@ struct FileEditorPane: View {
     var body: some View {
         let _ = PerfLog.body("FileEditorPane")
         VStack(spacing: 0) {
-            if workspace.documents.isEmpty {
+            if shownID == nil {
                 ContentUnavailableView("打开一个文件开始编辑", systemImage: "doc.text",
                                        description: Text("在项目文件列表中选择文件。编辑保留在各自标签中，保存后才能暂存。"))
             } else {
@@ -25,7 +27,7 @@ struct FileEditorPane: View {
                             .controlSize(.small)
                         .help("阅读：排版后的文档，选中文字可发到终端。编辑：Markdown 源码。⇧⌥M 切换")
                     }
-                    Text(workspace.selectedDocument?.path ?? "")
+                    Text(shown?.path ?? "")
                         .themedFont(.caption.monospaced(), points: 10).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 8)
                     if let notice = workspace.notice {
@@ -33,7 +35,7 @@ struct FileEditorPane: View {
                             .transition(.opacity)
                     }
                     // Only what is used while working shows here; the rest is under ⋯.
-                    if workspace.selectedDocument?.isDirty == true {
+                    if shown?.isDirty == true {
                         Button("保存") { saveSelected() }
                             .buttonStyle(.folmiProminent).controlSize(.small)
                             .help("保存（⌘S）")
@@ -55,7 +57,7 @@ struct FileEditorPane: View {
                         if let preview {
                             Text(preview.title)
                         } else {
-                            Text(isMarkdown ? "Markdown" : SyntaxLanguage(path: workspace.selectedDocument?.path ?? "").title)
+                            Text(isMarkdown ? "Markdown" : SyntaxLanguage(path: shown?.path ?? "").title)
                             Text(reading ? "阅读视图" : syntaxStatus)
                         }
                     } label: {
@@ -67,22 +69,24 @@ struct FileEditorPane: View {
                     .help("更多：全部保存、语言与高亮说明。词法着色无外部依赖，每次最多扫描前 192 Ki 字符")
                     .accessibilityLabel("更多")
                 }
-                .motion(Motion.reveal, value: workspace.selectedDocument?.isDirty == true)
+                .motion(Motion.reveal, value: shown?.isDirty == true)
                 .motion(Motion.reveal, value: workspace.notice)
                 .background {
-                    // Keyboard shortcuts stay on even when their buttons are tucked away.
-                    Group {
-                        Button("保存") { saveSelected() }.keyboardShortcut("s", modifiers: .command)
-                            .disabled(workspace.selectedDocument?.isDirty != true)
-                        Button("全部保存") { perform { try workspace.saveAll(); onSave() } }.keyboardShortcut("s", modifiers: [.command, .shift])
-                            .disabled(!workspace.hasUnsavedChanges)
+                    // Keyboard shortcuts stay on even when their buttons are tucked away; only the active column has them.
+                    if isActiveColumn {
+                        Group {
+                            Button("保存") { saveSelected() }.keyboardShortcut("s", modifiers: .command)
+                                .disabled(shown?.isDirty != true)
+                            Button("全部保存") { perform { try workspace.saveAll(); onSave() } }.keyboardShortcut("s", modifiers: [.command, .shift])
+                                .disabled(!workspace.hasUnsavedChanges)
+                        }
+                        .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
                     }
-                    .opacity(0).allowsHitTesting(false).accessibilityHidden(true)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .folmiSurface(.navigation)
                 Divider()
-                if let document = workspace.selectedDocument {
+                if let document = shown {
                     GeometryReader { geometry in
                         let outlineWidth = CGFloat(workspace.outlineWidth)
                         // A narrow card gives the room to the text; the outline comes back once there is space again.
@@ -102,7 +106,7 @@ struct FileEditorPane: View {
                                     NativeCodeEditor(workspace: workspace, documentID: document.id, text: Binding(
                                         get: { workspace.documents.first { $0.id == document.id }?.text ?? "" },
                                         set: { workspace.updateText(id: document.id, text: $0) }
-                                    ), syntaxStatus: $syntaxStatus)
+                                    ), syntaxStatus: $syntaxStatus, column: column)
                                     .opacity(reading || document.preview != nil ? 0 : 1)
                                     .allowsHitTesting(!reading && document.preview == nil)
                                     // Kept for code files too (rendering nothing), so coming back to a Markdown file does not
@@ -111,7 +115,7 @@ struct FileEditorPane: View {
                                                        presentation: workspace.presentation, theme: theme,
                                                        navigationRevision: workspace.navigationRevision, indexRevision: workspace.indexRevision,
                                                        active: reading, isMarkdown: isMarkdown,
-                                                       externalChange: workspace.externalChanges[document.id])
+                                                       externalChange: workspace.externalChanges[document.id], column: column)
                                     .opacity(reading ? 1 : 0)
                                     .allowsHitTesting(reading)
                                     if let kind = document.preview {
@@ -127,7 +131,7 @@ struct FileEditorPane: View {
                             .animation(reduceMotion ? nil : Motion.state, value: workspace.externalChanges[document.id] != nil)
                             if isMarkdown && workspace.showsOutline && fits {
                                 Divider()
-                                MarkdownOutlinePane(outline: workspace.outline, workspace: workspace, documentID: document.id)
+                                MarkdownOutlinePane(outline: workspace.outline(for: column), workspace: workspace, documentID: document.id)
                                     .equatable()
                                     .frame(width: outlineWidth)
                                     .overlay(alignment: .leading) {
@@ -144,21 +148,31 @@ struct FileEditorPane: View {
         }
         .background(Color.theme(theme, \.card))
         // A preview tab has no text: the hidden editor behind it must not keep the keyboard (typing, ⌘F, ⌘A).
-        .onChange(of: workspace.selectedDocumentID) { _, _ in
-            guard preview != nil, let window = NSApp.keyWindow, window.firstResponder is EditorTextView else { return }
+        .onChange(of: shownID) { _, _ in
+            guard isActiveColumn, preview != nil, let window = NSApp.keyWindow, window.firstResponder is EditorTextView else { return }
             window.makeFirstResponder(nil)
         }
+        // One alert for the card, from the active column, so a split card does not present it twice.
         .alert("文件未保存", isPresented: Binding(
-            get: { workspace.errorMessage != nil }, set: { if !$0 { workspace.errorMessage = nil } }
+            get: { isActiveColumn && workspace.errorMessage != nil }, set: { if !$0 { workspace.errorMessage = nil } }
         )) {
             Button("知道了", role: .cancel) { workspace.errorMessage = nil }
         } message: { Text(workspace.errorMessage ?? "") }
     }
 
+    private var shownID: String? {
+        guard let column else { return workspace.selectedDocumentID }
+        return workspace.columns.index(of: column).flatMap { workspace.columns.columns[$0].selected }
+    }
+    private var shown: EditorDocument? { shownID.flatMap { id in workspace.documents.first { $0.id == id } } }
+    private var isActiveColumn: Bool { column == nil || column == workspace.columns.activeID }
     private var reading: Bool { isMarkdown && workspace.markdownReading }
-    private var preview: FilePreviewKind? { workspace.selectedDocument?.preview }
-    private var isMarkdown: Bool { ["md", "markdown", "mdown"].contains((workspace.selectedDocument?.path as NSString?)?.pathExtension.lowercased() ?? "") }
-    private func saveSelected() { perform { try workspace.saveSelected(); onSave() } }
+    private var preview: FilePreviewKind? { shown?.preview }
+    private var isMarkdown: Bool { ["md", "markdown", "mdown"].contains((shown?.path as NSString?)?.pathExtension.lowercased() ?? "") }
+    private func saveSelected() {
+        guard let id = shownID else { return }
+        perform { try workspace.save(id: id); onSave() }
+    }
     private func find() {
         guard preview == nil else { return }
         if reading { workspace.openReaderFind?() }
@@ -173,6 +187,11 @@ struct FileEditorPane: View {
 struct EditorTabStrip: View {
     @ObservedObject var workspace: EditorWorkspace
     var onSave: () -> Void
+    /// The column whose tabs these are; nil for the active column.
+    var column: UUID?
+    /// 向左拆分 / 向右拆分 and 移到左边一栏 / 右边一栏 from a tab's menu, handled by the model.
+    var onSplit: ((String, Bool) -> Void)?
+    var onMove: ((String, Bool) -> Void)?
     @State private var closeDocumentID: String?
     @State private var showsClosePrompt = false
     @Namespace private var tabFill
@@ -182,17 +201,21 @@ struct EditorTabStrip: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
-                    ForEach(workspace.documents) { document in
+                    ForEach(tabs) { document in
                         let dirty = document.isDirty
-                        EditorTabButton(path: document.path, isDirty: dirty, selected: workspace.selectedDocumentID == document.id,
+                        EditorTabButton(path: document.path, isDirty: dirty, selected: selectedID == document.id,
                                         underline: tabFill,
-                                        onSelect: { workspace.selectedDocumentID = document.id },
+                                        onSelect: { select(document.id) },
                                         onClose: {
-                                            if dirty { closeDocumentID = document.id; showsClosePrompt = true }
-                                            else { perform { try workspace.close(id: document.id) } }
+                                            if dirty && workspace.closingClosesFile(document.id, in: columnID) {
+                                                closeDocumentID = document.id; showsClosePrompt = true
+                                            } else { perform { try workspace.closeTab(id: document.id, in: columnID) } }
                                         },
-                                        onCloseTabs: { workspace.closeTabs($0, around: document.id) },
-                                        fileURL: workspace.root.appendingPathComponent(document.path))
+                                        onCloseTabs: { workspace.closeTabs($0, around: document.id, in: columnID) },
+                                        fileURL: workspace.root.appendingPathComponent(document.path),
+                                        canSplit: workspace.columns.canSplit && onSplit != nil,
+                                        canMoveLeft: canMove(toRight: false), canMoveRight: canMove(toRight: true),
+                                        onSplit: { onSplit?(document.id, $0) }, onMove: { onMove?(document.id, $0) })
                         .equatable()
                         .id(document.id)
                         .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.92, anchor: .leading)),
@@ -200,10 +223,10 @@ struct EditorTabStrip: View {
                     }
                 }
                 .padding(.horizontal, 2)
-                .motion(Motion.state, value: workspace.documents.map(\.id))
-                .motion(Motion.state, value: workspace.selectedDocumentID)
+                .motion(Motion.state, value: tabs.map(\.id))
+                .motion(Motion.state, value: selectedID)
             }
-            .onChange(of: workspace.selectedDocumentID) { _, id in
+            .onChange(of: selectedID) { _, id in
                 guard let id else { return }
                 withMotion(Motion.reveal) { proxy.scrollTo(id) }
             }
@@ -212,10 +235,7 @@ struct EditorTabStrip: View {
             Button("保存后关闭") {
                 guard let id = closeDocumentID else { return }
                 perform {
-                    let previous = workspace.selectedDocumentID
-                    workspace.selectedDocumentID = id
-                    do { try workspace.saveSelected() }
-                    catch { workspace.selectedDocumentID = previous; throw error }
+                    try workspace.save(id: id)
                     try workspace.close(id: id)
                     onSave()
                 }
@@ -232,6 +252,22 @@ struct EditorTabStrip: View {
     private func perform(_ operation: () throws -> Void) {
         do { try operation() } catch { workspace.errorMessage = error.localizedDescription }
     }
+    private var columnID: UUID? { column ?? (workspace.columns.isSplit ? workspace.columns.activeID : nil) }
+    private var shownColumn: PaneColumn? {
+        guard let column else { return workspace.columns.active }
+        return workspace.columns.index(of: column).map { workspace.columns.columns[$0] }
+    }
+    private var tabs: [EditorDocument] {
+        (shownColumn?.tabs ?? []).compactMap { id in workspace.documents.first { $0.id == id } }
+    }
+    private var selectedID: String? { shownColumn?.selected }
+    private func select(_ id: String) {
+        if let column { workspace.columns.select(id, in: column) } else { workspace.selectedDocumentID = id }
+    }
+    private func canMove(toRight: Bool) -> Bool {
+        guard onMove != nil, let column = shownColumn, let index = workspace.columns.index(of: column.id) else { return false }
+        return workspace.columns.neighbour(of: index, toRight: toRight) != nil
+    }
 }
 
 /// One editor tab: a dirty dot, the file name and a close button that shows on hover or for the selected tab.
@@ -247,9 +283,15 @@ private struct EditorTabButton: View, Equatable {
     let onClose: () -> Void
     let onCloseTabs: (EditorWorkspace.TabCloseScope) -> Void
     let fileURL: URL
+    var canSplit = false
+    var canMoveLeft = false
+    var canMoveRight = false
+    var onSplit: (Bool) -> Void = { _ in }
+    var onMove: (Bool) -> Void = { _ in }
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         a.path == b.path && a.isDirty == b.isDirty && a.selected == b.selected && a.underline == b.underline && a.fileURL == b.fileURL
+            && a.canSplit == b.canSplit && a.canMoveLeft == b.canMoveLeft && a.canMoveRight == b.canMoveRight
     }
     @State private var hovering = false
     @Environment(\.folmiTheme) private var theme
@@ -299,6 +341,11 @@ private struct EditorTabButton: View, Equatable {
             Button("关闭右侧") { onCloseTabs(.right) }
             Button("关闭已保存") { onCloseTabs(.saved) }
             Button("关闭全部") { onCloseTabs(.all) }
+            Divider()
+            Button("向左拆分") { onSplit(false) }.disabled(!canSplit)
+            Button("向右拆分（⌘\\）") { onSplit(true) }.disabled(!canSplit)
+            if canMoveLeft { Button("移到左边一栏") { onMove(false) } }
+            if canMoveRight { Button("移到右边一栏") { onMove(true) } }
             Divider()
             FileActionsMenu(url: fileURL, relativePath: path)
         }

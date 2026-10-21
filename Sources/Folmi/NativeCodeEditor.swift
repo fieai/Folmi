@@ -40,6 +40,8 @@ struct NativeCodeEditor: NSViewRepresentable {
     let documentID: String
     @Binding var text: String
     @Binding var syntaxStatus: String
+    /// The editor column this editor sits in; reveals and the reader hand-off only go to the active column.
+    var column: UUID?
     @Environment(\.colorScheme) private var colorScheme
     private var effectiveDark: Bool { colorScheme == .dark }
 
@@ -174,6 +176,7 @@ struct NativeCodeEditor: NSViewRepresentable {
         }
         coordinator.isUpdating = false
         let navigation = coordinator.navigationRevision != workspace.navigationRevision
+            && (workspace.navigationColumn == nil || column == nil || workspace.navigationColumn == column)
         coordinator.navigationRevision = workspace.navigationRevision
         if behindReader {
             if switched || navigation { coordinator.deferredRestore = true; coordinator.deferredReveal = coordinator.deferredReveal || navigation }
@@ -338,7 +341,9 @@ struct NativeCodeEditor: NSViewRepresentable {
         /// Shown or behind the reading view. Becoming visible applies the reader's place and takes keyboard focus;
         /// going behind hides the view once the fade is over, so focus and clicks never land in it.
         func updateActive(_ active: Bool, container: EditorContainer, switched: Bool) {
-            if active { parent.workspace.editorTopLine = { [weak self] in self?.topVisibleLine() } }
+            if active, parent.column == nil || parent.column == parent.workspace.columns.activeID {
+                parent.workspace.editorTopLine = { [weak self] in self?.topVisibleLine() }
+            }
             guard self.active != active || (active && switched && parent.workspace.editorScrollRequest?.id == documentID) else { return }
             let first = self.active == nil
             self.active = active
@@ -491,7 +496,7 @@ struct NativeCodeEditor: NSViewRepresentable {
                 if !immediately { do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return } }
                 let layout = await Task.detached(priority: .utility) { MarkdownOutline.layout(text) }.value
                 guard let self, !Task.isCancelled, !self.isDismantled, self.documentID == documentID, let editor = self.editor else { return }
-                self.parent.workspace.outline.update(documentID: documentID, layout: layout, caret: editor.selectedRange().location)
+                self.parent.workspace.outline(for: self.parent.column).update(documentID: documentID, layout: layout, caret: editor.selectedRange().location)
             }
         }
 
@@ -579,7 +584,7 @@ struct NativeCodeEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard !isDismantled, !isUpdating, !restoringPosition else { return }
             recordState()
-            if let editor, isMarkdownFile { parent.workspace.outline.updateCaret(editor.selectedRange().location) }
+            if let editor, isMarkdownFile { parent.workspace.outline(for: parent.column).updateCaret(editor.selectedRange().location) }
             scheduleNote()
         }
 

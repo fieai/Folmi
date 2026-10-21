@@ -27,6 +27,7 @@ extension FolmiModel {
                 saved[index].selectedChangePath = previous.selectedChangePath
                 saved[index].editorTabs = previous.editorTabs; saved[index].selectedEditorPath = previous.selectedEditorPath
                 saved[index].terminalTabs = previous.terminalTabs; saved[index].terminalDirectories = previous.terminalDirectories
+                saved[index].editorColumns = previous.editorColumns; saved[index].terminalColumns = previous.terminalColumns
             }
             if path == repositoryURL?.path {
                 saved[index].draftMessage = draftMessage; saved[index].amendLast = amendLast
@@ -38,6 +39,7 @@ extension FolmiModel {
             if let editor = editors[path] {
                 saved[index].editorTabs = editor.sessionState()
                 saved[index].selectedEditorPath = editor.selectedDocumentID
+                saved[index].editorColumns = editor.columns.isSplit ? editor.columns : nil
             }
             saved[index].reviewComments = reviewComments.filter { $0.projectPath == path }
             if let tabs = terminals[path], !tabs.isEmpty {
@@ -48,8 +50,10 @@ extension FolmiModel {
                     guard let directory = tab.currentDirectory?.resolvingSymlinksInPath().path, directory.hasPrefix(base + "/") else { return "" }
                     return String(directory.dropFirst(base.count + 1))
                 }
+                let places = Dictionary(uniqueKeysWithValues: tabs.enumerated().map { ($1.id.uuidString, String($0)) })
+                saved[index].terminalColumns = terminalColumns[path].flatMap { $0.isSplit ? $0.mapTabs { places[$0] } : nil }
             } else if terminalTabsCleared.contains(path) {
-                saved[index].terminalTabs = []; saved[index].terminalDirectories = []
+                saved[index].terminalTabs = []; saved[index].terminalDirectories = []; saved[index].terminalColumns = nil
             }
         }
         preferences.projects = saved

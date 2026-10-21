@@ -151,6 +151,13 @@ struct FolmiCommands: Commands {
                 .keyboardShortcut("`", modifiers: [.control, .shift])
                 .disabled(!model.hasSnapshot)
             Divider()
+            Button("向右拆分当前面板") { model.splitFocused(toRight: true) }
+                .keyboardShortcut("\\", modifiers: .command)
+                .disabled(!model.hasSnapshot)
+            Button("向左拆分当前面板") { model.splitFocused(toRight: false) }
+                .keyboardShortcut("\\", modifiers: [.command, .option])
+                .disabled(!model.hasSnapshot)
+            Divider()
             Button("快捷键一览（按住 ⌘ 也能看）", action: model.toggleShortcuts).keyboardShortcut("/")
         }
         CommandMenu("编辑显示") {

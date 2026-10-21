@@ -51,7 +51,13 @@ enum FileEditorError: LocalizedError, Equatable {
 final class EditorWorkspace: ObservableObject {
     let root: URL
     @Published var documents: [EditorDocument] = []
-    @Published var selectedDocumentID: String?
+    /// The 编辑 page's columns (向左拆分 / 向右拆分). Each holds some of `documents` as tabs; one file can be in two.
+    @Published var columns = PaneColumns()
+    /// The document shown in the active column: what ⌘S, sending to the terminal and the other commands work on.
+    var selectedDocumentID: String? {
+        get { columns.selected }
+        set { if columns.selected != newValue { columns.select(newValue) } }
+    }
     @Published var errorMessage: String?
     /// Caret and scroll per tab. Deliberately not published: it changes on every caret move and scroll frame, and
     /// publishing it re-rendered the whole window while typing or scrolling. `onSessionChange` reports it instead.
@@ -66,8 +72,16 @@ final class EditorWorkspace: ObservableObject {
     var commentSelection: ((String, Int, Int, String) -> Void)?
     /// 说人话 / 去 AI 腔 on selected text, with where it came from.
     var assistSelection: ((AIAssistState.Mode, String, String) -> Void)?
-    /// Headings of the selected Markdown document and the section at the caret, for the outline.
-    let outline = MarkdownOutlineModel()
+    /// Headings of each column's Markdown document and the section at its caret, for the outline beside it.
+    private var outlines: [UUID: MarkdownOutlineModel] = [:]
+    func outline(for column: UUID?) -> MarkdownOutlineModel {
+        let id = column ?? columns.activeID
+        if let outline = outlines[id] { return outline }
+        let outline = MarkdownOutlineModel()
+        outlines[id] = outline
+        return outline
+    }
+    var outline: MarkdownOutlineModel { outline(for: nil) }
     /// A short message shown in the editor bar for a few seconds.
     @Published private(set) var notice: String?
     private var noticeTask: Task<Void, Never>?
@@ -109,6 +123,8 @@ final class EditorWorkspace: ObservableObject {
     }
     /// The source editor's top visible line (0-based), provided by the editor while it is on screen.
     var editorTopLine: (() -> Int?)?
+    /// The column the last reveal was for, so only that column's editor scrolls and takes focus.
+    var navigationColumn: UUID?
     /// Where the source editor should scroll when it next becomes the visible view: this line at its top.
     var editorScrollRequest: (id: String, line: Int)?
     /// Opens the reading view's find bar; set by the reader while it is on screen.
@@ -185,25 +201,31 @@ final class EditorWorkspace: ObservableObject {
 
     /// Opens a tab for the file. Pictures and documents open as a preview; so does a file that is not UTF-8 text or is
     /// too big to edit. `asText` opens an SVG's source in place of its preview tab.
-    func open(path: String, asText: Bool = false) throws {
+    /// `column` puts the tab in that column; otherwise a file already open shows in the column that has it.
+    func open(path: String, asText: Bool = false, in column: UUID? = nil) throws {
         let components = try safeComponents(path)
         let normalizedPath = components.joined(separator: "/")
+        func show() {
+            if let column, columns.index(of: column) != nil { columns.select(normalizedPath, in: column) }
+            else { selectedDocumentID = normalizedPath }
+        }
         if let index = documents.firstIndex(where: { $0.id == normalizedPath }) {
-            guard asText, documents[index].preview != nil else { selectedDocumentID = normalizedPath; return }
+            guard asText, documents[index].preview != nil else { show(); return }
             let text = try readText(normalizedPath)
             documents[index] = EditorDocument(id: normalizedPath, path: normalizedPath, text: text.text, originalText: text.text,
                                               fingerprint: text.fingerprint)
             formats[normalizedPath] = text.format
-            selectedDocumentID = normalizedPath
+            show()
             return
         }
         guard documents.count < 100 else { throw FileEditorError.tooManyOpenFiles }
-        if !asText, let kind = FilePreviewKind(path: normalizedPath) { try openPreview(normalizedPath, kind: kind); return }
+        if !asText, let kind = FilePreviewKind(path: normalizedPath) { try openPreview(normalizedPath, kind: kind); show(); return }
         let opened: (text: String, format: Format, fingerprint: String)
         do { opened = try readText(normalizedPath) }
-        catch FileEditorError.unsupportedText where !asText { try openPreview(normalizedPath, kind: .file); return }
+        catch FileEditorError.unsupportedText where !asText { try openPreview(normalizedPath, kind: .file); show(); return }
         catch FileEditorError.tooLarge where !asText {
             try openPreview(normalizedPath, kind: .document)
+            show()
             showNotice("文件超过 2 MiB，只能预览")
             return
         }
@@ -212,7 +234,7 @@ final class EditorWorkspace: ObservableObject {
                                         fingerprint: opened.fingerprint))
         formats[normalizedPath] = opened.format
         tabStates[normalizedPath] = EditorTabState(path: normalizedPath)
-        selectedDocumentID = normalizedPath
+        show()
     }
 
     private func readText(_ path: String) throws -> (text: String, format: Format, fingerprint: String) {
@@ -225,7 +247,6 @@ final class EditorWorkspace: ObservableObject {
         let stamp = try withFile(path: path) { fd, _ in try previewStamp(fd: fd) }
         documents.append(EditorDocument(id: path, path: path, text: "", originalText: "", fingerprint: stamp, preview: kind))
         tabStates[path] = EditorTabState(path: path)
-        selectedDocumentID = path
     }
 
     /// A preview tab is not read into memory; its size and modification time tell when the file changed.
@@ -309,7 +330,7 @@ final class EditorWorkspace: ObservableObject {
         }
     }
 
-    func restoreSession(tabs: [EditorTabState], selectedPath: String?) {
+    func restoreSession(tabs: [EditorTabState], selectedPath: String?, columns saved: PaneColumns? = nil) {
         var failures = [String]()
         for state in tabs.prefix(100) {
             do {
@@ -320,7 +341,10 @@ final class EditorWorkspace: ObservableObject {
                     selectionLength: selection.length, scrollOffset: state.scrollOffset.isFinite ? max(0, state.scrollOffset) : 0)
             } catch { failures.append("\(state.path)：\(error.localizedDescription)") }
         }
-        if let selectedPath, documents.contains(where: { $0.id == selectedPath }) { selectedDocumentID = selectedPath }
+        if let saved {
+            columns = saved
+            columns.keep(documents.map(\.id))
+        } else if let selectedPath, documents.contains(where: { $0.id == selectedPath }) { selectedDocumentID = selectedPath }
         else { selectedDocumentID = documents.first?.id }
         if !failures.isEmpty { errorMessage = "部分编辑标签无法恢复，其余标签已保留。\n" + failures.joined(separator: "\n") }
     }
@@ -335,6 +359,7 @@ final class EditorWorkspace: ObservableObject {
         var state = tabStates[document.id] ?? EditorTabState(path: document.path)
         state.selectionLocation = position.location; state.selectionLength = position.length
         tabStates[document.id] = state
+        navigationColumn = columns.activeID
         navigationRevision &+= 1
     }
 
@@ -416,30 +441,50 @@ final class EditorWorkspace: ObservableObject {
         documents.remove(at: index)
         formats.removeValue(forKey: id)
         tabStates.removeValue(forKey: id)
-        if selectedDocumentID == id {
-            selectedDocumentID = documents.isEmpty ? nil : documents[min(index, documents.count - 1)].id
-        }
+        columns.remove(id)
+    }
+
+    /// Closes the tab in one column. A file still open in another column stays open there, so nothing is asked.
+    func closeTab(id: String, in column: UUID?, discard: Bool = false) throws {
+        if let column, columns.columns.contains(where: { $0.id != column && $0.tabs.contains(id) }) {
+            columns.remove(id, from: column)
+        } else { try close(id: id, discard: discard) }
+    }
+    /// Whether closing the tab in this column closes the file (and so may lose unsaved edits).
+    func closingClosesFile(_ id: String, in column: UUID?) -> Bool {
+        guard let column else { return true }
+        return !columns.columns.contains { $0.id != column && $0.tabs.contains(id) }
     }
 
     enum TabCloseScope: CaseIterable { case others, left, right, saved, all }
     /// Closes a group of tabs around `id`. Tabs with unsaved edits stay open (nothing is lost without asking);
     /// returns how many were kept.
+    /// Only the tabs of the column holding `id` count (the active column when given none).
     @discardableResult
-    func closeTabs(_ scope: TabCloseScope, around id: String) -> Int {
-        guard let index = documents.firstIndex(where: { $0.id == id }) else { return 0 }
-        let targets: [EditorDocument]
+    func closeTabs(_ scope: TabCloseScope, around id: String, in column: UUID? = nil) -> Int {
+        guard let position = column.flatMap(columns.index(of:)) ?? columns.column(containing: id) else { return 0 }
+        let columnID = columns.columns[position].id
+        let tabs = columns.columns[position].tabs
+        guard let index = tabs.firstIndex(of: id) else { return 0 }
+        let ids: [String]
         switch scope {
-        case .others: targets = documents.filter { $0.id != id }
-        case .left: targets = Array(documents[..<index])
-        case .right: targets = Array(documents[(index + 1)...])
-        case .saved: targets = documents.filter { !$0.isDirty }
-        case .all: targets = documents
+        case .others: ids = tabs.filter { $0 != id }
+        case .left: ids = Array(tabs[..<index])
+        case .right: ids = Array(tabs[(index + 1)...])
+        case .saved: ids = tabs.filter { tab in documents.first { $0.id == tab }?.isDirty != true }
+        case .all: ids = tabs
         }
-        let kept = targets.filter(\.isDirty).count
-        let keepSelection = selectedDocumentID.flatMap { selected in targets.contains { $0.id == selected } ? nil : selected }
-        for document in targets where !document.isDirty { try? close(id: document.id) }
-        if let keepSelection, documents.contains(where: { $0.id == keepSelection }) { selectedDocumentID = keepSelection }
-        else if scope != .all, documents.contains(where: { $0.id == id }) { selectedDocumentID = id }
+        let targets = ids.compactMap { tab in documents.first { $0.id == tab } }
+        let selectedClosed = columns.columns[position].selected.map(ids.contains) ?? false
+        var kept = 0
+        for document in targets {
+            if !closingClosesFile(document.id, in: columnID) { columns.remove(document.id, from: columnID) }
+            else if document.isDirty { kept += 1 }
+            else { try? close(id: document.id) }
+        }
+        if selectedClosed, scope != .all, columns.index(of: columnID) != nil, documents.contains(where: { $0.id == id }) {
+            columns.select(id, in: columnID)
+        }
         if kept > 0 { showNotice("\(kept) 个未保存的标签保留了") }
         return kept
     }
@@ -475,7 +520,7 @@ final class EditorWorkspace: ObservableObject {
         return paths.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 
-    private func save(id: String) throws {
+    func save(id: String) throws {
         guard let index = documents.firstIndex(where: { $0.id == id }), documents[index].isDirty else { return }
         let document = documents[index]
         guard let format = formats[id] else { throw FileEditorError.unsupportedText }
