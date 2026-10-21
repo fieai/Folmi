@@ -123,6 +123,8 @@ struct WorkspacePreferences: Codable, Equatable {
     var editorLineHeight: Double = 22
     var editorTabSize: Int = 2
     var editorWrapLines: Bool = true
+    /// The faint note after the caret's line saying who last changed it.
+    var editorLineBlame: Bool = true
     var markdownOutline: Bool = true
     /// Markdown files open in the reading view (true) or the source editor.
     var markdownReading: Bool = true
@@ -145,7 +147,7 @@ struct WorkspacePreferences: Codable, Equatable {
     var markdownReadingWidth: Double = 720
     var markdownOutlineWidth: Double = 220
 
-    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, foldWhitespace, companionMotion }
+    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, editorLineBlame, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, foldWhitespace, companionMotion }
 
     init(version: Int = 1, projects: [ProjectPreferences] = [], selectedProjectPath: String? = nil,
          showTerminal: Bool = false, editorFontSize: Double = 13, appearance: FolmiAppearance = .system,
@@ -175,6 +177,7 @@ struct WorkspacePreferences: Codable, Equatable {
         editorLineHeight = try values.decodeIfPresent(Double.self, forKey: .editorLineHeight) ?? 22
         editorTabSize = try values.decodeIfPresent(Int.self, forKey: .editorTabSize) ?? 2
         editorWrapLines = try values.decodeIfPresent(Bool.self, forKey: .editorWrapLines) ?? true
+        editorLineBlame = (try? values.decodeIfPresent(Bool.self, forKey: .editorLineBlame)) ?? true
         markdownOutline = try values.decodeIfPresent(Bool.self, forKey: .markdownOutline) ?? true
         markdownReading = (try? values.decodeIfPresent(Bool.self, forKey: .markdownReading)) ?? true
         paneLayout = try values.decodeIfPresent(PaneLayoutState.self, forKey: .paneLayout) ?? PaneLayoutState()

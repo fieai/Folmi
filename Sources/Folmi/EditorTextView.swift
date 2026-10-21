@@ -45,6 +45,119 @@ class EditorTextView: NSTextView {
         super.didChangeText()
         if markdownEditing { overlays.textChanged() }
     }
+
+    // MARK: Note after the caret's line (who last changed it)
+
+    /// The line's character range and the note's text. Drawn after the text, never part of it, so copying, search
+    /// and undo never see it.
+    struct LineNote: Equatable {
+        let range: NSRange
+        let text: String
+        /// Whether hovering or clicking it opens a card (only notes about a commit do).
+        let opens: Bool
+    }
+    var blameNote: LineNote? {
+        didSet {
+            guard blameNote != oldValue else { return }
+            if let old = blameNoteRect { setNeedsDisplay(old.insetBy(dx: -2, dy: -2)) }
+            blameNoteRect = nil
+            if let rect = blameNoteGeometry()?.rect { setNeedsDisplay(rect.insetBy(dx: -2, dy: -2)) }
+        }
+    }
+    /// Where the note was last drawn, for hover and clicks.
+    private(set) var blameNoteRect: NSRect?
+    /// Hovering or clicking a note that `opens` shows its card.
+    var openBlameNote: ((NSRect) -> Void)?
+    var focusChanged: ((Bool) -> Void)?
+    private var hoverWork: DispatchWorkItem?
+    private var noteTracking: NSTrackingArea?
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { focusChanged?(true) }
+        return accepted
+    }
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { focusChanged?(false) }
+        return resigned
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let geometry = blameNoteGeometry() else { blameNoteRect = nil; return }
+        blameNoteRect = geometry.rect
+        if geometry.rect.intersects(dirtyRect) {
+            (geometry.text as NSString).draw(at: geometry.rect.origin, withAttributes: geometry.attributes)
+        }
+    }
+
+    private func blameNoteGeometry() -> (rect: NSRect, text: String, attributes: [NSAttributedString.Key: Any])? {
+        guard let note = blameNote, !note.text.isEmpty, let layout = layoutManager, let container = textContainer else { return nil }
+        let text = string as NSString
+        guard NSMaxRange(note.range) <= text.length, note.range.location < text.length else { return nil }
+        var end = NSMaxRange(note.range)
+        while end > note.range.location, [10, 13].contains(text.character(at: end - 1)) { end -= 1 }
+        let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: note.range.location, length: end - note.range.location), actualCharacterRange: nil)
+        let glyph = glyphs.length > 0 ? NSMaxRange(glyphs) - 1 : layout.glyphIndexForCharacter(at: note.range.location)
+        guard glyph < layout.numberOfGlyphs else { return nil }
+        let fragment = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let used = layout.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+        let origin = textContainerOrigin
+        let base = font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let noteFont = NSFontManager.shared.convert(base, toSize: max(9, base.pointSize - 1))
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: noteFont, .foregroundColor: (textColor ?? .textColor).withAlphaComponent(0.38)
+        ]
+        let x = origin.x + (glyphs.length > 0 ? used.maxX : fragment.minX) + max(24, base.pointSize * 2)
+        // Wrapped text ends at the container's edge; unwrapped text leaves a bounded strip after the line.
+        let right = container.widthTracksTextView ? origin.x + container.size.width : x + 520
+        let available = right - x
+        guard available >= 80 else { return nil }
+        let shown = Self.truncated(note.text, width: available, attributes: attributes)
+        guard let shown else { return nil }
+        let size = (shown as NSString).size(withAttributes: attributes)
+        let baseline = origin.y + fragment.minY + layout.location(forGlyphAt: glyph).y
+        let rect = NSRect(x: x, y: baseline - noteFont.ascender, width: ceil(size.width), height: ceil(size.height))
+        return (rect, shown, attributes)
+    }
+
+    /// The text cut at the end with "…" to fit; nil when not even a few characters fit.
+    static func truncated(_ text: String, width: CGFloat, attributes: [NSAttributedString.Key: Any]) -> String? {
+        if (text as NSString).size(withAttributes: attributes).width <= width { return text }
+        let characters = Array(text)
+        var low = 0, high = characters.count
+        while low < high {
+            let middle = (low + high + 1) / 2
+            if (String(characters[..<middle]) + "…" as NSString).size(withAttributes: attributes).width <= width { low = middle } else { high = middle - 1 }
+        }
+        return low >= 4 ? String(characters[..<low]).trimmingCharacters(in: .whitespaces) + "…" : nil
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let noteTracking { removeTrackingArea(noteTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        noteTracking = area
+    }
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        guard let rect = blameNoteRect, blameNote?.opens == true, openBlameNote != nil, rect.contains(convert(event.locationInWindow, from: nil)) else {
+            hoverWork?.cancel(); hoverWork = nil; return
+        }
+        NSCursor.pointingHand.set()
+        guard hoverWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.hoverWork = nil
+            guard let rect = self.blameNoteRect, let window = self.window,
+                  rect.contains(self.convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
+            self.openBlameNote?(rect)
+        }
+        hoverWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
         if markdownEditing { overlays.textChanged() }
@@ -169,6 +282,12 @@ class EditorTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if let rect = blameNoteRect, blameNote?.opens == true, event.clickCount == 1,
+           rect.contains(convert(event.locationInWindow, from: nil)), let openBlameNote {
+            hoverWork?.cancel()
+            openBlameNote(rect)
+            return
+        }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
         if markdownEditing, !hasMarkedText(), event.clickCount == 1 {
             let point = convert(event.locationInWindow, from: nil)

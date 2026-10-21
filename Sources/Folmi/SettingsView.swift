@@ -26,6 +26,9 @@ struct FolmiSettingsSheet: View {
                 Form {
                     Stepper("编辑器字号：\(Int(model.editorFontSize))", value: $model.editorFontSize, in: 10...32)
                     Toggle("编辑器自动换行", isOn: $model.editorWrapLines)
+                    Toggle("在光标所在行显示最后修改人", isOn: $model.editorLineBlame)
+                    Text("光标停下后，在这一行末尾用淡色字写出最后改它的人、时间和提交说明；点它可以看这次提交。")
+                        .font(.caption).foregroundStyle(.secondary)
                     Menu("Markdown 阅读排版") { MarkdownReadingMenu(model: model) }
                     Text("Markdown 阅读字体、字号和宽度独立于代码编辑器，可按长文阅读习惯调整。")
                         .font(.caption).foregroundStyle(.secondary)

@@ -497,3 +497,53 @@ final class GitRepositoryTests: XCTestCase {
         XCTAssertThrowsError(try GitRepository.readWorktreeFile("locked/inner.txt", root: f.directory))
     }
 }
+
+final class BlameTests: XCTestCase {
+    func testBlameNamesEachHeadLineAndItsCommit() async throws {
+        let f = try Fixture()
+        try f.initial("a.txt", "one\ntwo\nthree\n")
+        try f.write("a.txt", "one\nTWO\nthree\nfour")
+        try f.git(["commit", "-am", "同事改了第二行", "--author=同事 <mate@example.invalid>"])
+        let read = try await f.repo.blame(path: "a.txt")
+        let blame = try XCTUnwrap(read)
+        XCTAssertEqual(blame.text, "one\nTWO\nthree\nfour\n", "HEAD text is rebuilt from the porcelain lines")
+        XCTAssertEqual(blame.lineCommits.count, 4)
+        XCTAssertEqual(blame.commit(atHeadLine: 0)?.subject, "Initial")
+        XCTAssertEqual(blame.commit(atHeadLine: 0)?.email, "folmi@example.invalid")
+        XCTAssertEqual(blame.commit(atHeadLine: 1)?.author, "同事")
+        XCTAssertEqual(blame.commit(atHeadLine: 1)?.subject, "同事改了第二行")
+        XCTAssertEqual(blame.commit(atHeadLine: 3)?.email, "mate@example.invalid")
+        XCTAssertNil(blame.commit(atHeadLine: 4))
+        XCTAssertEqual(blame.userEmail, "folmi@example.invalid")
+        XCTAssertEqual(blame.commits.count, 2, "each commit is listed once")
+
+        let history = try await f.repo.lineHistory(path: "a.txt", first: 2, last: 2)
+        XCTAssertEqual(history.map(\.subject), ["同事改了第二行", "Initial"])
+    }
+
+    func testBlameIsNilWithoutTheFileInHeadAndSkipsIgnoredRevisions() async throws {
+        let f = try Fixture()
+        let unborn = try await f.repo.blame(path: "a.txt")
+        XCTAssertNil(unborn)
+        try f.initial("a.txt", "one\n")
+        try f.write("new.txt", "x\n"); try f.git(["add", "--", "new.txt"])
+        let staged = try await f.repo.blame(path: "new.txt")
+        XCTAssertNil(staged, "staged but never committed")
+
+        try f.write("a.txt", "one \n"); try f.git(["commit", "-am", "只改格式"])
+        let format = try f.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try f.write(".git-blame-ignore-revs", format + "\n")
+        let read = try await f.repo.blame(path: "a.txt")
+        let blame = try XCTUnwrap(read)
+        XCTAssertEqual(blame.commit(atHeadLine: 0)?.subject, "Initial", "a formatting commit the project lists is skipped")
+    }
+
+    func testPorcelainWithCarriageReturnsIsNormalized() throws {
+        let id = String(repeating: "a", count: 40)
+        let output = Data("\(id) 1 1 2\nauthor A\nauthor-mail <a@x>\nauthor-time 100\nsummary S\n\tone\r\n\(id) 2 2\n\ttwo\r\n".utf8)
+        let blame = try XCTUnwrap(FileBlame.parse(output, path: "p", head: id, userEmail: nil))
+        XCTAssertEqual(blame.text, "one\ntwo\n")
+        XCTAssertEqual(blame.commit(atHeadLine: 1)?.author, "A")
+        XCTAssertEqual(blame.commit(atHeadLine: 1)?.date, Date(timeIntervalSince1970: 100))
+    }
+}

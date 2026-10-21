@@ -173,6 +173,9 @@ final class FolmiModel {
     var appearance: FolmiAppearance = .system { didSet { applyEditorPresentation(); scheduleSave() } }
     var theme: FolmiTheme = .standard { didSet { ThemePalette.current = theme.palette; applyEditorPresentation(); redrawAppKitViews(); scheduleSave() } }
     var glassSurfaces = true { didSet { editors.values.forEach { $0.glassSurfaces = glassSurfaces }; scheduleSave() } }
+    var editorLineBlame = true { didSet { editors.values.forEach { $0.showsLineBlame = editorLineBlame }; scheduleSave() } }
+    /// Line authors per open file, valid while HEAD stays the commit they were read at.
+    @ObservationIgnored var blameCache: [String: FileBlame] = [:]
     var markdownDiffRendered = true { didSet { scheduleSave() } }
     var unifiedDiff = false { didSet { scheduleSave() } }
     var foldWhitespace = false { didSet { scheduleSave() } }
@@ -346,6 +349,7 @@ final class FolmiModel {
             theme = preferences.theme
             ThemePalette.current = theme.palette
             glassSurfaces = preferences.glassSurfaces
+            editorLineBlame = preferences.editorLineBlame
             markdownDiffRendered = preferences.markdownDiffRendered
             unifiedDiff = preferences.unifiedDiff
             foldWhitespace = preferences.foldWhitespace
@@ -560,6 +564,7 @@ final class FolmiModel {
             let editor = EditorWorkspace(root: state.root)
             editor.presentation = editorPresentation
             editor.glassSurfaces = glassSurfaces
+            editor.showsLineBlame = editorLineBlame
             editor.markdownReading = preferences.markdownReading
             editor.showsOutline = preferences.markdownOutline
             editor.outlineWidth = preferences.markdownOutlineWidth
@@ -582,6 +587,11 @@ final class FolmiModel {
                 self?.readerCommentDraft = ReaderCommentDraft(path: path, firstLine: first, lastLine: last, quote: quote)
             }
             editor.showChanges = { [weak self] path in self?.showChanges(of: path) }
+            editor.showCommit = { [weak self] id in
+                guard let self else { return }
+                self.showContent(.history)
+                Task { await self.selectCommit(id) }
+            }
         }
         editorWorkspace = editors[state.root.path]
         syncEditorChrome()
@@ -590,6 +600,21 @@ final class FolmiModel {
             return IndexBase(file)
         }
         editorWorkspace?.stageIndexText = { [weak self] base, data in self?.stageEditorChange(base: base, data: data) }
+        blameCache = [:]
+        editorWorkspace?.loadBlame = { [weak self] path in
+            guard let self else { return .unavailable }
+            let head = self.snapshot?.head
+            if let cached = self.blameCache[path], cached.head == head { return .blame(cached) }
+            do {
+                guard let blame = try await candidate.blame(path: path) else { return .notInHead }
+                if self.blameCache.count >= 24 { self.blameCache = [:] }
+                self.blameCache[path] = blame
+                return .blame(blame)
+            } catch { return .unavailable }
+        }
+        editorWorkspace?.loadLineHistory = { path, first, last in
+            (try? await candidate.lineHistory(path: path, first: first, last: last)) ?? []
+        }
         editorWorkspace?.indexRevision &+= 1
         projectTree = nil
         treeError = nil

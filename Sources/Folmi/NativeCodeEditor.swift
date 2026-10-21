@@ -103,8 +103,12 @@ struct NativeCodeEditor: NSViewRepresentable {
         coordinator.isUpdating = false
         coordinator.style(immediately: true)
         ruler.onClickLine = { [weak coordinator] line, anchor in coordinator?.showPeek(line: line, anchor: anchor) }
+        editor.focusChanged = { [weak coordinator] _ in coordinator?.scheduleNote(immediately: true) }
+        editor.openBlameNote = { [weak coordinator] rect in coordinator?.openBlameCard(rect) }
         coordinator.indexRevisionSeen = workspace.indexRevision
+        coordinator.showsLineBlameSeen = workspace.showsLineBlame
         coordinator.reloadIndexBase()
+        coordinator.reloadBlame()
         return container
     }
     func updateNSView(_ container: EditorContainer, context: Context) {
@@ -191,7 +195,12 @@ struct NativeCodeEditor: NSViewRepresentable {
         } else if switched || coordinator.indexRevisionSeen != workspace.indexRevision || coordinator.indexRevisionSeen == .max {
             coordinator.indexRevisionSeen = workspace.indexRevision
             coordinator.reloadIndexBase()
+            coordinator.reloadBlame()
         } else if changedText { coordinator.scheduleMarks() }
+        if coordinator.showsLineBlameSeen != workspace.showsLineBlame {
+            coordinator.showsLineBlameSeen = workspace.showsLineBlame
+            coordinator.scheduleNote(immediately: true)
+        }
         if behindReader && switched { coordinator.indexRevisionSeen = .max }
         editor.layoutManager?.backgroundLayoutEnabled = !behindReader
         coordinator.ruler?.needsDisplay = true
@@ -213,6 +222,9 @@ struct NativeCodeEditor: NSViewRepresentable {
         coordinator.pendingFocus = nil
         coordinator.highlighter.cancel(); coordinator.cancelOutline()
         coordinator.baseTask?.cancel(); coordinator.marksTask?.cancel(); coordinator.peek?.close()
+        coordinator.blameTask?.cancel(); coordinator.noteTask?.cancel(); coordinator.blameCard?.close()
+        (coordinator.editor as? EditorTextView)?.focusChanged = nil
+        (coordinator.editor as? EditorTextView)?.openBlameNote = nil
         coordinator.ruler?.onClickLine = nil
         coordinator.highlighter.editor = nil; coordinator.highlighter.onStatus = nil
         (coordinator.editor as? EditorTextView)?.toggleMarkdown = nil
@@ -462,6 +474,7 @@ struct NativeCodeEditor: NSViewRepresentable {
             parent.text = editor.string
             ruler?.textChanged()
             recordState(); style(); scheduleMarks()
+            textChangedForNote()
         }
 
         // MARK: Outline
@@ -506,6 +519,7 @@ struct NativeCodeEditor: NSViewRepresentable {
                 guard let self, !Task.isCancelled, !self.isDismantled, self.documentID == path else { return }
                 self.indexBase = base
                 self.scheduleMarks(immediately: true)
+                self.scheduleNote(immediately: true)
             }
         }
 
@@ -566,6 +580,115 @@ struct NativeCodeEditor: NSViewRepresentable {
             guard !isDismantled, !isUpdating, !restoringPosition else { return }
             recordState()
             if let editor, isMarkdownFile { parent.workspace.outline.updateCaret(editor.selectedRange().location) }
+            scheduleNote()
+        }
+
+        // MARK: Note after the caret's line (who last changed it)
+
+        var blameSource: LineBlame.Source = .unavailable
+        var blamePath: String?
+        var blameTask: Task<Void, Never>?
+        var noteTask: Task<Void, Never>?
+        var showsLineBlameSeen = true
+        /// The buffer mapped onto HEAD and onto the index, kept until the text or either base changes.
+        private var lineMaps: (text: String, head: String?, headMap: [Int?], index: String?, indexMap: [Int?])?
+        private(set) var note: LineBlameNote?
+        var blameCard: NSPopover?
+
+        func reloadBlame() {
+            blameTask?.cancel()
+            guard let path = documentID, let loader = parent.workspace.loadBlame else {
+                blameSource = .unavailable; blamePath = nil; setNote(nil, range: nil); return
+            }
+            if blamePath != path { blameSource = .unavailable; blamePath = path; setNote(nil, range: nil) }
+            blameTask = Task { @MainActor [weak self] in
+                let source = await loader(path)
+                guard let self, !Task.isCancelled, !self.isDismantled, self.documentID == path else { return }
+                if !Self.sameSource(source, self.blameSource) { self.blameSource = source }
+                self.scheduleNote(immediately: true)
+            }
+        }
+
+        private static func sameSource(_ a: LineBlame.Source, _ b: LineBlame.Source) -> Bool {
+            switch (a, b) {
+            case let (.blame(x), .blame(y)): return x.head == y.head && x.path == y.path
+            case (.notInHead, .notInHead), (.unavailable, .unavailable): return true
+            default: return false
+            }
+        }
+
+        /// Shown once the caret has rested on one line; hidden while typing, composing, selecting several lines,
+        /// or when the editor is not focused.
+        func scheduleNote(immediately: Bool = false) {
+            noteTask?.cancel()
+            guard let editor = editor as? EditorTextView, !isDismantled, let path = documentID, blamePath == path,
+                  parent.workspace.showsLineBlame, editor.window?.firstResponder === editor, !editor.hasMarkedText(),
+                  editor.enclosingScrollView?.isFindBarVisible != true else { setNote(nil, range: nil); return }
+            let source = blameSource
+            let base = indexBase?.path == path ? indexBase : nil
+            // Untracked: nothing to say. Git could not answer: say nothing rather than something wrong.
+            if case .unavailable = source { setNote(nil, range: nil); return }
+            if case .notInHead = source, base == nil { setNote(nil, range: nil); return }
+            let text = editor.string, ns = text as NSString
+            let selection = editor.selectedRange()
+            guard NSMaxRange(selection) <= ns.length, selection.location < ns.length || (ns.length > 0 && !text.hasSuffix("\n")) else {
+                setNote(nil, range: nil); return
+            }
+            let lineRange = ns.lineRange(for: NSRange(location: min(selection.location, max(0, ns.length - 1)), length: 0))
+            guard NSMaxRange(selection) <= NSMaxRange(lineRange) else { setNote(nil, range: nil); return }
+            // Moving within the line keeps the note; anything else hides it until the caret rests again.
+            let keep = editor.blameNote?.range == lineRange && note != nil && lineMaps?.text == text
+            if !keep { setNote(nil, range: nil) }
+            let headText: String? = { if case .blame(let blame) = source { return blame.text } else { return nil } }()
+            let indexText = base?.text
+            let cached = lineMaps
+            noteTask = Task { @MainActor [weak self] in
+                if !immediately && !keep {
+                    do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
+                }
+                let location = lineRange.location
+                let (maps, line) = await Task.detached(priority: .userInitiated) { () -> ((text: String, head: String?, headMap: [Int?], index: String?, indexMap: [Int?]), Int) in
+                    let reuse = cached.map { $0.text == text } ?? false
+                    let headMap = reuse && cached?.head == headText ? cached!.headMap : headText.map { LineBlame.headLines(head: $0, current: text) } ?? []
+                    let indexMap = reuse && cached?.index == indexText ? cached!.indexMap : indexText.map { LineBlame.headLines(head: $0, current: text) } ?? []
+                    let line = (text as NSString).substring(to: location).utf8.reduce(0) { $1 == 10 ? $0 + 1 : $0 }
+                    return ((text, headText, headMap, indexText, indexMap), line)
+                }.value
+                guard let self, !Task.isCancelled, !self.isDismantled, let editor = self.editor as? EditorTextView,
+                      editor.string == text, editor.selectedRange() == selection, self.documentID == path else { return }
+                self.lineMaps = maps
+                let headLine = line < maps.headMap.count ? maps.headMap[line] : nil
+                let staged = line < maps.indexMap.count && maps.indexMap[line] != nil
+                self.setNote(LineBlame.note(line: line, source: source, headLine: headLine, unstaged: !staged), range: lineRange)
+            }
+        }
+
+        func setNote(_ note: LineBlameNote?, range: NSRange?) {
+            self.note = note
+            guard let editor = editor as? EditorTextView else { return }
+            if let note, let range { editor.blameNote = EditorTextView.LineNote(range: range, text: note.text, opens: note.commit != nil) }
+            else { editor.blameNote = nil }
+        }
+
+        func textChangedForNote() {
+            setNote(nil, range: nil)
+            blameCard?.close()
+            scheduleNote()
+        }
+
+        func openBlameCard(_ rect: NSRect) {
+            guard blameCard?.isShown != true, let editor, let note, let commit = note.commit, let path = documentID else { return }
+            let workspace = parent.workspace
+            let history: (() async -> [FileBlame.Commit])? = workspace.loadLineHistory.flatMap { loader in
+                note.headLine.map { line in { await loader(path, line + 1, line + 1) } }
+            }
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.contentViewController = NSHostingController(rootView: LineBlameCard(
+                commit: commit, isMine: note.isMine, loadHistory: history,
+                onShowCommit: { [weak popover, weak workspace] id in popover?.close(); workspace?.showCommit?(id) }))
+            blameCard = popover
+            popover.show(relativeTo: rect, of: editor, preferredEdge: .maxY)
         }
         func undoManager(for view: NSTextView) -> UndoManager? { currentUndoManager }
         func cancelOutline() { outlineTask?.cancel(); outlineTask = nil }

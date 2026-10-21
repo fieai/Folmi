@@ -53,6 +53,8 @@ extension FolmiModel {
             PaletteCommand(id: "handoff", title: "写交接（/handoff 发到终端）", keywords: "handoff 交接", enabled: open) { [weak self] in self?.sendSlashCommand("/handoff") },
             PaletteCommand(id: "ask", title: "问 AI（当前文件或改动）", keywords: "ai ask chat 问 对话", enabled: open) { [weak self] in self?.openAsk() },
             PaletteCommand(id: "open", title: "打开仓库…", keywords: "open repository 仓库 项目", enabled: !busy) { [weak self] in self?.openRepository() },
+            PaletteCommand(id: "lineBlame", title: editorLineBlame ? "不在光标所在行显示最后修改人" : "在光标所在行显示最后修改人",
+                           keywords: "blame author 作者 谁改的 修改人 最后修改 行", enabled: true) { [weak self] in self?.editorLineBlame.toggle() },
             PaletteCommand(id: "dark", title: "切换明暗", keywords: "theme dark light 明暗 主题", enabled: true) { [weak self] in
                 guard let self else { return }
                 self.appearance = self.appearance == .dark ? .light : .dark

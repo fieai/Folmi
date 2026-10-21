@@ -131,6 +131,14 @@ final class EditorWorkspace: ObservableObject {
     var loadIndexBase: ((String) async -> IndexBase?)?
     /// Writes new index content for one file (the gutter's "暂存这段").
     var stageIndexText: ((IndexBase, Data) -> Void)?
+    /// 在光标所在行显示最后修改人; kept in the preferences by the model.
+    @Published var showsLineBlame = true
+    /// Who last changed each line of a file in HEAD, for the note after the caret's line.
+    var loadBlame: (@MainActor (String) async -> LineBlame.Source)?
+    /// Commits that changed lines `first...last` (1-based, as HEAD has them) of a file.
+    var loadLineHistory: ((String, Int, Int) async -> [FileBlame.Commit])?
+    /// Shows a commit in the history view.
+    var showCommit: ((String) -> Void)?
 
     private static let maximumBytes = 2 * 1_024 * 1_024
     private struct Format {

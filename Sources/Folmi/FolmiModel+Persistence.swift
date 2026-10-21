@@ -56,6 +56,7 @@ extension FolmiModel {
         preferences.appearance = appearance
         preferences.theme = theme
         preferences.glassSurfaces = glassSurfaces
+        preferences.editorLineBlame = editorLineBlame
         preferences.markdownDiffRendered = markdownDiffRendered
         preferences.unifiedDiff = unifiedDiff
         preferences.foldWhitespace = foldWhitespace
