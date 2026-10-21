@@ -30,7 +30,7 @@ final class DoneStateSyncTests: XCTestCase {
         XCTAssertTrue(shown.contains("工作区干净"), shown)
         XCTAssertTrue(shown.contains("1个提交待拉取"), shown)
         XCTAssertTrue(shown.contains("拉取"), shown)
-        XCTAssertFalse(shown.contains("今天都收好了"), shown)
+        XCTAssertFalse(DoneState.titles.contains { shown.contains($0.replacingOccurrences(of: " ", with: "")) }, shown)
         XCTAssertFalse(shown.contains("都已推送"), shown)
     }
 
@@ -47,5 +47,14 @@ final class DoneStateSyncTests: XCTestCase {
         let model = makeModel(ahead: 0, behind: 0)
         XCTAssertTrue(model.isAllDone)
         XCTAssertEqual(model.daySummary?.behind, 0)
+    }
+
+    /// The title changes from day to day but not within a day.
+    func testDoneTitleStaysForTheDayAndRotates() {
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "UTC")!
+        let morning = Date(timeIntervalSince1970: 1_800_000_000), evening = morning.addingTimeInterval(8 * 3600)
+        XCTAssertEqual(DoneState.title(on: morning, calendar: calendar), DoneState.title(on: evening, calendar: calendar))
+        let week = (0..<7).map { DoneState.title(on: morning.addingTimeInterval(Double($0) * 86_400), calendar: calendar) }
+        XCTAssertEqual(Set(week).count, 7)
     }
 }

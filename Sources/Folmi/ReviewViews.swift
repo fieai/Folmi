@@ -254,6 +254,16 @@ struct AISettingsSheet: View {
 /// Clean worktree, with separate pending push, pull and stash states.
 struct DoneState: View {
     let model: FolmiModel
+    /// The all-done title rotates for a little fun. Only scripts the pixel font has: Latin-1 and kana, no hangul.
+    static let titles = [
+        "今天都收好了", "收工！", "一处不落", "今日事，今日毕", "清清爽爽",
+        "All clear.", "Ship it.", "Nothing left. Go touch grass.",
+        "C'est fini !", "Voilà, tout est propre.", "¡Listo!", "Feierabend!", "Tutto a posto.", "お疲れさまでした",
+    ]
+    /// One title per day, picked by the date: it stays put while the view redraws or the app restarts.
+    static func title(on date: Date = Date(), calendar: Calendar = .current) -> String {
+        titles[(calendar.ordinality(of: .day, in: .era, for: date) ?? 0) % titles.count]
+    }
     var body: some View {
         let _ = PerfLog.body("DoneState")
         let summary = model.daySummary
@@ -264,7 +274,7 @@ struct DoneState: View {
                 } else {
                     Image(systemName: "checkmark.circle.fill").font(.system(size: 40, weight: .light)).foregroundStyle(.themed(.added))
                 }
-                Text("今天都收好了").themedFont(.title3.weight(.semibold), points: 15)
+                Text(Self.title()).themedFont(.title3.weight(.semibold), points: 15)
                 if let line = model.daySummaryLine {
                     Text(line + (summary?.hasUpstream == true && (summary?.commitsToday ?? 0) > 0 && model.inReviewCount == 0 ? "，都已推送" : ""))
                         .themedFont(.callout, points: 12).foregroundStyle(.secondary)

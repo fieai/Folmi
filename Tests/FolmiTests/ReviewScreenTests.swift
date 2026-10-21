@@ -104,7 +104,7 @@ final class ReviewScreenTests: XCTestCase {
         _ = host
     }
 
-    /// A clean work tree with a stash waiting is not 「今天都收好了」: the wrap-up says a batch is put away.
+    /// A clean work tree with a stash waiting is not all done: the wrap-up says a batch is put away.
     @MainActor
     func testWrapUpMentionsStashedChanges() async throws {
         let (model, demo) = try await makeModel()
@@ -116,7 +116,7 @@ final class ReviewScreenTests: XCTestCase {
         defer { window.orderOut(nil); window.contentView = nil }
         try await Task.sleep(nanoseconds: 400_000_000)
         let shown = try ScreenText.read(host).replacingOccurrences(of: " ", with: "")
-        XCTAssertFalse(shown.contains("今天都收好了"), shown)
+        XCTAssertFalse(DoneState.titles.contains { shown.contains($0.replacingOccurrences(of: " ", with: "")) }, shown)
         XCTAssertTrue(shown.contains("工作区已清空"), shown)
         XCTAssertTrue(shown.contains("查看暂放的改动…"), shown)
     }
