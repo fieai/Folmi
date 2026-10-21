@@ -30,13 +30,55 @@ final class MarkdownHTMLTests: XCTestCase {
         XCTAssertTrue(out.contains("<mark>亮</mark>"), out)
     }
 
-    func testRawHTMLIsEscapedExceptHarmlessTags() {
-        let out = html("<script>alert(1)</script> a<br>b <kbd>⌘</kbd> <img src=x onerror=alert(1)>")
-        XCTAssertFalse(out.contains("<script>"))
+    func testRawHTMLKeepsOnlyHarmlessTags() {
+        let out = html("<script>alert(1)</script> a<br>b <kbd>⌘</kbd> <img src=x onerror=alert(1)> <foo>")
+        XCTAssertFalse(out.contains("<script"))
+        XCTAssertFalse(out.contains("alert"))
         XCTAssertFalse(out.contains("<img"))
-        XCTAssertTrue(out.contains("&lt;script&gt;"))
+        XCTAssertTrue(out.contains("&lt;foo&gt;"))
+        XCTAssertTrue(html("段 <script>x</script>").contains("&lt;script&gt;"))
         XCTAssertTrue(out.contains("a<br>b"))
         XCTAssertTrue(out.contains("<kbd>⌘</kbd>"))
+    }
+
+    func testHTMLBlocksPassTheAllowList() {
+        var options = MarkdownHTML.Options()
+        options.imageSource = { $0.hasPrefix("docs/") ? "folmi-file://local/" + $0 : nil }
+        let text = """
+        <table>
+          <tr>
+            <td align="center"><img src="docs/screenshots/ios/home.jpg" width="180" onerror="alert(1)" /><br>首页</td>
+            <td><img src="nope.jpg" alt="缺"></td>
+          </tr>
+        </table>
+
+        段落 <img src="docs/a.png" width="20"> 和 <a href="javascript:alert(1)">坏</a> <a href="docs/b.md">好</a>
+
+        <script>alert(1)</script>
+        <div style="position:fixed" onclick="x()">块</div>
+        """
+        let out = MarkdownHTML.render(text, options: options)
+        XCTAssertTrue(out.contains(#"<div class="html" data-line="0" data-end="5"><table>"#), out)
+        XCTAssertTrue(out.contains(#"<td align="center"><img src="folmi-file://local/docs/screenshots/ios/home.jpg" width="180" loading="lazy"><br>首页</td>"#), out)
+        XCTAssertTrue(out.contains(#"<span class="missing-image" title="nope.jpg">缺</span>"#), out)
+        XCTAssertTrue(out.contains(#"<img src="folmi-file://local/docs/a.png" width="20" loading="lazy">"#), out)
+        XCTAssertTrue(out.contains(#"<a>坏</a>"#), out)
+        XCTAssertTrue(out.contains(#"<a href="docs/b.md" data-href="docs/b.md">好</a>"#), out)
+        XCTAssertTrue(out.contains("<div>块</div>"), out)
+        XCTAssertFalse(out.contains("alert"), out)
+        XCTAssertFalse(out.contains("onerror"), out)
+        XCTAssertFalse(out.contains("style="), out)
+    }
+
+    func testHTMLContainerWrapsMarkdownAcrossBlankLines() {
+        let out = html("<div align=\"center\">\n\n# 标题\n\n**粗**\n\n</div>\n\n后文\n\n<!-- 注释\n\n还在注释 -->\n<picture>\n  <source media=\"(prefers-color-scheme: dark)\" srcset=\"https://x.y/d.png\">\n  <img src=\"https://x.y/l.png\"\n       alt=\"图\">\n</picture>")
+        XCTAssertTrue(out.hasPrefix(#"<div class="html" data-line="0" data-end="6"><div align="center">"#), out)
+        XCTAssertTrue(out.contains(#"<h1 id="标题" data-line="2""#), out)
+        XCTAssertTrue(out.contains("<strong>粗</strong>"), out)
+        XCTAssertTrue(out.contains(#"<p data-line="8" data-end="8">后文</p>"#), out)
+        XCTAssertFalse(out.contains("注释"), out)
+        XCTAssertTrue(out.contains(#"<source media="(prefers-color-scheme: dark)" srcset="https://x.y/d.png">"#), out)
+        XCTAssertTrue(out.contains(#"<img src="https://x.y/l.png" alt="图" loading="lazy">"#), out)
     }
 
     func testLinksAndAutolinks() {

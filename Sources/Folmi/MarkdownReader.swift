@@ -500,6 +500,11 @@ enum MarkdownReaderPage {
     th{font-weight:650;color:var(--muted);background:var(--code-bg);word-break:keep-all;vertical-align:bottom}
     td{word-break:normal;line-break:strict}
     img{max-width:100%;border-radius:8px}
+    .html{margin:0 0 .9em}.html>table,.html>p{margin:.4em 0 1em}.html img[width]{height:auto}
+    [align=center]{text-align:center}[align=right]{text-align:right}[align=left]{text-align:left}
+    [valign=middle]{vertical-align:middle}[valign=bottom]{vertical-align:bottom}
+    img[align=right]{float:right;margin:0 0 .6em 1em}img[align=left]{float:left;margin:0 1em .6em 0}
+    details{margin:0 0 .9em}summary{cursor:pointer}
     .missing-image{display:inline-block;padding:.2em .6em;border:1px dashed var(--border);border-radius:6px;color:var(--muted);font-size:.85em}
     .missing-image::before{content:"图片不可用 · "}
     .frontmatter{font-family:var(--code-font);font-size:.78em;color:var(--muted);background:var(--code-bg);border-radius:8px;padding:10px 14px;margin:0 0 1.4em;white-space:pre-wrap}

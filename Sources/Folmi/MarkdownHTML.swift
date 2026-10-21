@@ -1,7 +1,7 @@
 import Foundation
 
 /// Markdown to HTML for the reading view: CommonMark blocks plus the GitHub parts people write (tables, task lists,
-/// strikethrough, autolinks, alerts) and `[[wiki links]]`. Raw HTML is escaped except a few harmless inline tags, so a
+/// strikethrough, autolinks, alerts) and `[[wiki links]]`. Raw HTML passes through `MarkdownRawHTML`'s allow list, so a
 /// document can never run script in the reader.
 ///
 /// Every block carries `data-line` / `data-end` (0-based source lines), which the reader uses to mark changed blocks,
@@ -28,7 +28,7 @@ enum MarkdownHTML {
         for character in text { appendEscaped(character, to: &result) }
         return result
     }
-    fileprivate static func appendEscaped(_ character: Character, to result: inout String) {
+    static func appendEscaped(_ character: Character, to result: inout String) {
         switch character {
         case "&": result += "&amp;"
         case "<": result += "&lt;"
@@ -146,6 +146,9 @@ private struct Renderer {
             }
             if trimmed.hasPrefix(">") {
                 index = quote(lines, from: index, into: &html); continue
+            }
+            if trimmed.hasPrefix("<"), MarkdownRawHTML.blockStart(trimmed) != nil {
+                index = rawHTML(lines, from: index, into: &html); continue
             }
             if index + 1 < lines.endIndex, line.text.contains("|"), let aligns = delimiterRow(lines[index + 1].text) {
                 index = table(lines, from: index, aligns: aligns, into: &html); continue
@@ -314,11 +317,46 @@ private struct Renderer {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { return true }
         if fence(trimmed) != nil || atxHeading(trimmed) != nil || isThematicBreak(trimmed) || trimmed.hasPrefix(">") || trimmed.hasPrefix("$$") { return true }
+        if trimmed.hasPrefix("<"), MarkdownRawHTML.blockStart(trimmed) == .interrupting { return true }
         // Only a bullet or a list starting at 1 may interrupt a paragraph, so "2024. 年" stays text.
         if let marker = listMarker(text), !(marker.ordered && marker.start != 1) {
             return text.dropFirst(marker.contentUnits).contains { $0 != " " && $0 != "\t" }
         }
         return false
+    }
+
+    // MARK: Raw HTML
+
+    /// An HTML block: lines up to a blank one, kept going while a container tag is still open, so
+    /// `<div align="center">`, blank line, Markdown, blank line, `</div>` reads as on GitHub. Markdown between the
+    /// HTML parts is rendered as blocks.
+    private mutating func rawHTML(_ lines: ArraySlice<SourceLine>, from start: Int, into html: inout String) -> Int {
+        var sanitizer = MarkdownRawHTML(imageSource: options.imageSource)
+        var body = ""
+        var index = start
+        var last = start
+        while index < lines.endIndex {
+            // HTML lines, up to a blank line (or past it, inside a comment or <pre>).
+            while index < lines.endIndex, !lines[index].isBlank || sanitizer.continuesOverBlank {
+                body += sanitizer.feed(lines[index].text + "\n")
+                last = index
+                index += 1
+            }
+            body += sanitizer.finish()
+            guard sanitizer.depth > 0 else { break }
+            while index < lines.endIndex, lines[index].isBlank { index += 1 }
+            guard index < lines.endIndex else { break }
+            if MarkdownRawHTML.blockStart(lines[index].text.trimmingCharacters(in: .whitespaces)) != nil { continue }
+            // Markdown until the next HTML line after a blank one.
+            var end = index + 1
+            while end < lines.endIndex,
+                  !(lines[end - 1].isBlank && MarkdownRawHTML.blockStart(lines[end].text.trimmingCharacters(in: .whitespaces)) != nil) { end += 1 }
+            body += blocks(lines[index..<end])
+            last = end - 1
+            index = end
+        }
+        html += "<div class=\"html\" \(range(lines[start], lines[last]))>\(body)</div>\n"
+        return index
     }
 
     // MARK: Tables
@@ -589,10 +627,9 @@ private struct Renderer {
                         out += "<a href=\"\(MarkdownHTML.escape(inner))\" data-href=\"\(MarkdownHTML.escape(inner))\">\(MarkdownHTML.escape(inner))</a>"
                         i = close + 1; continue
                     }
-                    if inner.range(of: #"^/?(br|kbd|sub|sup|mark|u|ins|del|b|i|s|small)\s*/?$"#, options: [.regularExpression, .caseInsensitive]) != nil {
-                        out += "<" + inner.lowercased().replacingOccurrences(of: " ", with: "") + ">"
-                        i = close + 1; continue
-                    }
+                }
+                if let (tag, end) = MarkdownRawHTML.inline(c, i, to, imageSource: options.imageSource) {
+                    out += tag; i = end; continue
                 }
             case "&":
                 if let semicolon = c[i..<min(to, i + 12)].firstIndex(of: ";"),
