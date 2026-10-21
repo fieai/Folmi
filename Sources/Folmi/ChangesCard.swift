@@ -101,11 +101,19 @@ struct ChangesPane: View {
     var body: some View {
         let _ = PerfLog.body("ChangesPane")
         let staged = model.visibleFiles(in: .staged), working = model.visibleFiles(in: .working)
+        let unreviewed = model.unreviewedStaged
+        let unreviewedWarning: String? = unreviewed.isEmpty ? nil : "\(unreviewed.values.reduce(0, +)) 处没验收"
         VStack(spacing: 0) {
             TextField("搜索改动…", text: $model.fileSearch).themedTextField()
                 .padding(10)
             if let operation = model.snapshot?.operation {
                 OperationNotice(model: model, operation: operation).padding(.horizontal, 10).padding(.bottom, 8)
+            } else if model.snapshot?.files.contains(where: \.isConflict) == true
+                        || model.repositoryURL.map({ model.conflictedRestores[$0.path] != nil }) == true {
+                RestoreConflictNotice(model: model).padding(.horizontal, 10).padding(.bottom, 8)
+            }
+            ForEach(model.conflictingReviews) { watch in
+                ReviewConflictNotice(model: model, watch: watch).padding(.horizontal, 10).padding(.bottom, 8)
             }
             if staged.isEmpty && working.isEmpty {
                 if model.fileSearch.isEmpty, model.snapshot?.files.isEmpty == true { DoneState(model: model) }
@@ -123,7 +131,7 @@ struct ChangesPane: View {
                     QuietButton(title: "编辑所选") { model.editSelectedFiles() }
                 }.padding(.horizontal, 12).padding(.bottom, 6)
                 HStack {
-                    Button("搁置全部改动（\(model.snapshot?.files.count ?? 0) 个文件）") { model.stashAllChanges() }
+                    Button("暂放全部改动（\(model.snapshot?.files.count ?? 0) 个文件）") { model.stashAllChanges() }
                         .buttonStyle(.themedLink).themedFont(.caption, points: 11)
                         .help("包括暂存区、工作区和新文件；完成后可点恢复或按 ⌥⌘Z")
                     Spacer()
@@ -139,11 +147,9 @@ struct ChangesPane: View {
                                 .themedFont(.caption, points: 10).foregroundStyle(.secondary).padding(.vertical, 2)
                                 .selectionDisabled()
                         }
-                        ForEach(staged) { file in row(file, .staged) }
+                        ForEach(staged) { file in row(file, .staged, unreviewed: unreviewed[file.path] != nil) }
                     } header: {
-                        GroupHeader(title: "暂存区", detail: "将会提交", count: staged.count, token: .added,
-                                    onSelectAll: { model.selectFiles(Set(staged.map(\.id)), in: .staged) },
-                                    moveAll: ("全部取消", { model.unstageFiles(staged) }), busy: model.busy)
+                        stagedHeader(staged, warning: unreviewedWarning)
                     }
                     Section {
                         if working.isEmpty {
@@ -176,12 +182,19 @@ struct ChangesPane: View {
         }
     }
 
-    private func row(_ file: FileChange, _ group: ChangeArea) -> some View {
+    private func stagedHeader(_ staged: [FileChange], warning: String?) -> GroupHeader {
+        GroupHeader(title: "暂存区", detail: "将会提交", count: staged.count, token: .added,
+                    onSelectAll: { model.selectFiles(Set(staged.map(\.id)), in: .staged) },
+                    moveAll: ("全部取消", { model.unstageFiles(staged) }), warning: warning, busy: model.busy)
+    }
+
+    private func row(_ file: FileChange, _ group: ChangeArea, unreviewed: Bool = false) -> some View {
         let key = group.rawValue + ":" + file.id
         let selected = model.area == group && model.selectedFileIDs.contains(file.id)
         let focused = model.paneLayout.focused == .changes
         return FileChangeRow(file: file, area: group, counts: model.theme.style.instrument ? model.lineCounts[key] : nil,
-                             onAccent: selected && focused && model.theme.style.selection == .solid)
+                             onAccent: selected && focused && model.theme.style.selection == .solid,
+                             unreviewed: unreviewed)
             .tag(key).padding(.vertical, model.theme.style.rowPadding)
             .background(ListHighlightSuppressor())
             .listRowBackground(SelectedRowBackground(selected: selected, focused: focused))
@@ -234,6 +247,8 @@ struct GroupHeader: View {
     var onSelectAll: (() -> Void)? = nil
     /// Moves every file of the group to the other one: 全部暂存 / 全部取消.
     var moveAll: (title: String, action: () -> Void)? = nil
+    /// Something about the group that needs a look (暂存区: hunks that went in without being accepted).
+    var warning: String? = nil
     var busy = false
     var body: some View {
         HStack(spacing: 6) {
@@ -242,6 +257,10 @@ struct GroupHeader: View {
             Text("\(count)").themedFont(.system(size: 11, weight: .medium).monospacedDigit(), points: 11).foregroundStyle(.secondary)
                 .contentTransition(.numericText())
             Text(detail).themedFont(.caption2, points: 10).foregroundStyle(.secondary)
+            if let warning {
+                Text("· " + warning).themedFont(.caption2, points: 10).foregroundStyle(ThemeColor(token: .modified)).lineLimit(1)
+                    .help("这些改动不是在 Folmi 里收下或暂存的（agent 或终端执行了 git add、合并等），提交前先在逐个验收里看一遍")
+            }
             Spacer(minLength: 0)
             if let onSelectAll, count > 0 {
                 Button("全选", action: onSelectAll).buttonStyle(.themedLink)
@@ -256,30 +275,31 @@ struct GroupHeader: View {
     }
 }
 
-/// A quiet way back to the stashes, shown only while there are some, with 「放回」 for the newest one.
+/// A quiet way back to the stashes, shown only while there are some. Bringing one back goes through the list, which
+/// says which batch it is and whether it would conflict; there is no one-click 拿回 of the newest.
 struct StashEntryRow: View {
     let model: FolmiModel
     let count: Int
     @State private var hovering = false
+    /// When the oldest one was put aside, read whenever the count changes.
+    @State private var oldest: Date?
+    /// Several piled up or one left for long: worth a look (they are easy to forget, some were made automatically).
+    private var nudge: Bool {
+        count >= FolmiModel.stashReminderCount || oldest.map { Date().timeIntervalSince($0) > FolmiModel.staleStashAge } == true
+    }
     var body: some View {
-        HStack(spacing: 6) {
-            list
-            Button("放回", action: model.popLatestStash)
-                .buttonStyle(.pressable).themedFont(.caption.weight(.medium), points: 10)
-                .foregroundStyle(.themed(.accent))
-                .padding(.horizontal, 8).padding(.vertical, 6)
-                .themedBackground(ThemeColor(token: .hover, opacity: 0.5), .control)
-                .disabled(model.busy)
-                .help("把最近收起的一批改动放回工作区（暂存的部分仍是暂存）")
-                .accessibilityLabel("放回最近收起的改动")
-        }
+        list.task(id: count) { oldest = try? await model.repository?.stashes().last?.date }
     }
     private var list: some View {
         Button(action: model.openStashes) {
             HStack(spacing: 7) {
                 Image(systemName: "tray.full").font(.system(size: 12))
-                Text("收起的改动").themedFont(.caption, points: 10)
+                Text("暂放的改动").themedFont(.caption, points: 10)
                 Text("\(count)").themedFont(.caption.monospacedDigit(), points: 10).contentTransition(.numericText())
+                if nudge, let oldest {
+                    Text("· 最早 " + oldest.formatted(.relative(presentation: .named)) + "，该清理了")
+                        .themedFont(.caption, points: 10).foregroundStyle(ThemeColor(token: .modified)).lineLimit(1)
+                }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
             }
@@ -293,7 +313,7 @@ struct StashEntryRow: View {
         .onHover { hovering = $0 }
         .motion(Motion.hover, value: hovering)
         .motion(Motion.reveal, value: count)
-        .help("查看、恢复或删除临时收起的改动")
+        .help("查看、拿回或删除暂放的改动")
     }
 }
 
@@ -544,6 +564,8 @@ struct FileChangeRow: View {
     var counts: LineCount? = nil
     /// Drawn on the accent (石墨's focused selection): every part of the row takes the on-accent color.
     var onAccent = false
+    /// Staged without being accepted (see `FolmiModel.unreviewedStaged`).
+    var unreviewed = false
 
     private var filename: String { (file.path as NSString).lastPathComponent }
     private var directory: String { (file.path as NSString).deletingLastPathComponent }
@@ -602,6 +624,11 @@ struct FileChangeRow: View {
                 }
             }
             Spacer(minLength: 2)
+            if unreviewed {
+                Image(systemName: "eye.slash").font(.system(size: 10))
+                    .foregroundStyle(ThemeColor(token: onAccent ? .onAccent : .modified)).padding(.top, 3)
+                    .accessibilityLabel("没验收")
+            }
             if let counts {
                 LineCountText(counts: counts, onAccent: onAccent).padding(.top, 1)
             }

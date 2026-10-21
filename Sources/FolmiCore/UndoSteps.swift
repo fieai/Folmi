@@ -171,7 +171,7 @@ extension GitRepository {
             // staged and unstaged changes elsewhere stay as they are, and any overlap is refused before writing.
             let result = try git.run(["read-tree", "-m", "-u", current, restore], allowFailure: true)
             guard result.status == 0 else {
-                throw FolmiError.unsupported("没提交的改动和要恢复的文件有重叠，撤销会覆盖它们，所以没有执行。先提交或临时收起改动。")
+                throw FolmiError.unsupported("没提交的改动和要恢复的文件有重叠，撤销会覆盖它们，所以没有执行。先提交或暂放改动。")
             }
             _ = try git.run(["update-ref", "-m", "Folmi：撤销", ref, restore, current])
             return .reset(restore: current, current: restore, branch: branch)

@@ -63,9 +63,9 @@ extension GitRepository {
     @discardableResult
     public func stashAll(message: String, expectedFingerprint: String) async throws -> StashEntry {
         let current = try require(expectedFingerprint)
-        guard current.head != nil else { throw FolmiError.unsupported("项目还没有提交，不能收起改动。") }
-        guard !current.files.isEmpty else { throw FolmiError.unsupported("没有可以收起的改动。") }
-        guard !current.files.contains(where: \.isConflict) else { throw FolmiError.unsupported("有冲突没解决，先解决冲突再收起。") }
+        guard current.head != nil else { throw FolmiError.unsupported("项目还没有提交，不能暂放改动。") }
+        guard !current.files.isEmpty else { throw FolmiError.unsupported("没有可以暂放的改动。") }
+        guard !current.files.contains(where: \.isConflict) else { throw FolmiError.unsupported("有冲突没解决，先解决冲突再暂放。") }
         guard try operationInProgress(try runner()) == nil else { throw FolmiError.unsupported("变基或合并还没完成，先继续或放弃它。") }
         return try pushStash(message: message)
     }
@@ -75,7 +75,7 @@ extension GitRepository {
         let before = try stashList(git).first?.id
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
         _ = try git.run(["stash", "push", "--include-untracked", "--quiet", "--message", text.isEmpty ? "Folmi" : text], literalPathspecs: false)
-        guard let entry = try stashList(git).first, entry.id != before else { throw FolmiError.unsupported("没有可以收起的改动。") }
+        guard let entry = try stashList(git).first, entry.id != before else { throw FolmiError.unsupported("没有可以暂放的改动。") }
         return entry
     }
 
@@ -84,14 +84,14 @@ extension GitRepository {
     public func popStash(_ id: String, expectedFingerprint: String) async throws {
         let current = try require(expectedFingerprint)
         guard !current.files.contains(where: { !$0.isUntracked }) else {
-            throw FolmiError.unsupported("工作区或暂存区还有改动。先提交或收起它们，再恢复这份收起的改动。")
+            throw FolmiError.unsupported("工作区或暂存区还有改动。先提交或暂放它们，再拿回这份暂放的改动。")
         }
         try restoreStash(id)
     }
 
     private func restoreStash(_ id: String) throws {
         let git = try runner()
-        guard let entry = try stashList(git).first(where: { $0.id == id }) else { throw FolmiError.unsupported("这份收起的改动已经不在了。") }
+        guard let entry = try stashList(git).first(where: { $0.id == id }) else { throw FolmiError.unsupported("这份暂放的改动已经不在了。") }
         let ref = "stash@{\(entry.index)}"
         let before = try state().fingerprint
         var result = try git.run(["stash", "apply", "--index", "--quiet", ref], allowFailure: true, literalPathspecs: false)
@@ -102,17 +102,38 @@ extension GitRepository {
         guard result.status == 0 else {
             let conflicts = try git.run(["diff", "--name-only", "--diff-filter=U", "-z"]).text.components(separatedBy: "\0").filter { !$0.isEmpty }
             if !conflicts.isEmpty {
-                throw FolmiError.unsupported("恢复时这些文件和当前提交有冲突，已带冲突标记写入，收起的改动仍留在列表里：\n" + conflicts.joined(separator: "\n"))
+                throw FolmiError.unsupported("拿回时这些文件和当前提交有冲突，已带冲突标记写入，暂放的改动仍留在列表里：\n" + conflicts.joined(separator: "\n"))
             }
             throw FolmiError.git(exitCode: result.status, message: String(decoding: result.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         try drop(id, git: git)
     }
 
+    /// Takes back a 放回 that stopped on conflicts: tracked files go back to HEAD (the work tree was clean before it,
+    /// `popStash` requires that) and the untracked files the stash put back are removed again when unchanged. The
+    /// stash itself stayed on the list, so nothing is lost; without its id only the tracked files are reset.
+    public func undoConflictedRestore(stash id: String?) async throws {
+        let git = try runner()
+        guard try operationInProgress(git) == nil else { throw FolmiError.unsupported("有进行中的变基或合并，用它自己的「放弃」。") }
+        if let id, try git.run(["rev-parse", "--verify", "--quiet", "\(id)^3"], allowFailure: true).status == 0 {
+            let listed = try git.run(["ls-tree", "-r", "-z", "\(id)^3"]).text.components(separatedBy: "\0").filter { !$0.isEmpty }
+            let untracked = Set(try git.run(["ls-files", "--others", "--exclude-standard", "-z"]).text.components(separatedBy: "\0").filter { !$0.isEmpty })
+            for line in listed {
+                // "<mode> blob <sha>\t<path>"
+                guard let tab = line.firstIndex(of: "\t") else { continue }
+                let path = String(line[line.index(after: tab)...]), blob = line[..<tab].split(separator: " ").last.map(String.init)
+                guard untracked.contains(path), let blob,
+                      try git.run(["hash-object", "--", path]).text.trimmingCharacters(in: .whitespacesAndNewlines) == blob else { continue }
+                try FileManager.default.removeItem(at: git.directory.appendingPathComponent(path))
+            }
+        }
+        _ = try git.run(["reset", "--hard", "--quiet", "HEAD"])
+    }
+
     /// Removes a stash from the list; the returned step puts it back.
     public func dropStash(_ id: String) async throws -> UndoStep {
         let git = try runner()
-        guard let entry = try stashList(git).first(where: { $0.id == id }) else { throw FolmiError.unsupported("这份收起的改动已经不在了。") }
+        guard let entry = try stashList(git).first(where: { $0.id == id }) else { throw FolmiError.unsupported("这份暂放的改动已经不在了。") }
         try drop(id, git: git)
         return .stash(.store(object: id, message: Self.storedMessage(entry)))
     }
@@ -139,11 +160,29 @@ extension GitRepository {
         return Array(Set(files)).sorted()
     }
 
+    /// What bringing a stash back onto the current commit would run into, worked out without touching anything: files
+    /// whose changes clash with what HEAD has now (a three-way merge from the commit the stash was made on), and new
+    /// files the stash holds that already exist in the work tree. Empty when it would go back cleanly.
+    public func stashConflicts(_ id: String) async throws -> [String] {
+        let git = try runner()
+        guard id.allSatisfy(\.isHexDigit) else { throw FolmiError.unsupported("无效的提交编号。") }
+        var files: [String] = []
+        let merged = try git.run(["merge-tree", "--write-tree", "--name-only", "--no-messages", "--merge-base=\(id)^1", "HEAD", id], allowFailure: true)
+        if merged.status == 1 {
+            files += merged.text.components(separatedBy: "\n").dropFirst().filter { !$0.isEmpty }
+        }
+        if try git.run(["rev-parse", "--verify", "--quiet", id + "^3"], allowFailure: true).status == 0 {
+            let untracked = try git.run(["ls-tree", "-r", "--name-only", "-z", id + "^3"]).text.components(separatedBy: "\0").filter { !$0.isEmpty }
+            files += untracked.filter { FileManager.default.fileExists(atPath: git.directory.appendingPathComponent($0).path) }
+        }
+        return Array(Set(files)).sorted()
+    }
+
     func undoStash(_ change: StashUndo) throws -> UndoStep {
         let git = try runner()
         switch change {
         case .pop(let object):
-            guard let entry = try stashList(git).first(where: { $0.id == object }) else { throw FolmiError.unsupported("这份收起的改动已经不在了，无法恢复。") }
+            guard let entry = try stashList(git).first(where: { $0.id == object }) else { throw FolmiError.unsupported("这份暂放的改动已经不在了，无法拿回。") }
             guard !(try state().files.contains { !$0.isUntracked }) else {
                 throw FolmiError.unsupported("之后工作区又有了改动，撤销会和它们混在一起，所以没有执行。")
             }
@@ -151,7 +190,7 @@ extension GitRepository {
             return .stash(.push(message: entry.message))
         case .push(let message):
             let current = try state()
-            guard !current.files.isEmpty else { throw FolmiError.unsupported("没有可以收起的改动。") }
+            guard !current.files.isEmpty else { throw FolmiError.unsupported("没有可以暂放的改动。") }
             return .stash(.pop(object: try pushStash(message: message).id))
         case let .store(object, message):
             guard object.allSatisfy(\.isHexDigit) else { throw FolmiError.unsupported("无效的提交编号。") }

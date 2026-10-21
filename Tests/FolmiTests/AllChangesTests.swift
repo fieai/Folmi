@@ -143,3 +143,37 @@ final class AllChangesTests: XCTestCase {
         }
     }
 }
+
+/// 全部改动 narrowed to one AI turn: only its files, a later turn's overlap is noticed, and 显示全部 brings everything back.
+final class TurnFilterTests: XCTestCase {
+    @MainActor
+    func testTurnFilterShowsOnlyThatTurnsFiles() async throws {
+        let settings = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-TurnFilter-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: settings, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: settings) }
+        let demo = try await DemoRepository.create()
+        defer { try? FileManager.default.removeItem(at: demo.root.deletingLastPathComponent()) }
+        let model = FolmiModel(store: WorkspaceStore(url: settings.appendingPathComponent("workspace.json")))
+        model.open(demo.root, environment: demo.environment, demo: true)
+        let deadline = Date().addingTimeInterval(10)
+        while model.busy || model.snapshot == nil { guard Date() < deadline else { return XCTFail("open") }; try await Task.sleep(nanoseconds: 20_000_000) }
+
+        let first = AIBatch(id: "t1", session: "s", prompt: "改问候语", started: Date().addingTimeInterval(-120), stopped: Date().addingTimeInterval(-100),
+                            paths: ["Sources/Greeting.swift"])
+        let second = AIBatch(id: "t2", session: "s", prompt: "记笔记", started: Date().addingTimeInterval(-60), stopped: Date().addingTimeInterval(-50),
+                             paths: ["Notes.txt", "Sources/Greeting.swift"])
+        model.aiBatches = [first, second]
+        XCTAssertEqual(model.turnChoices.map(\.id), ["t2", "t1"], "最新的一轮在前")
+
+        model.showTurn("t1")
+        await model.loadAllChanges()
+        XCTAssertEqual(model.content, .allChanges)
+        XCTAssertEqual(Set(model.visibleAllChanges.map(\.file.path)), ["Sources/Greeting.swift"])
+        XCTAssertTrue(model.laterTurnTouched("Sources/Greeting.swift", after: "t1"))
+        XCTAssertFalse(model.laterTurnTouched("README.md", after: "t1"))
+        XCTAssertFalse(model.laterTurnTouched("Sources/Greeting.swift", after: "t2"), "没有更晚的一轮")
+
+        model.turnFilter = nil
+        XCTAssertGreaterThan(Set(model.visibleAllChanges.map(\.file.path)).count, 1)
+    }
+}

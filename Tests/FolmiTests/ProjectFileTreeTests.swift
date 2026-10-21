@@ -209,4 +209,15 @@ final class ProjectFileTreeTests: XCTestCase {
     private func flatten(_ nodes: [ProjectFileNode]) -> [ProjectFileNode] {
         nodes.flatMap { [$0] + flatten($0.children ?? []) }
     }
+
+    /// Folders carry one mark for what is inside: new only, deleted only, or a mix (modified).
+    func testFoldersShowWhatChangedInside() {
+        let codes = ProjectFileTreeView.folderCodes(["src/a/new.swift", "src/a/old.swift", "docs/gone.md", "README.md"],
+                                                    codes: ["src/a/new.swift": "?", "src/a/old.swift": "M", "docs/gone.md": "D", "README.md": "M"])
+        XCTAssertEqual(codes["src"], "M")
+        XCTAssertEqual(codes["src/a"], "M")
+        XCTAssertEqual(codes["docs"], "D")
+        XCTAssertNil(codes["README.md"], "files are not folders")
+        XCTAssertEqual(ProjectFileTreeView.folderCodes(["lib/x.swift"], codes: ["lib/x.swift": "?"]), ["lib": "A"])
+    }
 }

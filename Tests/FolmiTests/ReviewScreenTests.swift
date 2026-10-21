@@ -118,6 +118,6 @@ final class ReviewScreenTests: XCTestCase {
         let shown = try ScreenText.read(host).replacingOccurrences(of: " ", with: "")
         XCTAssertFalse(shown.contains("今天都收好了"), shown)
         XCTAssertTrue(shown.contains("工作区已清空"), shown)
-        XCTAssertTrue(shown.contains("放回最近一批"), shown)
+        XCTAssertTrue(shown.contains("查看暂放的改动…"), shown)
     }
 }

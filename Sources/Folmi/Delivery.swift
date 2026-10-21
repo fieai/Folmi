@@ -35,6 +35,17 @@ struct DeliveryPlan {
     let endpoint: String?
     let command: DeliveryCommand
     let executableFingerprint: String?
+    /// The target branch on the remote as just fetched (push / Gerrit); nil for a script, a branch the remote does not
+    /// have yet, or when fetching failed (`baseProblem`).
+    var base: (name: String, commit: String)?
+    var baseProblem: String?
+    /// Commits on the remote branch that the locked commit is not built on.
+    var behind = 0
+    /// Gerrit: the commit message has no Change-Id, so a rebased push opens a new review instead of a new patch set.
+    var missingChangeID = false
+    /// The ref pushed to, e.g. refs/for/master.
+    var target: String { command.arguments.last?.split(separator: ":", maxSplits: 1).last.map(String.init) ?? "" }
+    var rebaseNeeded: Bool { behind > 0 && base != nil }
 }
 
 enum ExecutableFingerprint {

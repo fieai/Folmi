@@ -98,10 +98,18 @@ struct AllChangesView: View {
     @State private var completionFeedback = TerrazzoCompletionFeedback()
     @State private var completionTick = 0
     @FocusState private var reasonFocused: Bool
+    /// Files whose 只看这一轮 comparison is open (turn filter on).
+    @State private var turnOnly: Set<String> = []
     @Environment(\.folmiTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var diffs: [FileDiff] { model.allChanges }
+    /// The turn 全部改动 is narrowed to, if any (see `FolmiModel.turnFilter`).
+    private var turn: AIBatch? { model.turnFilter.flatMap { id in model.aiBatches.first { $0.id == id } } }
+    private var diffs: [FileDiff] { model.visibleAllChanges }
+    /// Progress over what is on the page: the whole change set, or the turn's files.
+    private var tally: ReviewTally {
+        turn == nil ? model.reviewTally : ReviewTally.make(diffs, ledger: model.reviewLedger, keys: ReviewKeyCache.keys)
+    }
     private var stops: [AllChangesNavigator.Stop] { AllChangesNavigator.stops(diffs, collapsed: collapsed) }
     private var current: AllChangesNavigator.Stop? { stops.indices.contains(cursor) ? stops[cursor] : nil }
     private var completionSnapshot: TerrazzoCompletionFeedback.Snapshot {
@@ -127,6 +135,9 @@ struct AllChangesView: View {
                     ForEach(diffs, id: \.allChangesKey) { diff in
                         let key = diff.allChangesKey
                         Section {
+                            if let turn, turnOnly.contains(key), !collapsed.contains(key) {
+                                TurnOnlyDiff(model: model, batch: turn.id, path: diff.file.path)
+                            }
                             if !collapsed.contains(key) {
                                 SideBySideFile(
                                     diff: diff, selected: model.allChangesSelection[key] ?? [], busy: model.busy, columnWidth: 400,
@@ -337,7 +348,7 @@ struct AllChangesView: View {
     }
 
     @ViewBuilder private var reviewBar: some View {
-        let tally = model.reviewTally
+        let tally = self.tally
         if !diffs.isEmpty || model.lastCommit != nil {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
@@ -397,6 +408,7 @@ struct AllChangesView: View {
     private var summary: some View {
         let staged = diffs.filter { $0.area == .staged }.count, working = diffs.count - staged
         return VStack(alignment: .leading, spacing: 4) {
+            if !model.turnChoices.isEmpty || turn != nil { turnBar }
             HStack(spacing: 10) {
                 Text("已暂存 \(staged) · 未暂存 \(working)").themedFont(.caption.weight(.medium), points: 10)
                 if model.allChangesLoading { ProgressView().controlSize(.mini); Text("读取中…").themedFont(.caption, points: 10).foregroundStyle(.secondary) }
@@ -414,10 +426,57 @@ struct AllChangesView: View {
                 Label(notice, systemImage: "info.circle").themedFont(.caption, points: 10).foregroundStyle(.secondary)
             }
             if diffs.isEmpty && !model.allChangesLoading {
-                Text("没有改动").themedFont(.caption, points: 10).foregroundStyle(.secondary).padding(.vertical, 20)
+                Text(turn == nil ? "没有改动" : "这一轮改过的文件现在都没有改动了（已经提交，或者被改回去了）")
+                    .themedFont(.caption, points: 10).foregroundStyle(.secondary).padding(.vertical, 20)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    /// Which turn the page shows: every change, or what one AI turn touched, with its prompt and the way to take it back.
+    private var turnBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Menu {
+                    Button("全部改动") { model.turnFilter = nil }
+                    Divider()
+                    ForEach(model.turnChoices) { batch in
+                        Button(Self.turnTitle(batch)) { model.turnFilter = batch.id; turnOnly = [] }
+                    }
+                } label: {
+                    Label(turn.map { "只看这一轮：" + Self.turnTitle($0) } ?? "看哪一轮：全部改动", systemImage: "clock.arrow.circlepath")
+                        .lineLimit(1)
+                }
+                .menuStyle(.borderlessButton).fixedSize(horizontal: false, vertical: true)
+                .themedFont(.caption.weight(.medium), points: 10)
+                .help("只看某一轮 AI 改过的文件，收下、丢弃照常")
+                Spacer(minLength: 4)
+                if let turn {
+                    if turn.canUndo {
+                        // A later turn edited the same files: taking this one back would overwrite that, so it is refused
+                        // anyway; say so up front instead of after the click.
+                        let overlap = turn.paths.filter { model.laterTurnTouched($0, after: turn.id) }
+                        Button("撤回这一轮") { model.undoAIBatch(turn.id) }.controlSize(.small).disabled(model.busy || !overlap.isEmpty)
+                            .help(overlap.isEmpty
+                                  ? "把这一轮改过的 \(turn.paths.count) 个文件恢复成这一轮之前的样子（⌥⌘Z 可以再恢复）"
+                                  : "后面的轮次又改过 \(overlap.prefix(3).joined(separator: "、"))\(overlap.count > 3 ? " 等" : "")，整批撤回会把那些改动一起抹掉，所以不能用；在下面按块丢弃这一轮的改动。")
+                    }
+                    Button("显示全部") { model.turnFilter = nil }.controlSize(.small)
+                }
+            }
+            if let turn {
+                let gone = Set(turn.paths).subtracting(diffs.map(\.file.path)).count
+                Text("\(turn.agentTitle) · \(turn.started.formatted(date: .omitted, time: .shortened)) · 改了 \(turn.paths.count) 个文件"
+                     + (gone > 0 ? "，其中 \(gone) 个现在没有改动（已提交或已改回）" : ""))
+                    .themedFont(.caption, points: 10).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.bottom, 4)
+    }
+
+    static func turnTitle(_ batch: AIBatch) -> String {
+        let prompt = batch.prompt.map { String($0.prefix(30)) + ($0.count > 30 ? "…" : "") } ?? "（没有记下提示词）"
+        return "\(batch.started.formatted(date: .omitted, time: .shortened))  \(prompt)"
     }
 
     private func header(_ diff: FileDiff, key: String) -> some View {
@@ -436,6 +495,16 @@ struct AllChangesView: View {
                 Text("← \(original)").themedFont(.caption2, points: 10).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             RiskBadge(risk: ReviewRiskRules.assess(diff))
+            if let turn {
+                if model.laterTurnTouched(diff.file.path, after: turn.id) {
+                    Text("后面的轮次也改过").themedFont(.caption2, points: 10).foregroundStyle(ThemeColor(token: .modified))
+                        .help("这里显示的是文件现在的差异，混着后面轮次的改动；「只看这一轮」可以单独看这一轮改了什么。收下按文件现在的内容算。")
+                }
+                Toggle("只看这一轮", isOn: Binding(get: { turnOnly.contains(key) },
+                                                  set: { on in if on { turnOnly.insert(key) } else { turnOnly.remove(key) } }))
+                    .toggleStyle(.button).controlSize(.mini)
+                    .help("对比这一轮之前和这一轮刚结束时的文件（只读）")
+            }
             Spacer(minLength: 6)
             if counts.added + counts.removed > 0 {
                 Text("+\(counts.added)").themedFont(.caption.monospacedDigit(), points: 10).foregroundStyle(.themed(.added))
@@ -611,6 +680,42 @@ private struct RiskBadge: View {
             .themedCapsule(ThemeColor(token: token, opacity: 0.14))
             .help(risk.level == .high ? "排在前面：建议先看这一处" : "排在前面：值得多看一眼")
             .accessibilityLabel((risk.level == .high ? "高风险：" : "留意：") + risk.reasons.joined(separator: "，"))
+        }
+    }
+}
+
+/// 只看这一轮: one file before the turn against right after it, read only, above the file's current diff.
+private struct TurnOnlyDiff: View {
+    let model: FolmiModel
+    let batch: String
+    let path: String
+    @State private var diff: FileDiff?
+    @State private var note: String?
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("只看这一轮", systemImage: "clock.arrow.circlepath").themedFont(.caption.weight(.medium), points: 10).foregroundStyle(.secondary)
+            if let note { Text(note).themedFont(.caption, points: 10).foregroundStyle(.secondary) }
+            if let diff {
+                if let notice = diff.notice { Text(notice).themedFont(.caption, points: 10).foregroundStyle(.secondary) }
+                SideBySideFile(
+                    diff: diff, selected: [], busy: false, columnWidth: 400,
+                    onToggleLine: { _, _ in }, onApplyHunk: { _, _ in }, onApplySelection: { _, _ in },
+                    onStageFile: { _ in }, onUnstageFile: { _ in }, onEditFile: { _ in },
+                    comments: [], onComment: { _, _, _ in }, onDeleteComment: { _ in },
+                    showsHeader: false, allowsLineSelection: false, anchorPrefix: "turn#\(batch)#",
+                    readOnly: true, sideTitles: ("这一轮之前", "这一轮之后"), unified: model.unifiedDiff)
+            } else if !loaded {
+                ProgressView().controlSize(.small)
+            }
+            Divider().padding(.top, 4)
+            Text("下面是文件现在的差异，在这里收下或丢弃。").themedFont(.caption, points: 10).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .task(id: batch + path) {
+            let result = await model.turnDiff(batch: batch, path: path)
+            diff = result.diff; note = result.note; loaded = true
         }
     }
 }

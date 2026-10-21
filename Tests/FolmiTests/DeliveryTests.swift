@@ -86,4 +86,135 @@ final class DeliveryTests: XCTestCase {
         XCTAssertTrue(shown.contains(plan.root.lastPathComponent), "folder name: \(shown)")
         XCTAssertTrue(shown.contains("refs/heads/main'"), "the refspec at the end of the command: \(shown)")
     }
+
+    /// The target branch moved on since the commit was made: the preview says so, 推送 rebases onto the remote's latest
+    /// first and pushes the rebased commit, and the sheet closes once the push went through.
+    @MainActor
+    func testDeliveryRebasesOntoTheRemotesLatestAndCloses() async throws {
+        let settings = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-DeliveryRebase-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: settings, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: settings) }
+        let demo = try await DemoRepository.create(remoteUpdates: true)
+        defer { try? FileManager.default.removeItem(at: demo.root.deletingLastPathComponent()) }
+        func git(_ arguments: [String]) async throws -> String {
+            try await CommandRunner.git(arguments, at: demo.root, environment: demo.environment).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // A clean tree with one local commit; the remote already has the teammate's commit on main.
+        _ = try await git(["add", "-A"])
+        _ = try await git(["commit", "--quiet", "-m", "本地改动"])
+        let local = try await git(["rev-parse", "HEAD"])
+
+        let model = FolmiModel(store: WorkspaceStore(url: settings.appendingPathComponent("workspace.json")))
+        model.open(demo.root, environment: demo.environment, demo: true)
+        let deadline = Date().addingTimeInterval(10)
+        func settle() async throws { while model.busy || model.snapshot == nil { guard Date() < deadline else { throw FolmiFailure(message: "timeout: \(model.errorMessage ?? "")") }; try await Task.sleep(nanoseconds: 20_000_000) } }
+        try await settle()
+        model.deliveryKind = .push; model.deliveryRemote = "demo"; model.deliveryBranch = "main"
+        model.showDelivery = true
+        // One click: it stops before pushing, because the remote moved on.
+        model.deliver()
+        while model.deliveryPlan == nil { guard Date() < deadline, model.errorMessage == nil else { return XCTFail(model.errorMessage ?? "plan") }; try await Task.sleep(nanoseconds: 20_000_000) }
+        try await settle()
+        let plan = try XCTUnwrap(model.deliveryPlan, model.errorMessage ?? "")
+        XCTAssertTrue(model.showDelivery, "远端有新提交时停下来，不直接推")
+        let unchanged = try await git(["rev-parse", "HEAD"])
+        XCTAssertEqual(unchanged, local)
+        XCTAssertEqual(plan.behind, 1)
+        XCTAssertEqual(plan.base?.name, "demo/main")
+        XCTAssertTrue(model.deliveryCommandsText.hasPrefix("'/usr/bin/git' 'rebase' "), model.deliveryCommandsText)
+
+        model.deliver()
+        try await settle()
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.showDelivery, "推送成功后关闭弹窗")
+        let head = try await git(["rev-parse", "HEAD"])
+        XCTAssertNotEqual(head, local)
+        let parent = try await git(["rev-parse", "HEAD^"]), pushed = try await git(["ls-remote", "demo", "refs/heads/main"])
+        XCTAssertEqual(parent, plan.base?.commit, "本地提交挪到了远端最新之上")
+        XCTAssertEqual(pushed.prefix(40), Substring(head))
+    }
+
+    /// Nothing new on the remote: one click plans and pushes, no separate preview.
+    @MainActor
+    func testPushIsOneClickWhenTheRemoteHasNothingNew() async throws {
+        let settings = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-DeliveryOneClick-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: settings, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: settings) }
+        let demo = try await DemoRepository.create()
+        defer { try? FileManager.default.removeItem(at: demo.root.deletingLastPathComponent()) }
+        let model = FolmiModel(store: WorkspaceStore(url: settings.appendingPathComponent("workspace.json")))
+        model.open(demo.root, environment: demo.environment, demo: true)
+        let deadline = Date().addingTimeInterval(10)
+        func settle() async throws { while model.busy || model.snapshot == nil { guard Date() < deadline else { throw FolmiFailure(message: "timeout") }; try await Task.sleep(nanoseconds: 20_000_000) } }
+        try await settle()
+        model.deliveryKind = .push; model.deliveryRemote = "demo"; model.deliveryBranch = "main"
+        model.showDelivery = true
+        XCTAssertNil(model.deliveryPlan)
+        model.deliver()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        try await settle()
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.showDelivery)
+        let pushed = try await CommandRunner.git(["ls-remote", "demo", "refs/heads/main"], at: demo.root, environment: demo.environment)
+        XCTAssertEqual(pushed.prefix(40), Substring(model.snapshot?.head ?? "-"))
+    }
+
+    @MainActor
+    func testGerritReviewLinksAreReadFromPushOutput() {
+        let output = "remote: Processing changes: refs: 1, new: 1\nremote:\nremote:   https://gerrit.example/c/algo/hr/+/4521 修复 [NEW]\nremote:\n"
+        XCTAssertEqual(FolmiModel.reviewLinks(output), ["https://gerrit.example/c/algo/hr/+/4521"])
+    }
+}
+
+/// Reviews pushed from Folmi are checked locally after each fetch: a conflict with the target's new tip shows, a
+/// clean merge does not, and a review whose commit reached the branch stops being watched.
+final class ReviewWatchTests: XCTestCase {
+    @MainActor
+    func testReviewWatchFindsConflictsLocally() async throws {
+        let settings = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-ReviewWatch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: settings, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: settings) }
+        let demo = try await DemoRepository.create(remoteUpdates: true)
+        let parent = demo.root.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        func git(_ arguments: [String], at directory: URL? = nil) async throws -> String {
+            try await CommandRunner.git(arguments, at: directory ?? demo.root, environment: demo.environment).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        // The review: the local work committed on top of what main had before the teammate's commit.
+        _ = try await git(["add", "-A"])
+        _ = try await git(["commit", "--quiet", "-m", "本地改动\n\nChange-Id: I0123456789abcdef0123456789abcdef01234567"])
+        let review = try await git(["rev-parse", "HEAD"])
+
+        let model = FolmiModel(store: WorkspaceStore(url: settings.appendingPathComponent("workspace.json")))
+        model.open(demo.root, environment: demo.environment, demo: true)
+        let deadline = Date().addingTimeInterval(10)
+        while model.busy || model.snapshot == nil { guard Date() < deadline else { return XCTFail("open") }; try await Task.sleep(nanoseconds: 20_000_000) }
+        let root = try XCTUnwrap(model.repositoryURL)
+        await model.watchReview(commit: review, remote: "demo", branch: "main", root: root)
+        XCTAssertEqual(model.reviewWatches.first?.changeID, "I0123456789abcdef0123456789abcdef01234567")
+
+        // The teammate's commit (docs/team.md) does not touch the review's files: no notice.
+        _ = try await git(["fetch", "--quiet", "demo"])
+        await model.checkReviewWatches(root: root)
+        XCTAssertNotNil(model.reviewWatches.first?.checkedBase)
+        XCTAssertTrue(model.conflictingReviews.isEmpty)
+
+        // Now main changes the same line of Greeting.swift.
+        let teammate = parent.appendingPathComponent("teammate2", isDirectory: true)
+        _ = try await git(["clone", "--quiet", "--branch", "main", parent.appendingPathComponent("demo-remote.git").path, teammate.path], at: parent)
+        let greeting = teammate.appendingPathComponent("Sources/Greeting.swift")
+        try (try String(contentsOf: greeting, encoding: .utf8)).replacingOccurrences(of: "Hello,", with: "Howdy,").write(to: greeting, atomically: true, encoding: .utf8)
+        _ = try await git(["commit", "--quiet", "-am", "同事改了问候语"], at: teammate)
+        _ = try await git(["push", "--quiet", "origin", "main"], at: teammate)
+        _ = try await git(["fetch", "--quiet", "demo"])
+        await model.checkReviewWatches(root: root)
+        XCTAssertEqual(model.conflictingReviews.first?.conflicts, ["Sources/Greeting.swift"])
+
+        // The review lands (its commit merged into main): no longer watched.
+        _ = try await git(["pull", "--quiet", "--no-rebase", "-X", "ours", "--no-edit", demo.root.path, "main"], at: teammate)
+        _ = try await git(["push", "--quiet", "origin", "main"], at: teammate)
+        _ = try await git(["fetch", "--quiet", "demo"])
+        await model.checkReviewWatches(root: root)
+        XCTAssertTrue(model.reviewWatches.isEmpty)
+    }
 }

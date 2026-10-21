@@ -409,7 +409,30 @@ extension FolmiModel {
 
     /// 回放: one file of a turn, from the copy saved before the turn to the file right after it (the snapshot taken
     /// when the turn ended, or the file as it is now while the turn runs). Nil before: a file Claude created.
-    func replayDiff(batch id: String, path: String) async -> (diff: FileDiff?, note: String?) {
+    /// Turns worth picking in 全部改动: ones that changed files and were not taken back, newest first.
+    var turnChoices: [AIBatch] { aiBatches.filter { !$0.paths.isEmpty && !$0.undone }.reversed().prefix(20).map { $0 } }
+
+    /// 全部改动 showing only what one turn touched (nil: everything).
+    func showTurn(_ id: String?) {
+        turnFilter = id
+        showContent(.allChanges)
+    }
+
+    /// 全部改动 as the page shows it: everything, or only the files the filtered turn touched.
+    var visibleAllChanges: [FileDiff] {
+        guard let id = turnFilter, let turn = aiBatches.first(where: { $0.id == id }) else { return allChanges }
+        let paths = Set(turn.paths)
+        return allChanges.filter { paths.contains($0.file.path) }
+    }
+
+    /// Whether a turn after `id` edited `path` as well: then the file's diff mixes both turns.
+    func laterTurnTouched(_ path: String, after id: String) -> Bool {
+        guard let index = aiBatches.firstIndex(where: { $0.id == id }) else { return false }
+        return aiBatches[(index + 1)...].contains { !$0.undone && $0.paths.contains(path) }
+    }
+
+    /// One file as one turn left it: before the turn against right after it (read only, for 只看这一轮).
+    func turnDiff(batch id: String, path: String) async -> (diff: FileDiff?, note: String?) {
         guard let repository, let root = repositoryURL, let gitDir = aiGitDir, let batch = aiBatches.first(where: { $0.id == id }) else {
             return (nil, "这一轮的记录已经不在了。")
         }

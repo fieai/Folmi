@@ -612,12 +612,12 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
         <div>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="3"/></svg></div>
           <h3>接住 AI 的每一轮</h3>
-          <p>AI 每说完一轮话，改动单独成一批：能整批退回，也能回放它这一轮做了什么。危险命令在执行前就拦下。支持 Claude Code 和 Codex。</p>
+          <p>AI 每说完一轮话，改动单独成一批：能整批退回，也能只看它这一轮改了什么。危险命令在执行前就拦下。支持 Claude Code 和 Codex。</p>
         </div>
         <div class="mini-list">
           <span class="capsule"><span class="dot"></span>AI 正在改 <em>3 个文件</em></span>
           <div>↺ 整批退回 <code>第 12 轮 · 5 处</code></div>
-          <div>▶ 回放这一轮</div>
+          <div>只看这一轮</div>
           <div>⛔ 已拦下 <code>rm -rf build/*</code></div>
         </div>
       </div>
@@ -670,7 +670,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
         <ul class="ticks">
           <li>看完一轮有一张收工卡片，写着今天验收、撤回、提交了多少。</li>
           <li>连续几天在这里验收，也会记着。</li>
-          <li>AI 的每一轮改动都能回放，回头看它是怎么一步步改的。</li>
+          <li>AI 的每一轮改动都能单独拿出来看：这一轮之前和之后，一目了然。</li>
         </ul>
         <div class="proposal donecard">
           <img src="assets/folmi-mascot.svg" alt="">
@@ -685,7 +685,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
   <div class="wrap center">
     <div class="kicker">配合哪些 AI</div>
     <h2>主要配合 Claude Code 和 Codex</h2>
-    <p class="sub">这两个接得最深：每一轮改动单独成批，能整批退回、能回放；评论直接发回给它；规则写进它会读的 CLAUDE.md / AGENTS.md。</p>
+    <p class="sub">这两个接得最深：每一轮改动单独成批，能整批退回、能按轮次看；评论直接发回给它；规则写进它会读的 CLAUDE.md / AGENTS.md。</p>
     <div class="agents reveal">
       <span class="main">Claude Code</span><span class="main">Codex</span>
     </div>
@@ -705,7 +705,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
           <tr><th>它是什么</th><td class="us">看改动、收改动的 macOS 原生应用</td><td>带 AI 的代码编辑器，基于 VS Code</td><td>通用代码编辑器，靠扩展接 AI</td></tr>
           <tr><th>谁来写代码</th><td class="us">终端里的 Claude Code、Codex，或任何别的 AI</td><td>主要是 Cursor 自带的 agent</td><td>Copilot 或其他扩展</td></tr>
           <tr><th>看 AI 的改动</th><td class="us">一处一处过，空格 / ⏎ / ⌫ 全用键盘；依赖、配置、大段删除排在前面，并写明原因</td><td>在编辑器里逐块接受或拒绝自带 agent 的改动</td><td>在差异编辑器里保留或撤销 Copilot 的改动</td></tr>
-          <tr><th>终端里 Claude Code / Codex 改的文件</th><td class="us">按轮次接入：整批退回、回放、拦危险命令</td><td colspan="2">当作普通文件改动，在源代码管理面板里看</td></tr>
+          <tr><th>终端里 Claude Code / Codex 改的文件</th><td class="us">按轮次接入：整批退回、按轮次看、拦危险命令</td><td colspan="2">当作普通文件改动，在源代码管理面板里看</td></tr>
           <tr><th>反馈给 AI</th><td class="us">评论带文件和行号一键发回终端；反复丢弃的改动归纳成规则写进 CLAUDE.md / AGENTS.md</td><td>在自带的对话里说</td><td>在 Copilot 对话里说</td></tr>
           <tr><th>AI 写的 Markdown</th><td class="us">默认阅读视图：公式、Mermaid、渲染后的差异、大纲、文档历史</td><td colspan="2">Markdown 预览；公式和 Mermaid 通常要装扩展</td></tr>
           <tr><th>写代码本身</th><td class="us">能改，但不做 LSP、格式化器、插件</td><td colspan="2">完整的编辑、补全、调试、插件生态</td></tr>
@@ -765,7 +765,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
   </div>
   <div class="wrap">
     <div class="faq">
-      <details><summary>支持哪些 AI？</summary><p>主要配合 Claude Code 和 Codex：每一轮改动单独成批、整批退回、回放、评论发回、规则写进 CLAUDE.md / AGENTS.md。其他 AI，或者你自己改的文件，也都能看、收下、丢弃，只是没有按轮次接入。</p></details>
+      <details><summary>支持哪些 AI？</summary><p>主要配合 Claude Code 和 Codex：每一轮改动单独成批、整批退回、按轮次看、评论发回、规则写进 CLAUDE.md / AGENTS.md。其他 AI，或者你自己改的文件，也都能看、收下、丢弃，只是没有按轮次接入。</p></details>
       <details><summary>我不太会 Git，能用吗？</summary><p>能。Folmi 底下用 Git 记录每一处改动，但你只需要看、收下、丢弃。收下的就是下一次要提交的内容，提交说明也替你写好了。项目需要先用 Git 管理起来，第一次打开时 Folmi 会检查。</p></details>
       <details><summary>我的代码会被上传吗？</summary><p>Folmi 自己不上传任何东西。只有你用到解释、说人话、写提交说明这些 AI 功能时，相关内容才会发给你配置的模型，或者本机的 <code>claude</code>；发送前会先检查里面有没有密钥。</p></details>
       <details><summary>「丢弃」了还能找回来吗？</summary><p>能。每一步收下、丢弃都记着，<kbd>⌥⌘Z</kbd> 撤回。AI 的一整轮改动也能整批退回。</p></details>

@@ -3,7 +3,8 @@ import AppKit
 import FolmiCore
 
 /// 推送到远端: send what is already committed out — push a branch, open a Gerrit review, or run the team's own
-/// release script. The command is shown first (预览命令 locks the commit), then run.
+/// release script. A push or review goes in one click (commit locked, target fetched, then pushed) and stops only when
+/// the target branch moved on; a script is previewed first (预览命令 locks the commit), then run.
 struct DeliverySheet: View {
     @Bindable var model: FolmiModel
     @Environment(\.dismiss) private var dismiss
@@ -20,6 +21,16 @@ struct DeliverySheet: View {
     private var runTitle: String {
         switch model.deliveryKind { case .push: return "推送"; case .gerrit: return "提交评审"; case .script: return "运行脚本" }
     }
+    /// The main button: after a plan stopped on a moved target it says what the next click does.
+    private var buttonTitle: String {
+        guard model.deliveryKind != .script, model.canDeliver, model.deliveryPlan?.rebaseNeeded == true else { return runTitle }
+        return (model.deliveryRebaseFirst ? "变基并" : "直接") + runTitle
+    }
+    private var placeholder: String {
+        if model.deliveryKind == .script { return "点「预览命令」：锁定当前提交，并在这里列出命令。这一步什么都不会执行。" }
+        let command = (try? model.makeDelivery())?.display ?? "填好远程和分支后，这里显示要执行的命令。"
+        return command + "\n\n点「\(runTitle)」时先锁定当前提交、取回远端的 \(model.deliveryBranch.isEmpty ? "目标分支" : model.deliveryBranch)，再推送；远端有你没有的新提交时会停下来，让你选择先变基还是直接推。"
+    }
 
     var body: some View {
         let _ = PerfLog.body("DeliverySheet")
@@ -27,7 +38,7 @@ struct DeliverySheet: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("推送到远端").themedFont(.title3.weight(.semibold), points: 15)
-                    Text("把\(model.repositoryTitle)里已经提交的改动送出去。先预览要执行的命令，确认后再运行；本地提交不会因为推送失败而丢失。")
+                    Text("把\(model.repositoryTitle)里已经提交的改动送出去。本地提交不会因为推送失败而丢失。")
                         .themedFont(.caption, points: 10).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
@@ -77,7 +88,7 @@ struct DeliverySheet: View {
                 // Where it goes first, as fixed rows, then the exact command wrapped from its start: both are
                 // readable without scrolling sideways, and nothing opens scrolled to the middle.
                 if model.deliveryPlan == nil {
-                    Text("点「预览命令」：锁定当前提交、解析推送地址，并在这里列出命令。这一步什么都不会执行。")
+                    Text(placeholder)
                         .themedFont(.system(size: 12), points: 12).foregroundStyle(ThemeColor(token: .secondaryText))
                         .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
                 } else {
@@ -98,6 +109,23 @@ struct DeliverySheet: View {
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(8)
                     .themedBackground(ThemeColor(token: .card), .control)
+                    if let plan = model.deliveryPlan, plan.rebaseNeeded, let base = plan.base {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle("先变基到 \(base.name) 最新，再\(runTitle)（推荐）", isOn: $model.deliveryRebaseFirst)
+                                .themedFont(.caption.weight(.medium), points: 10)
+                            Text(model.deliveryRebaseFirst
+                                 ? (plan.kind == .gerrit
+                                    ? "远端已经往前走了，基于旧版本的评审在 Gerrit 上合并时会冲突。先把你的提交挪到最新之上再推，同一个 Change-Id 会成为同一个评审的新补丁集。有冲突会停在中途，解决后这里会重新打开。⌥⌘Z 可回到变基前。"
+                                    : "远端已经往前走了，直接推会被拒绝。先把你的提交挪到最新之上再推；有冲突会停在中途，解决后这里会重新打开。⌥⌘Z 可回到变基前。")
+                                 : "按原样推送锁定的提交。")
+                                .themedFont(.caption, points: 10).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        .disabled(model.busy)
+                    }
+                    if model.deliveryPlan?.missingChangeID == true {
+                        Label("这个提交的说明里没有 Change-Id，Gerrit 会把每次推送当成新评审。装上 Gerrit 的 commit-msg 钩子后再提交一次。", systemImage: "exclamationmark.circle")
+                            .themedFont(.caption, points: 10).foregroundStyle(ThemeColor(token: .modified)).fixedSize(horizontal: false, vertical: true)
+                    }
                     Text("只执行这一份计划。评审、CI、合并与部署需分别确认。").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                 }
             }
@@ -151,12 +179,14 @@ struct DeliverySheet: View {
             HStack {
                 Spacer()
                 Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction).disabled(model.busy)
-                Button("预览命令", action: model.preflightDelivery).disabled(model.busy)
-                    .help("锁定当前提交并列出命令，不执行")
-                Button(runTitle, action: model.runDelivery)
+                if model.deliveryKind == .script {
+                    Button("预览命令", action: model.preflightDelivery).disabled(model.busy)
+                        .help("锁定当前提交并列出命令，不执行")
+                }
+                Button(buttonTitle, action: model.deliver)
                     .buttonStyle(.folmiProminent)
-                    .disabled(!model.canDeliver || model.busy)
-                    .help(model.canDeliver ? "执行上面列出的命令" : "先点「预览命令」")
+                    .disabled(model.busy || (model.deliveryKind == .script && !model.canDeliver))
+                    .help(model.deliveryKind != .script ? "锁定当前提交，取回远端后推送" : model.canDeliver ? "执行上面列出的命令" : "先点「预览命令」")
             }
         }
         .padding(22)

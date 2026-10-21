@@ -277,11 +277,9 @@ struct DoneState: View {
                 Text((summary?.behind ?? 0) > 0 ? "工作区干净" : model.stashedCount > 0 ? "工作区已清空" : "改动都提交了")
                     .themedFont(.title3.weight(.semibold), points: 15)
                 if model.stashedCount > 0 {
-                    Text("另有 \(model.stashedCount) 批收起的改动").themedFont(.callout, points: 12).foregroundStyle(.secondary)
-                    HStack(spacing: 8) {
-                        Button("放回最近一批", action: model.popLatestStash).buttonStyle(.folmiProminent).disabled(model.busy)
-                        Button("查看全部…", action: model.openStashes).disabled(model.busy)
-                    }
+                    Text("另有 \(model.stashedCount) 批暂放的改动").themedFont(.callout, points: 12).foregroundStyle(.secondary)
+                    Button("查看暂放的改动…", action: model.openStashes).buttonStyle(.folmiProminent).disabled(model.busy)
+                        .help("每批写着改了什么、拿回会不会冲突，再决定拿回哪一批")
                 }
                 if let line = model.daySummaryLine {
                     Text(line).themedFont(.callout, points: 12).foregroundStyle(.secondary)
@@ -321,10 +319,16 @@ struct CommitCheckView: View {
             Label("提交前检查：正在看暂存的内容…", systemImage: "hourglass")
                 .themedFont(.caption.weight(.semibold), points: 10).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        } else if let check = model.commitCheck, !check.findings.isEmpty {
+        } else if let check = model.commitCheck, !check.findings.isEmpty || !model.unreviewedStaged.isEmpty {
+            let unreviewed = model.unreviewedStaged
             VStack(alignment: .leading, spacing: 4) {
-                Label(check.blocking ? "提交前检查：需要确认" : "提交前检查：提醒", systemImage: check.blocking ? "exclamationmark.octagon" : "exclamationmark.triangle")
+                Label(check.blocking || !unreviewed.isEmpty ? "提交前检查：需要确认" : "提交前检查：提醒",
+                      systemImage: check.blocking ? "exclamationmark.octagon" : "exclamationmark.triangle")
                     .themedFont(.caption.weight(.semibold), points: 10).foregroundStyle(check.blocking ? .red : .orange)
+                ForEach(unreviewed.keys.sorted().prefix(3), id: \.self) { path in
+                    Text("没验收 · \(path) \(unreviewed[path] ?? 0) 处").themedFont(.caption2, points: 10).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
                 ForEach(check.findings.prefix(5), id: \.self) { finding in
                     Text("\(finding.label) · \(finding.path) \(finding.detail)").themedFont(.caption2, points: 10).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)

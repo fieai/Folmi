@@ -40,7 +40,9 @@ extension GitRepository {
 
     /// Applies the commit's change (or its inverse) to the work tree and index without committing. Needs a clean
     /// work tree; on a conflict everything is put back as it was and the error says so.
-    public func applyCommit(_ id: String, kind: ApplyKind, expectedFingerprint: String) async throws -> [String] {
+    /// `intoWorkTree` leaves the result unstaged, to be reviewed and accepted like any other change; otherwise it is
+    /// staged, as `git revert --no-commit` leaves it. Returns the paths it changed.
+    public func applyCommit(_ id: String, kind: ApplyKind, expectedFingerprint: String, intoWorkTree: Bool = false) async throws -> [String] {
         let current = try require(expectedFingerprint)
         guard current.files.isEmpty else { throw FolmiError.unsupported("工作区和暂存区要先清空（提交或丢弃现有改动），才能\(kind == .revert ? "撤回" : "挑选")提交。") }
         let git = try runner()
@@ -61,7 +63,11 @@ extension GitRepository {
         // Without committing, git still leaves its sequencer note behind; drop it so the next commit is a plain one.
         _ = try? git.run([kind == .revert ? "revert" : "cherry-pick", "--quit"], allowFailure: true)
         for ref in ["REVERT_HEAD", "CHERRY_PICK_HEAD"] { _ = try? git.run(["update-ref", "-d", ref], allowFailure: true) }
-        return try git.run(["diff", "--cached", "--name-only", "-z"]).text.components(separatedBy: "\0").filter { !$0.isEmpty }
+        let paths = try git.run(["diff", "--cached", "--name-only", "-z"]).text.components(separatedBy: "\0").filter { !$0.isEmpty }
+        // The tree was clean before, so the index can go back to HEAD as a whole: the result stays in the files only
+        // (a file the commit added shows as new, one it removed as deleted).
+        if intoWorkTree { _ = try git.run(["reset", "--quiet"]) }
+        return paths
     }
 
     /// The message git would write for a revert or a cherry-pick, to prefill the commit box.

@@ -126,9 +126,10 @@ final class ReviewOutcomeTests: XCTestCase {
     @MainActor
     func testConfirmingPickedStagedLinesLeavesIndexAlone() async throws {
         let (model, demo) = try await makeModel()
-        let working = try await reviewDiff(model)
-        model.stageFile(working.file)
-        try await eventually("暂存") { !model.busy }
+        // Staged from outside (as an agent's `git add` would), so nothing of it counts as accepted yet; staging from
+        // Folmi itself is a 收下 and would mark the whole hunk.
+        _ = try await CommandRunner.git(["add", "review.txt"], at: demo.root, environment: demo.environment)
+        try await model.reload()
         let staged = try await reviewDiff(model, area: .staged)
         let hunk = staged.hunks[0]
         let added = try XCTUnwrap(hunk.lines.first { $0.kind == .addition })

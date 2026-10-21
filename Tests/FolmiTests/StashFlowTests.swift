@@ -42,7 +42,7 @@ final class StashFlowTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(model.snapshot?.files.isEmpty, true)
         XCTAssertEqual(model.snapshot?.stashCount, 1)
-        XCTAssertTrue(model.undoLabel?.hasPrefix("收起改动") == true)
+        XCTAssertTrue(model.undoLabel?.hasPrefix("暂放改动") == true)
 
         model.openStashes()
         try await eventually("读取列表") { model.stashEntries.count == 1 }
@@ -66,6 +66,64 @@ final class StashFlowTests: XCTestCase {
         try await eventually("放回") { !model.busy && model.snapshot?.stashCount == 0 }
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(model.snapshot?.files, before.files)
+    }
+
+    /// 放回 after the same lines were committed meanwhile: conflicts, a notice with 撤销放回, and taking it back leaves
+    /// the files as before the 放回 (untracked files the stash brought back removed) with the stash still listed.
+    @MainActor
+    func testConflictedPutBackCanBeTakenBack() async throws {
+        let (model, demo) = try await openDemo()
+        let repository = try XCTUnwrap(model.repository)
+        model.stashAllChanges()
+        try await eventually("收起") { !model.busy && model.snapshot?.files.isEmpty == true }
+        let greeting = demo.root.appendingPathComponent("Sources/Greeting.swift")
+        let committed = try String(contentsOf: greeting, encoding: .utf8).replacingOccurrences(of: "Hello,", with: "Hi there,")
+        try committed.write(to: greeting, atomically: true, encoding: .utf8)
+        _ = try await CommandRunner.git(["commit", "--quiet", "-am", "同一行的另一种改法"], at: demo.root, environment: demo.environment)
+        try await model.reload()
+        let head = model.snapshot?.head
+        // The list says so before anything is brought back.
+        await model.loadStashes()
+        let entry = try XCTUnwrap(model.stashEntries.first)
+        XCTAssertEqual(model.stashConflictLists[entry.id], ["Sources/Greeting.swift"])
+
+        model.popLatestStash()
+        try await eventually("放回出冲突") { !model.busy && model.snapshot?.files.contains(where: \.isConflict) == true }
+        XCTAssertNotNil(model.conflictedRestores[model.repositoryURL?.path ?? ""])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: demo.root.appendingPathComponent("Notes.txt").path))
+        model.errorMessage = nil
+
+        model.undoConflictedRestore()
+        try await eventually("撤销放回") { !model.busy && model.snapshot?.files.isEmpty == true }
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.snapshot?.head, head)
+        XCTAssertEqual(try String(contentsOf: greeting, encoding: .utf8), committed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: demo.root.appendingPathComponent("Notes.txt").path), "放回带出来的未跟踪文件也拿掉")
+        let stashes = try await repository.stashes()
+        XCTAssertEqual(stashes.count, 1, "收起的改动还在列表里")
+        XCTAssertNil(model.conflictedRestores[model.repositoryURL?.path ?? ""])
+    }
+
+    /// Old stashes go in one step, and one ⌥⌘Z brings them all back.
+    @MainActor
+    func testDroppingSeveralStashesIsOneUndo() async throws {
+        let (model, demo) = try await openDemo()
+        let repository = try XCTUnwrap(model.repository)
+        model.stashAllChanges()
+        try await eventually("暂放一") { !model.busy && model.snapshot?.stashCount == 1 }
+        try "又一处改动\n".write(to: demo.root.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        try await model.reload()
+        model.stashAllChanges()
+        try await eventually("暂放二") { !model.busy && model.snapshot?.stashCount == 2 }
+        let entries = try await repository.stashes()
+        model.dropStashes(entries)
+        try await eventually("删除两批") { !model.busy && model.snapshot?.stashCount == 0 }
+        XCTAssertNil(model.errorMessage)
+        model.undoGitOperation()
+        try await eventually("撤销删除") { !model.busy && model.snapshot?.stashCount == 2 }
+        XCTAssertNil(model.errorMessage)
+        let back = try await repository.stashes()
+        XCTAssertEqual(Set(back.map(\.id)), Set(entries.map(\.id)))
     }
 
     @MainActor

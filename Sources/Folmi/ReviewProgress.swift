@@ -50,6 +50,29 @@ enum ReviewProgress {
         return digest("file\0" + diff.file.path + "\0" + diff.file.indexCode + diff.file.worktreeCode + "\0" + diff.rawPatch)
     }
 
+    /// The hunks of a staged patch (`git diff --cached`) with their line keys, the same keys the staged diff's lines get
+    /// in the review (repeats counted per file in patch order), so what is staged can be checked against what was seen
+    /// without loading every diff. Binary files and files without hunks are left out.
+    static func stagedHunks(patch: String) -> [(path: String, keys: [String])] {
+        var result: [(path: String, keys: [String])] = []
+        var path = "", oldPath = "", inHunk = false
+        var seen: [String: Int] = [:]
+        for raw in patch.components(separatedBy: "\n") {
+            if raw.hasPrefix("diff --git ") { inHunk = false; path = ""; oldPath = ""; seen = [:]; continue }
+            if !inHunk {
+                if raw.hasPrefix("--- ") { oldPath = raw.hasPrefix("--- a/") ? String(raw.dropFirst(6)) : ""; continue }
+                if raw.hasPrefix("+++ ") { path = raw.hasPrefix("+++ b/") ? String(raw.dropFirst(6)) : oldPath; continue }
+            }
+            if raw.hasPrefix("@@") { inHunk = true; result.append((path, [])); continue }
+            guard inHunk, let sign = raw.first, sign == "+" || sign == "-", !result.isEmpty else { continue }
+            let base = path + "\0" + String(sign) + String(raw.dropFirst())
+            let repeatIndex = seen[base, default: 0]
+            seen[base] = repeatIndex + 1
+            result[result.count - 1].keys.append(digest(base + "\0\(repeatIndex)"))
+        }
+        return result.filter { !$0.keys.isEmpty }
+    }
+
     private static func digest(_ text: String) -> String {
         SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     }

@@ -352,8 +352,25 @@ struct ProjectFileTreeView: View {
         }
     }
 
+    /// Folders holding changed files, with one code for what is inside: "A" when everything in it is new, "D" when
+    /// everything was deleted, "M" otherwise.
+    static func folderCodes(_ changed: Set<String>, codes: [String: String]) -> [String: String] {
+        var result: [String: String] = [:]
+        for path in changed {
+            let code = (codes[path] ?? "M") == "?" ? "A" : (codes[path] ?? "M")
+            var parts = path.split(separator: "/").dropLast()
+            while !parts.isEmpty {
+                let folder = parts.joined(separator: "/")
+                result[folder] = result[folder].map { $0 == code ? $0 : "M" } ?? code
+                parts = parts.dropLast()
+            }
+        }
+        return result
+    }
+
     var body: some View {
         let _ = PerfLog.body("ProjectFileTreeView")
+        let folderCodes = Self.folderCodes(changedPaths, codes: changeCodes)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 1) {
                 ForEach(visibleRows) { row in
@@ -361,7 +378,7 @@ struct ProjectFileTreeView: View {
                         let changed = !node.isDirectory && changedPaths.contains(node.path)
                         ProjectTreeRow(node: node, depth: row.depth, expanded: node.isDirectory && isExpanded(node.path),
                                        selected: selectedPath == node.path && !node.isDirectory,
-                                       changeCode: changed ? (changeCodes[node.path] ?? "M") : nil,
+                                       changeCode: node.isDirectory ? folderCodes[node.path] : changed ? (changeCodes[node.path] ?? "M") : nil,
                                        taskCount: node.isDirectory ? nil : taskCounts[node.path], busy: busy,
                                        onPress: {
                                            focused = true
@@ -494,7 +511,13 @@ private struct ProjectTreeRow: View, Equatable {
                     Image(systemName: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(.themed(.modified))
                 }
                 if let taskCount, taskCount.total > 0 { TaskRing(count: taskCount) }
-                if let code = changeCode {
+                if let code = changeCode, node.isDirectory {
+                    // A folder only says that something inside changed; the letters are on the files.
+                    Circle().fill(ThemeColor(token: code == "D" ? .removed : code == "A" ? .added : .modified))
+                        .frame(width: 6, height: 6).padding(.trailing, 4)
+                        .accessibilityElement()
+                        .accessibilityLabel("里面有改动")
+                } else if let code = changeCode {
                     let token: ThemeToken = code == "D" ? .removed : (code == "A" || code == "?") ? .added : .modified
                     Group {
                         if theme.style.solidMarks {

@@ -54,8 +54,7 @@ final class FolmiFlowTests: XCTestCase {
                            file: StaticString = #filePath, line: UInt = #line) async throws -> DeliveryPlan {
         model.errorMessage = nil
         model.prepareDelivery()
-        model.preflightDelivery()
-        try await eventually("交付预检", file: file, line: line) { !model.busy }
+        await model.planDelivery()
         XCTAssertNil(model.errorMessage, file: file, line: line)
         return try XCTUnwrap(model.deliveryPlan, file: file, line: line)
     }

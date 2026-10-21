@@ -72,7 +72,6 @@ struct FolmiView: View {
         .sheet(isPresented: $model.showMemory) { MemorySheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showWorktrees) { WorktreesSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showTasks) { TasksSheet(model: model).sheetEntrance() }
-        .sheet(isPresented: $model.showReplay) { ReplaySheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showOverview) { ProjectOverviewSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showDocHistory) { DocHistorySheet(model: model).sheetEntrance() }
         .modifier(RefPrompts(model: model))
@@ -207,7 +206,8 @@ private struct FolmiMain: View {
     /// Not observed here on purpose (plain @State): a drag re-renders only the size boxes, never this body.
     @State private var paneSizes = PaneSizes()
     @State private var treeQuery = ""
-    @State private var projectNamesExpanded = true
+    /// Starts as icons only; the names open with the 项目 button.
+    @State private var projectNamesExpanded = false
     @StateObject private var treeExpansion = ProjectTreeExpansion()
 
     var body: some View {

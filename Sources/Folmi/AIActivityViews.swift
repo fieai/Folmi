@@ -24,8 +24,8 @@ struct ActivityCapsuleView: View {
                     if let prompt { Text(prompt).themedFont(.caption, points: 10).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 200) }
                     Button("查看") { model.dismissCapsule(); model.showContent(.allChanges) }
                         .buttonStyle(.borderless).themedFont(.caption.weight(.semibold), points: 10)
-                    Button("回放") { model.showReplay = true }.buttonStyle(.borderless).themedFont(.caption, points: 10)
-                        .help("按顺序看 agent 这一轮改了哪些文件、每个文件改了什么")
+                    Button("只看这一轮") { model.dismissCapsule(); model.showTurn(batch) }.buttonStyle(.borderless).themedFont(.caption, points: 10)
+                        .help("在全部改动里只看这一轮改过的文件，收下、丢弃照常")
                     if model.aiBatches.first(where: { $0.id == batch })?.canUndo == true {
                         Button("撤回") { model.undoAIBatch(batch) }.buttonStyle(.borderless).themedFont(.caption, points: 10)
                             .help("把这一批改动前的文件内容放回去（⌥⌘Z 可以再恢复）")

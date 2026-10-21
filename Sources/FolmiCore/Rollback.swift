@@ -49,7 +49,7 @@ extension GitRepository {
         case .discardChanges:
             let result = try git.run(["read-tree", "-m", "-u", plan.head, plan.target], allowFailure: true)
             guard result.status == 0 else {
-                throw FolmiError.unsupported("没提交的改动和要回滚的文件有重叠，回滚会覆盖它们，所以没有执行。先提交或收起改动，或者选「改动留在暂存区」。")
+                throw FolmiError.unsupported("没提交的改动和要回滚的文件有重叠，回滚会覆盖它们，所以没有执行。先提交或暂放改动，或者选「改动留在暂存区」。")
             }
             _ = try git.run(["update-ref", "-m", "Folmi：回滚", ref, plan.target, plan.head])
             return .reset(restore: plan.head, current: plan.target, branch: plan.branch)

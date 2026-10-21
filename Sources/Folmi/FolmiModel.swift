@@ -61,6 +61,8 @@ final class FolmiModel {
     var showStashes = false
     var stashEntries: [StashEntry] = []
     var stashFileLists: [String: [String]] = [:]
+    /// Per stash, the files that would conflict if it were brought back onto the current commit (see `stashConflicts`).
+    var stashConflictLists: [String: [String]] = [:]
     /// The pull sheet's state: what a pull would do (read after a fresh fetch), the chosen way, why it cannot run.
     var pullPlan: GitRepository.PullPlan?
     var pullKind: GitRepository.PullKind = .fastForward
@@ -82,6 +84,13 @@ final class FolmiModel {
     var profileName = ""
     var selectedProfileID: UUID?
     var deliveryPlan: DeliveryPlan?
+    /// When the target branch has moved on: rebase onto its latest before pushing (on by default).
+    var deliveryRebaseFirst = true
+    /// A delivery stopped on a rebase conflict, per project: once the rebase is finished the sheet opens again.
+    @ObservationIgnored var deliveryAfterRebase: Set<String> = []
+    /// A 放回 that stopped on conflicts, per project: the stash still on the list, for 撤销放回 and for dropping it
+    /// once the conflicts are resolved.
+    var conflictedRestores: [String: StashEntry] = [:]
     var projects: [ProjectPreferences] = []
     var editorWorkspace: EditorWorkspace?
     /// The selected terminal tab of this project.
@@ -216,10 +225,11 @@ final class FolmiModel {
     // ⌘K, the Markdown index, tasks.
     var showPalette = false
     var showTasks = false
-    var showReplay = false
     var showHooksSetup = false
     // AI activity from Claude Code hooks.
     var aiBatches: [AIBatch] = []
+    /// 全部改动 narrowed to one AI turn (its id), or nil for everything.
+    var turnFilter: String?
     var capsule: AIActivityCapsule?
     @ObservationIgnored var dismissedCapsule: String?
     @ObservationIgnored var aiBatchStore: [String: [AIBatch]] = [:]
@@ -245,6 +255,12 @@ final class FolmiModel {
     var agentContext: [AgentContext] = []
     /// Pre-commit check of what is staged; a blocking finding needs a second ⌘⏎.
     var commitCheck: CommitCheck?
+    /// Staged hunks nobody accepted, per file: an agent's or the terminal's `git add`, a merge. Empty until the staged
+    /// check of the current snapshot has run.
+    var unreviewedStaged: [String: Int] {
+        guard let check = commitCheck, check.fingerprint == snapshot?.fingerprint else { return [:] }
+        return check.unreviewed(reviewLedger)
+    }
     @ObservationIgnored var commitCheckTask: Task<Void, Never>?
     @ObservationIgnored var commitCheckOverride: String?
     /// Commit was pressed and waits for the pre-commit check of what is staged.
@@ -372,11 +388,23 @@ final class FolmiModel {
         guard let plan = deliveryPlan else { return [] }
         var rows = [("项目", repositoryTitle), ("提交", plan.head), ("推到", plan.endpoint ?? "本地脚本")]
         if plan.kind != .script { rows.append(("分支", (plan.kind == .gerrit ? "refs/for/" : "refs/heads/") + deliveryBranch)) }
+        if let base = plan.base {
+            rows.append(("远端", plan.behind == 0
+                ? "\(base.name) 是 \(base.commit.prefix(7))，你的提交已经在它之上"
+                : "\(base.name) 有 \(plan.behind) 个新提交你这里没有（最新 \(base.commit.prefix(7))）"))
+        } else if let problem = plan.baseProblem {
+            rows.append(("远端", problem))
+        }
         rows.append(("目录", plan.root.path))
         return rows
     }
     /// The exact command of the plan; empty before 预览命令.
-    var deliveryCommandsText: String { deliveryPlan?.command.display ?? "" }
+    var deliveryCommandsText: String {
+        guard let plan = deliveryPlan else { return "" }
+        guard plan.rebaseNeeded, deliveryRebaseFirst, let base = plan.base else { return plan.command.display }
+        let push = DeliveryCommand(executable: plan.command.executable, arguments: plan.command.arguments.map { $0 == "\(plan.head):\(plan.target)" ? "<变基后的提交>:\(plan.target)" : $0 })
+        return "'/usr/bin/git' 'rebase' '\(base.commit)'\n" + push.display
+    }
     var formSignature: String { [deliveryKind.rawValue, deliveryRemote, deliveryBranch, scriptPath, scriptArguments].joined(separator: "\0") }
     var colorScheme: ColorScheme? { appearance == .system ? nil : (appearance == .dark ? .dark : .light) }
     var editorWrapLines: Bool {
@@ -587,6 +615,7 @@ final class FolmiModel {
         await startWatching(candidate, root: state.root)
         startBackgroundFetch()
         aiBatches = aiBatchStore[state.root.path] ?? []
+        turnFilter = nil
         readAIEvents(); pruneAIBatches()
         refreshLearning()
         scheduleCommitSuggestion()
@@ -707,7 +736,7 @@ final class FolmiModel {
     /// A click on the window outside an open sheet closes it, like a popover.
     func dismissSheets() {
         showDelivery = false; showPull = false; showStashes = false; showActivity = false; showAISettings = false; showPalette = false; showHooksSetup = false; showMemory = false; showWorktrees = false
-        showTasks = false; showReplay = false; showOverview = false; showDocHistory = false; readerCommentDraft = nil; showQuickOpen = false; showProjectSearch = false; showSettings = false
+        showTasks = false; showOverview = false; showDocHistory = false; readerCommentDraft = nil; showQuickOpen = false; showProjectSearch = false; showSettings = false
     }
     /// The file tree's 看改动: the change's diff, in the area that has it.
     func showChanges(ofPath path: String) {
@@ -874,10 +903,14 @@ final class FolmiModel {
         if state.files.contains(where: \.hasStaged), commitCheck?.fingerprint != state.fingerprint {
             commitAfterCheck(state); return
         }
-        if let check = commitCheck, check.fingerprint == state.fingerprint, check.blocking, commitCheckOverride != state.fingerprint {
+        let unreviewed = unreviewedStaged
+        if let check = commitCheck, check.fingerprint == state.fingerprint, check.blocking || !unreviewed.isEmpty, commitCheckOverride != state.fingerprint {
             commitCheckOverride = state.fingerprint
-            let list = check.findings.filter(\.blocking).prefix(4).map { "\($0.label)：\($0.path) \($0.detail)" }.joined(separator: "\n")
-            errorMessage = "提交前检查发现问题，没有提交：\n\(list)\n\n确认没问题的话，再按一次提交（⌘⏎）。"
+            var list = check.findings.filter(\.blocking).prefix(4).map { "\($0.label)：\($0.path) \($0.detail)" }
+            if !unreviewed.isEmpty {
+                list.append("没验收：暂存区里有 \(unreviewed.values.reduce(0, +)) 处改动不是你收下的（\(unreviewed.keys.sorted().prefix(3).joined(separator: "、"))）。可能是 agent 或终端执行了 git add。")
+            }
+            errorMessage = "提交前检查发现问题，没有提交：\n\(list.joined(separator: "\n"))\n\n确认没问题的话，再按一次提交（⌘⏎）。"
             return
         }
         let message = draftMessage, amend = amendLast

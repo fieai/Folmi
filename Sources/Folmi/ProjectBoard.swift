@@ -24,6 +24,9 @@ final class ProjectBoard {
         var error: String?
         var id: String { path }
         var needsAttention: Bool { changes > 0 || (ahead ?? 0) > 0 || (behind ?? 0) > 0 || aiRunning || error != nil }
+        /// A linked worktree waiting on you: work not yet committed or pushed, or an agent at it. Being behind is left
+        /// out — a worktree cut from an older commit trails its upstream by hundreds with nothing to do.
+        var worktreeNeedsAttention: Bool { changes > 0 || (ahead ?? 0) > 0 || aiRunning || error != nil }
         var isTrackingSynchronized: Bool { ahead == 0 && behind == 0 }
         var statusSummary: String {
             guard error == nil else { return "项目状态读取失败" }
@@ -41,7 +44,12 @@ final class ProjectBoard {
     private(set) var updated: Date?
     @ObservationIgnored private var task: Task<Void, Never>?
 
-    var dirtyCount: Int { rows.filter { $0.changes > 0 }.count }
+    func worktrees(of project: Row) -> [Row] { rows.filter { $0.parent == project.path } }
+
+    /// Projects with something waiting, their worktrees included: the number beside the menu bar icon.
+    var attentionCount: Int {
+        rows.filter { $0.parent == nil && ($0.needsAttention || worktrees(of: $0).contains(where: \.worktreeNeedsAttention)) }.count
+    }
 
     func refresh(projects: [ProjectPreferences]) {
         guard task == nil else { return }
@@ -114,7 +122,8 @@ struct ProjectBoardList: View {
             if board.rows.isEmpty {
                 Text(board.updated == nil ? "正在读取…" : "还没有项目").themedFont(.callout, points: 12).foregroundStyle(.secondary).padding(8)
             }
-            ForEach(board.rows) { row in
+            // The menu bar keeps one row per project; its worktrees fold into a line under it.
+            ForEach(compact ? board.rows.filter { $0.parent == nil } : board.rows) { row in
                 Button { onOpen(row) } label: {
                     HStack(spacing: 8) {
                         Circle().fill(ThemeColor(token: row.error != nil ? .removed
@@ -131,7 +140,13 @@ struct ProjectBoardList: View {
                             if !compact {
                                 Text(row.statusSummary).themedFont(.caption2, points: 10).foregroundStyle(.secondary).lineLimit(1)
                             }
-                            if !compact, let label = row.aiLabel, let date = row.aiDate {
+                            if compact, case let trees = board.worktrees(of: row), !trees.isEmpty {
+                                let waiting = trees.filter(\.worktreeNeedsAttention).count
+                                Text(waiting > 0 ? "\(trees.count) 个工作树 · \(waiting) 处待看" : "\(trees.count) 个工作树")
+                                    .themedFont(.caption2, points: 10).foregroundStyle(.secondary)
+                            }
+                            // In the menu bar only what the agent did today; older news is noise there.
+                            if let label = row.aiLabel, let date = row.aiDate, !compact || row.aiRunning || Date().timeIntervalSince(date) < 24 * 3600 {
                                 Text("\(label) · \(date.formatted(.relative(presentation: .named)))").themedFont(.caption2, points: 10).foregroundStyle(.secondary)
                             }
                         }
@@ -199,7 +214,13 @@ struct MenuBarBoard: View {
             Text("同步状态来自最近 fetch；刷新不访问远端。")
                 .themedFont(.caption2, points: 10).foregroundStyle(.secondary)
             Divider()
-            Button("随手记一条…（⌃⌥⌘I）") { InboxPanel.shared.show(model: model) }.buttonStyle(.pressable).themedFont(.callout, points: 12)
+            HStack {
+                Button("随手记一条…（⌃⌥⌘I）") { InboxPanel.shared.show(model: model) }.buttonStyle(.pressable).themedFont(.callout, points: 12)
+                Spacer()
+                // Through the app delegate, so unsaved edits still get their prompt; activate first so it shows.
+                Button("退出 Folmi") { NSApp.activate(ignoringOtherApps: true); NSApp.terminate(nil) }
+                    .buttonStyle(.pressable).themedFont(.callout, points: 12).foregroundStyle(.secondary)
+            }
         }
         .padding(12).frame(width: 340)
         .onAppear { if !model.gitStartupState.blocksGit { model.board.refresh(projects: model.projects) } }

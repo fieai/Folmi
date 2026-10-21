@@ -22,6 +22,17 @@ struct CommitCheck: Equatable {
     var findings: [Finding] = []
     /// Fingerprint of the snapshot the check ran on.
     var fingerprint = ""
+    /// Every staged hunk with its line keys, to tell which of them were never seen (see `unreviewed`).
+    var stagedHunks: [StagedHunk] = []
+    struct StagedHunk: Equatable { let path: String; let keys: [String] }
+
+    /// Staged hunks that went in without being looked at, per file. Worked out against the ledger as it is now, so
+    /// accepting one on the review page clears it at once.
+    func unreviewed(_ ledger: ReviewLedger) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for hunk in stagedHunks where !hunk.keys.allSatisfy(ledger.contains) { counts[hunk.path, default: 0] += 1 }
+        return counts
+    }
     var blocking: Bool { findings.contains(where: \.blocking) }
 
     static let largeBytes = 5 * 1024 * 1024
@@ -88,9 +99,11 @@ extension FolmiModel {
                     sizes[path] = size.intValue
                 }
             }
-            return CommitCheck.run(patch: patch.patch, stagedPaths: paths, sizes: sizes, fingerprint: fingerprint)
+            var check = CommitCheck.run(patch: patch.patch, stagedPaths: paths, sizes: sizes, fingerprint: fingerprint)
+            check.stagedHunks = ReviewProgress.stagedHunks(patch: patch.patch).map { CommitCheck.StagedHunk(path: $0.path, keys: $0.keys) }
+            return check
         }.value
-        return check.findings.isEmpty ? CommitCheck(fingerprint: fingerprint) : check
+        return check
     }
 
     /// Commit pressed before the check of exactly what is staged finished: wait for it, then press again for the user,

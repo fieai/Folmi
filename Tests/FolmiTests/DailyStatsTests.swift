@@ -31,16 +31,6 @@ final class DailyStatsTests: XCTestCase {
     }
 }
 
-final class ReplayFormatTests: XCTestCase {
-    func testOffsetsAndDurations() {
-        XCTAssertEqual(ReplaySheet.offset(12), "+0:12")
-        XCTAssertEqual(ReplaySheet.offset(75.4), "+1:15")
-        XCTAssertEqual(ReplaySheet.duration(42), "42 秒")
-        XCTAssertEqual(ReplaySheet.duration(130), "2 分 10 秒")
-        XCTAssertEqual(ReplaySheet.icon("Write"), "doc.badge.plus")
-    }
-}
-
 @MainActor
 final class TourTests: XCTestCase {
     func testStepsTickOffFromTheirActions() {

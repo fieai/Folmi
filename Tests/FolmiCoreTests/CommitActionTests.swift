@@ -73,6 +73,21 @@ final class CommitActionTests: XCTestCase {
         XCTAssertEqual(unpushed, 0)
     }
 
+    /// For the app: the result stays in the files, nothing staged, so it is reviewed like any other change.
+    func testRevertIntoWorkTreeLeavesTheIndexAlone() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write("sample.txt", "one\nTWO\nthree\nfour\nfive\nsix\n"); try f.git(["commit", "-am", "Shout two"])
+        let shout = try head(f)
+        let changed = try await f.repo.applyCommit(shout, kind: .revert, expectedFingerprint: try await fingerprint(f), intoWorkTree: true)
+        XCTAssertEqual(changed, ["sample.txt"])
+        XCTAssertEqual(try f.read("sample.txt"), "one\ntwo\nthree\nfour\nfive\nsix\n")
+        XCTAssertEqual(try f.index(), "one\nTWO\nthree\nfour\nfive\nsix\n", "暂存区不动")
+        let files = try await f.repo.load().files
+        XCTAssertEqual(files.map(\.path), ["sample.txt"])
+        XCTAssertFalse(files[0].hasStaged)
+    }
+
     func testRevertAndCherryPickLandInTheStagingArea() async throws {
         let f = try ActionFixture()
         try f.initial()
@@ -394,4 +409,5 @@ final class WorktreeStatusTests: XCTestCase {
                                     changes: 0, ownCommits: 0, modified: nil)
         XCTAssertEqual(status.folder, "1f2e/app")
     }
+
 }

@@ -418,11 +418,11 @@ private struct CommitActionBar: View {
                    perform: onReword)
             if ability?.onCurrentBranch ?? true {
                 action("撤回", symbol: "arrow.uturn.backward", enabled: !busy,
-                       help: clean ? "把这个提交的反向改动放进暂存区，看过后再提交（⌥⌘Z 可撤销）" : "工作区有改动：会先临时收起它们，再撤回",
+                       help: clean ? "把这个提交的反向改动放进工作区，验收后再提交（⌥⌘Z 可撤销）" : "工作区有改动：会先暂放它们，再撤回",
                        perform: { if clean { model.applyCommit(commit.id, kind: .revert) } else { stashFirst = .revert } })
             } else {
                 action("挑到当前分支", symbol: "arrow.down.to.line", enabled: !busy,
-                       help: clean ? "把这个提交的改动放进暂存区，看过后再提交（⌥⌘Z 可撤销）" : "工作区有改动：会先临时收起它们，再挑选",
+                       help: clean ? "把这个提交的改动放进工作区，验收后再提交（⌥⌘Z 可撤销）" : "工作区有改动：会先暂放它们，再挑选",
                        perform: { if clean { model.applyCommit(commit.id, kind: .cherryPick) } else { stashFirst = .cherryPick } })
             }
             if ability?.onCurrentBranch == true {
@@ -442,15 +442,15 @@ private struct CommitActionBar: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10).padding(.bottom, 8)
-        .confirmationDialog(stashFirst == .cherryPick ? "先收起改动再挑选？" : "先收起改动再撤回？",
+        .confirmationDialog(stashFirst == .cherryPick ? "先暂放改动再挑选？" : "先暂放改动再撤回？",
                             isPresented: Binding(get: { stashFirst != nil }, set: { if !$0 { stashFirst = nil } })) {
-            Button(stashFirst == .cherryPick ? "先收起改动再挑选" : "先收起改动再撤回") {
+            Button(stashFirst == .cherryPick ? "先暂放改动再挑选" : "先暂放改动再撤回") {
                 if let kind = stashFirst { model.stashThenApplyCommit(commit.id, kind: kind) }
                 stashFirst = nil
             }
             Button("取消", role: .cancel) { stashFirst = nil }
         } message: {
-            Text("工作区有 \(changed) 个文件的改动。会先把它们临时收起（之后在改动列表下方的「收起的改动」里恢复），再把\(stashFirst == .cherryPick ? "挑选" : "撤回")的结果放进暂存区。⌥⌘Z 可以一步步撤销。")
+            Text("工作区有 \(changed) 个文件的改动。会先把它们暂放（之后在改动列表下方的「暂放的改动」里拿回），再把\(stashFirst == .cherryPick ? "挑选" : "撤回")的结果放进工作区，验收后再提交。⌥⌘Z 可以一步步撤销。")
         }
     }
 

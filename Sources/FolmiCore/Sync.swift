@@ -55,7 +55,7 @@ extension GitRepository {
             switch kind {
             case .fastForward: return ahead > 0 ? "本地有 \(ahead) 个提交远端没有，不能直接快进；选择变基或合并。" : nil
             case .rebase, .merge:
-                return hasTrackedChanges ? "工作区或暂存区有改动。先提交或临时收起改动，\(kind == .rebase ? "变基" : "合并")遇到冲突时才能完整恢复。" : nil
+                return hasTrackedChanges ? "工作区或暂存区有改动。先提交或暂放改动，\(kind == .rebase ? "变基" : "合并")遇到冲突时才能完整恢复。" : nil
             }
         }
     }
@@ -98,7 +98,7 @@ extension GitRepository {
                 // git checks before writing anything, so nothing changed.
                 let message = String(decoding: result.stderr, as: UTF8.self)
                 if message.contains("would be overwritten") {
-                    throw FolmiError.unsupported("远端改动和你没提交的改动碰到了同一些文件，没有拉取。先提交或临时收起这些改动再拉取。")
+                    throw FolmiError.unsupported("远端改动和你没提交的改动碰到了同一些文件，没有拉取。先提交或暂放这些改动再拉取。")
                 }
                 throw FolmiError.git(exitCode: result.status, message: message.trimmingCharacters(in: .whitespacesAndNewlines))
             }
@@ -117,6 +117,24 @@ extension GitRepository {
             }
         }
         return .done(before: plan.head, after: try await currentHead() ?? plan.head)
+    }
+
+    /// Rebases the current commits onto `target`, a commit already fetched (the delivery target's latest), so a push or
+    /// a Gerrit review sits on top of what the remote has now. Same rules as a pull by rebase: nothing moved since the
+    /// plan was read, a clean work tree, and a conflict stops half way for the user to finish or abort.
+    public func rebase(onto target: String, expectedFingerprint: String, expectedHead: String) async throws -> PullOutcome {
+        let current = try require(expectedFingerprint), git = try runner()
+        guard current.head == expectedHead else { throw FolmiError.staleSnapshot }
+        guard try operationInProgress(git) == nil else { throw FolmiError.unsupported("还有没完成的变基或合并，先继续或放弃它。") }
+        guard !current.files.contains(where: { !$0.isUntracked }) else {
+            throw FolmiError.unsupported("工作区或暂存区有改动。先提交或暂放改动，变基遇到冲突时才能完整恢复。")
+        }
+        let result = try editorless().run(["rebase", "--quiet", target], allowFailure: true)
+        if result.status != 0 {
+            if try operationInProgress(git) == .rebase { return .conflict(.rebase, files: try conflictedFiles(git)) }
+            throw FolmiError.git(exitCode: result.status, message: String(decoding: result.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return .done(before: expectedHead, after: try await currentHead() ?? expectedHead)
     }
 
     /// Goes on with a rebase after the conflicts are resolved and staged; it may stop again on the next commit.

@@ -110,6 +110,23 @@ extension FolmiModel {
 
     // MARK: Review progress
 
+    /// Keys of every staged line right now, the same keys the review uses (see `ReviewProgress.stagedHunks`).
+    func stagedLineKeys() async -> Set<String> {
+        guard let repository, let patch = try? await repository.stagedPatch(limit: 4_000_000).patch else { return [] }
+        return Set(ReviewProgress.stagedHunks(patch: patch).flatMap(\.keys))
+    }
+
+    /// Staging from Folmi (a checkbox, 全部暂存, a hunk or lines) is the user's own 收下: what it added to the index
+    /// counts as seen, so only what went in some other way (an agent's or the terminal's `git add`, a merge) shows
+    /// as 没验收. The keys ride on the undo entry the staging just pushed, so ⌘Z takes the mark back with it.
+    func markStaged(_ keys: Set<String>) {
+        guard !keys.isEmpty else { return }
+        var ledger = reviewLedger
+        keys.forEach { ledger.insert($0) }
+        if ledger != reviewLedger { reviewLedger = ledger; scheduleSave() }
+        if let last = undoStacks[projectKey]?.indices.last { undoStacks[projectKey]![last].seenKeys.formUnion(keys) }
+    }
+
     func loadReviewLedger() {
         let saved = repositoryURL.flatMap { savedProject($0.path) }?.reviewedLines ?? []
         reviewLedger = ReviewLedger(saved)

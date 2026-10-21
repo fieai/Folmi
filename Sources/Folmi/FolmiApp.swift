@@ -60,12 +60,12 @@ struct FolmiApp: App {
         MenuBarExtra {
             MenuBarBoard(model: model)
         } label: {
-            // The Folmi mark, with the number of projects that have changes beside it.
+            // The Folmi mark, with the number of projects waiting on you beside it.
             HStack(spacing: 3) {
                 if let mark = AppResources.menuBarMark { Image(nsImage: mark) } else { Image(systemName: "checkmark.circle") }
-                if model.board.dirtyCount > 0 { Text("\(model.board.dirtyCount)") }
+                if model.board.attentionCount > 0 { Text("\(model.board.attentionCount)") }
             }
-                .accessibilityLabel(model.board.dirtyCount > 0 ? "Folmi：\(model.board.dirtyCount) 个项目有改动" : "Folmi：都收好了")
+                .accessibilityLabel(model.board.attentionCount > 0 ? "Folmi：\(model.board.attentionCount) 个项目需要处理" : "Folmi：都收好了")
         }
         .menuBarExtraStyle(.window)
     }
@@ -106,7 +106,7 @@ struct FolmiCommands: Commands {
                 if let text = model.terminalSelection, !text.isEmpty { model.assist(.plain, text: text, source: "终端选中内容") }
             }
             .keyboardShortcut("l", modifiers: [.command, .shift]).disabled(model.terminalSession == nil)
-            Button("回放 Claude 的改动", action: { model.showReplay = true }).disabled(!model.hasSnapshot)
+            Button("只看 AI 最近一轮的改动", action: { model.showTurn(model.turnChoices.first?.id) }).disabled(!model.hasSnapshot || model.turnChoices.isEmpty)
             Button("全项目待办", action: { model.showTasks = true }).keyboardShortcut("t", modifiers: [.command, .shift])
                 .disabled(!model.hasSnapshot)
             Button("项目总览", action: { model.showOverview = true }).keyboardShortcut("o", modifiers: [.command, .shift])

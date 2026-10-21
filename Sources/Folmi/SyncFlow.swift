@@ -10,7 +10,7 @@ struct PullStart {
 /// Fetching and pulling. Fetches run in the background (on open and every few minutes), never prompt and never
 /// touch files; a pull is previewed first, fast-forward by default, and ⌘Z goes back to before it.
 extension FolmiModel {
-    static let fetchInterval: Duration = .seconds(300)
+    static let fetchInterval: Duration = .seconds(120)
 
     /// Fetches once now and then every `fetchInterval` while this project stays open. Quiet: a failure is kept for
     /// the pull sheet, never shown as an alert.
@@ -40,6 +40,7 @@ extension FolmiModel {
         guard repositoryURL == root else { return }
         lastFetch = Date(); fetchProblem = result
         refreshInBackground()
+        if result == nil { await checkReviewWatches(root: root) }
     }
 
     /// A sheet by name, for `--present` screenshots.
@@ -127,7 +128,11 @@ extension FolmiModel {
             // Finished: the whole pull is one ⌘Z, back to the commit before it started.
             guard let self, self.snapshot?.operation == nil, let start = self.pullStartHeads.removeValue(forKey: key),
                   let head = self.snapshot?.head else { return }
-            self.pushUndo("拉取（变基）", .reset(restore: start.head, current: head, branch: start.branch))
+            let delivering = self.deliveryAfterRebase.remove(key) != nil
+            self.pushUndo(delivering ? "变基" : "拉取（变基）", .reset(restore: start.head, current: head, branch: start.branch))
+            // A delivery stopped on this rebase: back to the sheet, previewed against the rebased commit.
+            // (Next turn: the model is still busy with this step until it returns.)
+            if delivering { Task { @MainActor in self.prepareDelivery(); self.preflightDelivery() } }
         }
     }
 
@@ -137,7 +142,7 @@ extension FolmiModel {
         let key = repositoryURL?.path ?? ""
         mutate("放弃\(operation.title)") { [weak self] in
             let done = try await repository.abortOperation()
-            await MainActor.run { _ = self?.pullStartHeads.removeValue(forKey: key) }
+            await MainActor.run { _ = self?.pullStartHeads.removeValue(forKey: key); _ = self?.deliveryAfterRebase.remove(key) }
             return "已放弃\(done.title)，分支和文件回到了开始之前。"
         }
     }
@@ -207,7 +212,7 @@ struct PullSheet: View {
                 Text("取回远端失败，下面显示的是上次取回的结果：\(problem)")
                     .themedFont(.caption, points: 10).foregroundStyle(.secondary).lineLimit(3)
             } else if let date = model.lastFetch {
-                Text("刚才从远端取回过（\(date.formatted(date: .omitted, time: .shortened))）。打开项目后每 5 分钟会自动取回一次，不会改你的文件。")
+                Text("刚才从远端取回过（\(date.formatted(date: .omitted, time: .shortened))）。打开项目后每 2 分钟会自动取回一次，不会改你的文件。")
                     .themedFont(.caption, points: 10).foregroundStyle(.secondary)
             }
 

@@ -35,4 +35,16 @@ final class ProjectBoardStatusTests: XCTestCase {
             XCTAssertEqual(row.statusSummary, "2 个文件有改动 · 待推送 1 个提交，待拉取 4 个提交")
         }
     }
+
+    func testWorktreeBehindUpstreamDoesNotNeedAttention() async {
+        await MainActor.run {
+            var row = ProjectBoard.Row(path: "/worktree", name: "Worktree")
+            row.parent = "/project"; row.ahead = 0; row.behind = 409
+            XCTAssertFalse(row.worktreeNeedsAttention)
+            row.ahead = 1
+            XCTAssertTrue(row.worktreeNeedsAttention)
+            row.ahead = 0; row.aiRunning = true
+            XCTAssertTrue(row.worktreeNeedsAttention)
+        }
+    }
 }

@@ -112,8 +112,13 @@ extension FolmiModel {
     func stageFile(_ file: FileChange, succeeded: (() -> Void)?, after: (() -> Void)? = nil) {
         guard let repository, let state = snapshot else { return }
         let paths = [file.path] + (file.originalPath.map { [$0] } ?? [])
-        mutateUndoable("暂存 \(file.path)", capture: { try await repository.captureIndex(paths) }, succeeded: succeeded, after: after) {
-            try await repository.stage(file, expectedFingerprint: state.fingerprint); return file.path
+        let added = KeyBox()
+        mutateUndoable("暂存 \(file.path)", capture: { try await repository.captureIndex(paths) },
+                       succeeded: { [weak self] in self?.markStaged(added.keys); succeeded?() }, after: after) { [weak self] in
+            let before = await self?.stagedLineKeys() ?? []
+            try await repository.stage(file, expectedFingerprint: state.fingerprint)
+            added.keys = (await self?.stagedLineKeys() ?? []).subtracting(before)
+            return file.path
         }
     }
 
@@ -135,8 +140,13 @@ extension FolmiModel {
         if files.count == 1 { stageFile(files[0]); return }
         guard !files.isEmpty else { return }
         let paths = files.flatMap { [$0.path] + ($0.originalPath.map { [$0] } ?? []) }
-        mutateUndoable("暂存 \(files.count) 个文件", capture: { try await repository.captureIndex(paths) }) {
-            try await repository.stage(files, expectedFingerprint: state.fingerprint); return files.map(\.path).joined(separator: "\n")
+        let added = KeyBox()
+        mutateUndoable("暂存 \(files.count) 个文件", capture: { try await repository.captureIndex(paths) },
+                       succeeded: { [weak self] in self?.markStaged(added.keys) }) { [weak self] in
+            let before = await self?.stagedLineKeys() ?? []
+            try await repository.stage(files, expectedFingerprint: state.fingerprint)
+            added.keys = (await self?.stagedLineKeys() ?? []).subtracting(before)
+            return files.map(\.path).joined(separator: "\n")
         }
     }
 
@@ -171,9 +181,14 @@ extension FolmiModel {
     func apply(_ hunk: DiffHunk, diff: FileDiff, selected: Set<Int>?, succeeded: (() -> Void)? = nil) {
         guard let repository, diff.isPartialSupported else { return }
         let title = diff.area == .working ? "暂存\(selected == nil ? "整块" : "选定行")" : "取消\(selected == nil ? "整块" : "选定行")暂存"
-        let path = diff.file.path
-        mutateUndoable("\(title) · \(path)", capture: { try await repository.captureIndex([path]) }, succeeded: succeeded) {
-            try await repository.apply(diff: diff, hunkID: hunk.id, selectedLineIDs: selected); return "\(path)\n\(hunk.header)"
+        let path = diff.file.path, staging = diff.area == .working
+        let added = KeyBox()
+        mutateUndoable("\(title) · \(path)", capture: { try await repository.captureIndex([path]) },
+                       succeeded: { [weak self] in self?.markStaged(added.keys); succeeded?() }) { [weak self] in
+            let before = staging ? await self?.stagedLineKeys() ?? [] : []
+            try await repository.apply(diff: diff, hunkID: hunk.id, selectedLineIDs: selected)
+            if staging { added.keys = (await self?.stagedLineKeys() ?? []).subtracting(before) }
+            return "\(path)\n\(hunk.header)"
         }
     }
 
@@ -198,7 +213,10 @@ extension FolmiModel {
             if index == 7 || index % 32 == 31 { allChanges = results }
         }
         // The diffs add what paths cannot show (a key in an added line, a test losing lines); equal risk keeps its place.
-        allChanges = ReviewRiskRules.ordered(results) { ReviewRiskRules.assess($0).level }
+        let byRisk = ReviewRiskRules.ordered(results) { ReviewRiskRules.assess($0).level }
+        // Staged but never accepted goes first: as it stands it would be in the next commit without anyone looking.
+        let unaccepted = { (diff: FileDiff) in diff.area == .staged && !self.isFileSeen(diff) }
+        allChanges = byRisk.filter(unaccepted) + byRisk.filter { !unaccepted($0) }
         // Selections only survive while their file's diff is unchanged; line IDs of a new diff mean different lines.
         let unchanged = Set(results.filter { previous[$0.allChangesKey] == $0.rawPatch }.map(\.allChangesKey))
         allChangesSelection = allChangesSelection.filter { unchanged.contains($0.key) && !$0.value.isEmpty }
@@ -228,3 +246,6 @@ extension FolmiModel {
         if !selected.isEmpty { apply(hunk, diff: diff, selected: selected) }
     }
 }
+
+/// What a staging step added to the index, handed from the Git work to its success handler.
+final class KeyBox { var keys: Set<String> = [] }

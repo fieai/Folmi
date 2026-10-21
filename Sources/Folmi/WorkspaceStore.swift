@@ -61,6 +61,8 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     /// 大仓库模式 (Git's file system monitor + untracked cache for status) and whether its offer was turned down.
     var largeRepository = false
     var largeRepositoryDeclined = false
+    /// Gerrit reviews pushed from here, checked against their target after each fetch (see `ReviewWatch`).
+    var reviewWatches: [ReviewWatch] = []
 
     init(rootPath: String, name: String, isDemo: Bool = false, environment: [String: String] = [:],
          draftMessage: String = "", amendLast: Bool = false, deliveryProfiles: [DeliveryProfile] = [],
@@ -81,7 +83,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, name, isDemo, environment, draftMessage, amendLast, deliveryProfiles, selectedProfileID, lastArea, editorTabs, selectedEditorPath, reviewComments, terminalTabs
-        case terminalDirectories, reviewedLines, lastContent, selectedChangePath, largeRepository, largeRepositoryDeclined
+        case terminalDirectories, reviewedLines, lastContent, selectedChangePath, largeRepository, largeRepositoryDeclined, reviewWatches
     }
 
     init(from decoder: Decoder) throws {
@@ -106,6 +108,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
         selectedChangePath = try? values.decodeIfPresent(String.self, forKey: .selectedChangePath)
         largeRepository = (try? values.decodeIfPresent(Bool.self, forKey: .largeRepository)) ?? false
         largeRepositoryDeclined = (try? values.decodeIfPresent(Bool.self, forKey: .largeRepositoryDeclined)) ?? false
+        reviewWatches = (try? values.decodeIfPresent([ReviewWatch].self, forKey: .reviewWatches)) ?? []
     }
 }
 

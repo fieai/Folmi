@@ -96,8 +96,8 @@ extension FolmiModel {
         }
     }
 
-    /// Revert or cherry-pick into the staging area, with git's message in the commit box, so the result is read and
-    /// committed like any other change. ⌘Z clears it again.
+    /// Revert or cherry-pick into the work tree, with git's message in the commit box: the result is reviewed and
+    /// accepted like any other change before it can be committed (staging it directly would skip that). ⌘Z clears it.
     func applyCommit(_ id: String, kind: GitRepository.ApplyKind) {
         guard let repository, let state = snapshot else { return }
         let paths = commitDetail?.id == id && compareBaseID == nil ? (commitDetail?.files.map(\.path) ?? []) : []
@@ -106,15 +106,15 @@ extension FolmiModel {
             let touched = paths.isEmpty ? try await repository.commitDetail(id).files.map(\.path) : paths
             return .group([try await repository.captureIndex(touched), try await repository.captureWorktree(touched)])
         }) { [weak self] in
-            let staged = try await repository.applyCommit(id, kind: kind, expectedFingerprint: state.fingerprint)
+            let changed = try await repository.applyCommit(id, kind: kind, expectedFingerprint: state.fingerprint, intoWorkTree: true)
             let message = try await repository.suggestedMessage(for: id, kind: kind)
             await MainActor.run {
                 guard let self else { return }
                 self.draftMessage = message
-                self.area = .staged
+                self.area = .working
                 self.showSideTab(.changes)
             }
-            return "已放进暂存区：\(staged.count) 个文件。看过后提交即可。"
+            return "已放进工作区：\(changed.count) 个文件。和其他改动一样，在逐个验收里看过、收下后再提交。"
         }
     }
 

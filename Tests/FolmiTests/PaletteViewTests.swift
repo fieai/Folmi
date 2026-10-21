@@ -17,7 +17,7 @@ final class PaletteViewTests: XCTestCase {
     func testRowsFollowTheQueryAndReturnRunsTheShownRow() throws {
         let items = ["refresh", "large-repo", "stash", "pull"].map { id in
             PaletteItem(id: "command:" + id, kind: .command, title: ["refresh": "刷新", "large-repo": "打开大仓库模式（读取状态更快）",
-                                                                        "stash": "临时收起全部改动", "pull": "从远端拉取…"][id]!,
+                                                                        "stash": "暂放全部改动", "pull": "从远端拉取…"][id]!,
                         subtitle: "", action: .command(id))
         }
         var usage = PaletteUsage(); usage.note("command:refresh"); usage.note("command:refresh")
