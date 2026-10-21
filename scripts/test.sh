@@ -9,5 +9,6 @@ elif command -v gtimeout >/dev/null; then exec gtimeout "$limit" swift test "$@"
 else
   swift test "$@" & pid=$!
   ( sleep "$limit"; kill -TERM $pid 2>/dev/null ) & watchdog=$!
-  wait $pid; status=$?; kill $watchdog 2>/dev/null || true; exit $status
+  # `status` is read-only in zsh, and under `set -e` a failing `wait` would exit before the watchdog is stopped.
+  code=0; wait $pid || code=$?; kill $watchdog 2>/dev/null || true; exit $code
 fi
