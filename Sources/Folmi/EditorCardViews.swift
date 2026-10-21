@@ -262,6 +262,10 @@ struct TerminalCard: View {
                     if let text = model.terminalSelection, !text.isEmpty { model.assist(.plain, text: text, source: "终端选中内容") }
                     else { NSSound.beep() }
                 }
+                PaneIconButton(symbol: "character.bubble", help: "翻译终端里选中的内容（⌃⌘T）") {
+                    if let text = model.terminalSelection, !text.isEmpty { model.assist(.translate, text: text, source: "终端选中内容") }
+                    else { NSSound.beep() }
+                }
                 PaneIconButton(symbol: "plus", help: "新建终端标签（⌃⇧`）", action: model.newTerminalTab)
                 PaneIconButton(symbol: "arrow.counterclockwise", help: "重开这个终端（替换当前 shell）", action: model.restartTerminal)
             } content: {

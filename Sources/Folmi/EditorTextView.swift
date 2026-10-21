@@ -192,6 +192,9 @@ class EditorTextView: NSTextView {
         }
         if let assistSelection, selectedRange().length > 0 {
             let text = (string as NSString).substring(with: selectedRange())
+            let translate = MarkdownMenuItem(title: "翻译") { assistSelection(.translate, text) }
+            translate.keyEquivalent = "t"; translate.keyEquivalentModifierMask = [.command, .control]
+            menu.insertItem(translate, at: 0)
             menu.insertItem(MarkdownMenuItem(title: "去 AI 腔") { assistSelection(.deAI, text) }, at: 0)
             menu.insertItem(MarkdownMenuItem(title: "说人话") { assistSelection(.plain, text) }, at: 0)
         }

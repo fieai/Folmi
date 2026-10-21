@@ -56,12 +56,13 @@ struct AIProvider: Codable, Identifiable, Equatable, Hashable, Sendable {
 
 /// What a model is asked to do. Each one can go to its own provider: cheap and fast for the frequent ones.
 enum AIUse: String, Codable, CaseIterable, Identifiable, Sendable {
-    case commitMessage, rewrite, explain, rules
+    case commitMessage, rewrite, translate, explain, rules
     var id: String { rawValue }
     var label: String {
         switch self {
         case .commitMessage: return "提交说明"
         case .rewrite: return "说人话 / 去 AI 腔"
+        case .translate: return "翻译"
         case .explain: return "解释改动 / 问 AI"
         case .rules: return "总结规则"
         }
@@ -548,6 +549,13 @@ enum AIPrompts {
     static let deAI = """
     改写下面这段文字，去掉 AI 腔：删掉空话、套话、排比和“总之”“值得注意的是”这类填充；不加粗、不用表情。
     意思和事实不变，长度不超过原文。只输出改写后的文字。
+    """
+    static let translate = """
+    把下面的内容翻译成简体中文；如果原文主要是中文，就翻译成英文。
+    代码、命令、文件路径、变量名、函数名、链接和数字保持原样；保留 Markdown 结构（标题、列表、表格、代码块），代码块里只翻译注释。
+    译文要通顺自然，不加解释，只输出译文。
+    例外：如果内容只是一个词、短语或代码里的名字（比如 GitRepository、fetchUpdates、merge-tree），不要原样输出，
+    给出它的意思：名字按单词拆开翻译（GitRepository → Git 仓库），再用一句话说明它通常指什么。
     """
     static let explainDiff = """
     你在帮人验收一段代码改动。用中文、三到六条短句说明：改了什么、为什么可能这样改、有没有明显的风险（只说有依据的）。

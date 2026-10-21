@@ -6,11 +6,12 @@ import SwiftUI
 /// only the current exchange and closes with Esc.
 struct AIAssistState: Equatable {
     enum Mode: String, Equatable {
-        case plain, deAI, explain, ask
+        case plain, deAI, translate, explain, ask
         var title: String {
             switch self {
             case .plain: return "说人话"
             case .deAI: return "去 AI 腔"
+            case .translate: return "翻译"
             case .explain: return "解释改动"
             case .ask: return "问 AI"
             }
@@ -19,11 +20,20 @@ struct AIAssistState: Equatable {
             switch self {
             case .plain: return AIPrompts.plain
             case .deAI: return AIPrompts.deAI
+            case .translate: return AIPrompts.translate
             case .explain: return AIPrompts.explainDiff
             case .ask: return AIPrompts.ask
             }
         }
-        var use: AIUse { self == .plain || self == .deAI ? .rewrite : .explain }
+        var use: AIUse {
+            switch self {
+            case .plain, .deAI: return .rewrite
+            case .translate: return .translate
+            case .explain, .ask: return .explain
+            }
+        }
+        /// A translation runs about as long as its source, so it gets more room than a summary.
+        var maxTokens: Int { self == .translate ? 4_000 : 1_500 }
     }
     struct Turn: Equatable { var question: String; var answer: String }
     var mode: Mode
@@ -76,10 +86,10 @@ extension FolmiModel {
         }
         state.running = true; state.error = nil; state.output = ""
         aiAssist = state
-        let system = state.mode.system
+        let system = state.mode.system, maxTokens = state.mode.maxTokens
         assistTask = Task { [weak self] in
             do {
-                for try await text in client.stream(system: system, user: user, maxTokens: 1_500) {
+                for try await text in client.stream(system: system, user: user, maxTokens: maxTokens) {
                     guard let self, !Task.isCancelled else { return }
                     self.aiAssist?.output = text
                     if self.aiAssist?.mode == .ask, let last = self.aiAssist?.turns.indices.last { self.aiAssist?.turns[last].answer = text }
@@ -168,6 +178,16 @@ extension FolmiModel {
 
     /// The selected terminal text, for 说人话 on what the agent printed.
     var terminalSelection: String? { terminalSession?.terminalView.getSelection() }
+
+    /// ⌃⌘T: translates what is selected in the focused editor, else what is selected in the terminal.
+    func translateSelection() {
+        if let editor = NSApp.keyWindow?.firstResponder as? EditorTextView, editor.selectedRange().length > 0 {
+            let text = (editor.string as NSString).substring(with: editor.selectedRange())
+            assist(.translate, text: text, source: editorWorkspace?.selectedDocument?.path ?? "选中内容")
+        } else if let text = terminalSelection, !text.isEmpty {
+            assist(.translate, text: text, source: "终端选中内容")
+        } else { NSSound.beep() }
+    }
 }
 
 /// A diff page with the AI explanation docked on its right: the code it explains stays readable, and ⏎ / ⌫ keep
@@ -255,10 +275,13 @@ struct AIAssistCard: View {
                     }.disabled(state.output.isEmpty)
                     if state.mode != .ask { Button("再写一次") { model.runAssist(question: nil) }.disabled(state.running) }
                     Spacer()
-                    Button("粘贴到终端", action: model.handAssistToClaude)
-                        .help("把这个请求粘贴到终端（不回车），让终端里的 agent 动手")
-                    Button("交给 agent", action: model.handAssistToAgent).buttonStyle(.folmiProminent)
-                        .help("带着这段上下文，在终端卡片的 AI 标签里交给 Claude / Codex")
+                    // A translation is only for reading: nothing in it for the agent to act on.
+                    if state.mode != .translate {
+                        Button("粘贴到终端", action: model.handAssistToClaude)
+                            .help("把这个请求粘贴到终端（不回车），让终端里的 agent 动手")
+                        Button("交给 agent", action: model.handAssistToAgent).buttonStyle(.folmiProminent)
+                            .help("带着这段上下文，在终端卡片的 AI 标签里交给 Claude / Codex")
+                    }
                 }.controlSize(.small)
             }
             .padding(14)
@@ -273,6 +296,7 @@ struct AIAssistCard: View {
 
     /// What the wait is for, instead of a bare "正在写…".
     private func waiting(_ state: AIAssistState) -> String {
+        if state.mode == .translate { return "正在翻译…" }
         guard state.mode == .explain else { return "正在写…" }
         return beside ? "正在读这一块改动，写好就显示在这里。左边可以照常看、照常收下。" : "正在读这段改动，写好就显示在这里…"
     }

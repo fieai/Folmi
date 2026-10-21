@@ -111,6 +111,7 @@ struct FolmiCommands: Commands {
                 if let text = model.terminalSelection, !text.isEmpty { model.assist(.plain, text: text, source: "终端选中内容") }
             }
             .keyboardShortcut("l", modifiers: [.command, .shift]).disabled(model.terminalSession == nil)
+            Button("翻译选中内容", action: model.translateSelection).keyboardShortcut("t", modifiers: [.command, .control])
             Button("只看 AI 最近一轮的改动", action: { model.showTurn(model.turnChoices.first?.id) }).disabled(!model.hasSnapshot || model.turnChoices.isEmpty)
             Button("全项目待办", action: { model.showTasks = true }).keyboardShortcut("t", modifiers: [.command, .shift])
                 .disabled(!model.hasSnapshot)

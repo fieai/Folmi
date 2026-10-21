@@ -283,9 +283,10 @@ struct MarkdownReaderView: NSViewRepresentable {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(quoted + "\n\n— " + reference, forType: .string)
                 workspace.showNotice("已复制为引用（\(reference)）")
-            case "plain", "deai":
+            case "plain", "deai", "translate":
                 guard let text = body["text"] as? String, let first = body["line"] as? Int, let last = body["end"] as? Int else { return }
-                workspace.assistSelection?(type == "plain" ? .plain : .deAI, text, first == last ? "\(id):\(first + 1)" : "\(id):\(first + 1)-\(last + 1)")
+                let mode: AIAssistState.Mode = type == "plain" ? .plain : type == "deai" ? .deAI : .translate
+                workspace.assistSelection?(mode, text, first == last ? "\(id):\(first + 1)" : "\(id):\(first + 1)-\(last + 1)")
             case "copy":
                 if let text = body["text"] as? String {
                     NSPasteboard.general.clearContents()
@@ -538,7 +539,7 @@ enum MarkdownReaderPage {
     </style></head><body><main id="doc"></main>
     <div id="find"><input id="find-q" placeholder="在文档中查找" spellcheck="false"><span class="n" id="find-n"></span>
     <button data-dir="-1" title="上一个（⇧↩）">↑</button><button data-dir="1" title="下一个（↩）">↓</button><button data-dir="0" title="关闭（Esc）">✕</button></div>
-    <div id="pop"><button class="primary" data-act="send">发到终端</button><button data-act="comment">评论</button><button data-act="quote">复制为引用</button><button data-act="plain">说人话</button><button data-act="deai">去 AI 腔</button><button data-act="edit">编辑这里</button></div>
+    <div id="pop"><button class="primary" data-act="send">发到终端</button><button data-act="comment">评论</button><button data-act="quote">复制为引用</button><button data-act="plain">说人话</button><button data-act="deai">去 AI 腔</button><button data-act="translate">翻译</button><button data-act="edit">编辑这里</button></div>
     <script>
     (function(){
     const post=(m)=>window.webkit.messageHandlers.wb.postMessage(m);
@@ -671,7 +672,7 @@ enum MarkdownReaderPage {
       const act=b.dataset.act;if(act==='send')post({type:'send',line:info.line,end:info.end,text:info.text});
       else if(act==='comment')post({type:'comment',text:info.text.trim(),line:info.line,end:info.end});
       else if(act==='quote')post({type:'quote',text:info.text.trim(),line:info.line,end:info.end});
-      else if(act==='plain'||act==='deai')post({type:act,text:info.text.trim(),line:info.line,end:info.end});
+      else if(act==='plain'||act==='deai'||act==='translate')post({type:act,text:info.text.trim(),line:info.line,end:info.end});
       else if(act==='edit')post({type:'edit',line:info.line,end:info.end,text:info.text});hide();window.getSelection().removeAllRanges()});
     document.addEventListener('keydown',(e)=>{if(e.key==='Escape')hide()});
     })();
