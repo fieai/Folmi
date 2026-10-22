@@ -8,7 +8,7 @@ struct ShortcutGroup: Identifiable {
     let items: [(keys: String, title: String)]
     var id: String { title }
 
-    static func all(reviewing: Bool) -> [ShortcutGroup] {
+    static func all(reviewing: Bool, ideaKey: String = IdeaHotKey.standard.title) -> [ShortcutGroup] {
         let review = ShortcutGroup(title: "逐个验收", items: [
             ("空格 / ⇧空格", "下一处 / 上一处没看过的"), ("⏎", "这处可以（暂存）"), ("⌫", "这处不要（撤回）"),
             ("j  k", "下一处 / 上一处"), (".  ,", "下一个 / 上一个文件"), ("u", "标记看过 / 没看过"),
@@ -27,7 +27,7 @@ struct ShortcutGroup: Identifiable {
             ]),
             ShortcutGroup(title: "AI 和终端", items: [
                 ("⌘L", "问 AI"), ("⌘⇧L", "说人话（终端选中内容）"), ("⌥⌘L", "编辑器选中的行发到终端"),
-                ("⌥⌘⏎", "审阅评论发到终端"), ("⌃⌥⌘I", "随手记一条")
+                ("⌥⌘⏎", "审阅评论发到终端"), (ideaKey, "随手记（任何 App 里都能按）")
             ]),
             ShortcutGroup(title: "编辑", items: [
                 ("⌘S / ⌘⇧S", "保存 / 全部保存"), ("⌥⇧M", "Markdown 阅读 / 编辑"), ("⌘⇧Y", "这份文档的演变史")
@@ -88,7 +88,7 @@ struct ShortcutOverlay: View {
 
     @ViewBuilder private var content: some View {
         if model.showShortcuts != .hidden {
-            let groups = ShortcutGroup.all(reviewing: model.content == .allChanges)
+            let groups = ShortcutGroup.all(reviewing: model.content == .allChanges, ideaKey: model.ideaHotKey.title)
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Text("快捷键").themedFont(.headline, points: 12)

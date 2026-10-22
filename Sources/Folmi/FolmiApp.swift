@@ -118,7 +118,7 @@ struct FolmiCommands: Commands {
             Button("项目总览", action: { model.showOverview = true }).keyboardShortcut("o", modifiers: [.command, .shift])
             Button("这份文档的演变史", action: { model.showDocHistory = true }).keyboardShortcut("y", modifiers: [.command, .shift])
                 .disabled(!model.isMarkdownDocument)
-            Button("随手记一条…（⌃⌥⌘I）") { InboxPanel.shared.show(model: model) }
+            Button("随手记…（\(model.ideaHotKey.title)）") { InboxPanel.shared.show(model: model) }
             Divider()
             Button("快速打开文件…", action: model.openQuickOpen).keyboardShortcut("p")
                 .disabled(!model.hasSnapshot || model.busy)

@@ -648,6 +648,19 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
         <h3>打开和切换都很快</h3>
         <p>原生 macOS 应用，不用 Electron。打开就是上次的样子，十万行的改动也顺着滚。变慢的改动不合入。</p>
       </div>
+      <div class="feat wide reveal" style="grid-column: 1 / -1">
+        <div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+          <h3>想到什么，随手记下</h3>
+          <p>在任何 App 里按 <code>⌃⌥F11</code>，弹出一个小编辑框，写完按 Esc 就收起，边写边保存。每条想法是项目里 <code>ideas/</code> 下的一个 Markdown 文件，攒够了直接交给 AI 去做。多人项目可以勾「只留在本机」，不会提交给同事。</p>
+        </div>
+        <div class="mini-list">
+          <div>⌃⌥F11 <code>任何 App 里都能按</code></div>
+          <div>- [ ] 导出支持 PDF</div>
+          <div>已存到 <code>ideas/20261022-1530.md</code></div>
+          <div>☐ 只留在本机</div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -774,6 +787,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
   <div class="wrap">
     <div class="changelog">
 <!-- changelog:start -->
+      <details><summary><span>下一个版本<span class="tag">开发中</span></span></summary><h4>改进</h4><ul><li>随手记换成浮动的 Markdown 小编辑框：在任何 App 里按 ⌃⌥F11 弹出，光标直接在编辑区里，可以写多行、列表和待办，字体、配色和明暗跟 Folmi 的编辑器一致；边写边保存，按 Esc、再按一次快捷键或点别处就收起，点「在 Folmi 里打开」在主窗口阅读或交给 AI。每条想法是当前项目 <code>ideas/</code> 文件夹里的一个 <code>.md</code> 文件；5 分钟内再按会回到刚才那条接着写，什么都没写不会留下空文件。顶部可以换项目，这条会跟着搬过去。</li><li>随手记可以「只留在本机」：勾上后 <code>ideas/</code> 写进这个仓库的 <code>.git/info/exclude</code>，Git 看不到这些文件，也不会改团队共享的 <code>.gitignore</code>，适合多人项目。</li><li>随手记的快捷键可以在「设置 › 编辑器」里重新录制；被别的 App 占用时会直接提示。</li></ul></details>
       <details open><summary><span>v0.9.1<span class="when">2026-10-22</span><span class="tag">最新</span></span></summary><h4>改进</h4><ul><li>全部收好后，收尾卡片只在右边的差异页显示一次，左边的「改动」只写一句「没有改动」，不再两边重复。差异页不在屏幕上时（比如在看历史），左边照常显示完整的收尾卡片。</li></ul></details>
       <details><summary><span>v0.9.0<span class="when">2026-10-21</span></span></summary><h4>新增</h4><ul><li>编辑器和终端可以左右拆分，最多 3 栏，同时看几个文件或几个终端：标签上右键「向左拆分 / 向右拆分」，或点卡片标题栏的拆分按钮，或按 ⌘\（向右）、⌥⌘\（向左）。标签可以在栏之间移动，栏宽可以拖，双击分隔线等分；关掉一栏时它的标签并入旁边一栏，文件和终端都不会关掉。下次打开项目时分栏还在。</li><li>差异旁边直接改：差异工具条上点「在旁边编辑」，左边看改了什么，右边打开这个文件并跳到第一处改动。这时在左侧点别的改动只换差异，不会换走正在改的文件。</li></ul><h4>改进</h4><ul><li>全部收好后的标题每天换一句，中文、英文、法文、日文等随机出现，比如「收工！」「Ship it.」「C'est fini !」。</li></ul></details>
       <details><summary><span>v0.8.0<span class="when">2026-10-21</span></span></summary><h4>新增</h4><ul><li>应用内更新：状态栏左下角有更新按钮，发布新版本后会出现一个小点；点开能看这一版改了什么，点「下载并安装」就会下载、校验签名、替换并重新打开 Folmi（旧版本放进废纸篓）。也可以在 Folmi 菜单里「检查更新…」。</li><li>翻译：选中文字后右键「翻译」（Markdown 阅读视图在选中后的小工具条里），或按 ⌃⌘T；终端选中的内容也能翻。英文翻成中文，中文翻成英文，代码、命令和文件名保持原样。用的是设置里配的 AI，可以单独给翻译指定一个模型。</li></ul></details>

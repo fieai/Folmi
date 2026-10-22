@@ -180,6 +180,8 @@ final class FolmiModel {
     var unifiedDiff = false { didSet { scheduleSave() } }
     var foldWhitespace = false { didSet { scheduleSave() } }
     var companionMotion = true { didSet { scheduleSave() } }
+    /// Taken by `InboxPanel` at launch and when changed in settings, never here: test models must not grab it.
+    var ideaHotKey: IdeaHotKey = .standard { didSet { scheduleSave() } }
     var editorFontSize: Double = 18 { didSet { applyEditorPresentation(); scheduleSave() } }
     /// Markdown live-preview body font ("" system, "serif"), size and reading width (0 = no limit).
     var markdownFontFamily = "" { didSet { applyEditorPresentation(); scheduleSave() } }
@@ -360,6 +362,7 @@ final class FolmiModel {
             unifiedDiff = preferences.unifiedDiff
             foldWhitespace = preferences.foldWhitespace
             companionMotion = preferences.companionMotion
+            ideaHotKey = preferences.ideaHotKey
             projects = preferences.projects
             reviewComments = projects.flatMap(\.reviewComments)
             paneLayout = preferences.paneLayout

@@ -152,8 +152,10 @@ struct WorkspacePreferences: Codable, Equatable {
     /// 0 means no reading-width limit.
     var markdownReadingWidth: Double = 720
     var markdownOutlineWidth: Double = 220
+    /// The global shortcut that opens 随手记.
+    var ideaHotKey: IdeaHotKey = .standard
 
-    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, editorLineBlame, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, foldWhitespace, companionMotion }
+    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, editorLineBlame, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, foldWhitespace, companionMotion, ideaHotKey }
 
     init(version: Int = 1, projects: [ProjectPreferences] = [], selectedProjectPath: String? = nil,
          showTerminal: Bool = false, editorFontSize: Double = 13, appearance: FolmiAppearance = .system,
@@ -194,6 +196,7 @@ struct WorkspacePreferences: Codable, Equatable {
         unifiedDiff = (try? values.decodeIfPresent(Bool.self, forKey: .unifiedDiff)) ?? false
         foldWhitespace = (try? values.decodeIfPresent(Bool.self, forKey: .foldWhitespace)) ?? false
         companionMotion = (try? values.decodeIfPresent(Bool.self, forKey: .companionMotion)) ?? true
+        ideaHotKey = (try? values.decodeIfPresent(IdeaHotKey.self, forKey: .ideaHotKey)) ?? .standard
         // Reading preferences are cosmetic: a bad value falls back instead of rejecting the file.
         let family = (try? values.decodeIfPresent(String.self, forKey: .markdownFontFamily)) ?? ""
         markdownFontFamily = family.count <= 128 && !family.contains("\0") ? family : ""

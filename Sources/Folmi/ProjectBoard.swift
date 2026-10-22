@@ -245,7 +245,7 @@ struct MenuBarBoard: View {
             .themedFont(.caption2, points: 10).foregroundStyle(.secondary)
             Divider()
             HStack {
-                Button("随手记一条…（⌃⌥⌘I）") { InboxPanel.shared.show(model: model) }.buttonStyle(.pressable).themedFont(.callout, points: 12)
+                Button("随手记…（\(model.ideaHotKey.title)）") { InboxPanel.shared.show(model: model) }.buttonStyle(.pressable).themedFont(.callout, points: 12)
                 Spacer()
                 // Through the app delegate, so unsaved edits still get their prompt; activate first so it shows.
                 Button("退出 Folmi") { NSApp.activate(ignoringOtherApps: true); NSApp.terminate(nil) }

@@ -65,6 +65,7 @@ extension FolmiModel {
         preferences.unifiedDiff = unifiedDiff
         preferences.foldWhitespace = foldWhitespace
         preferences.companionMotion = companionMotion
+        preferences.ideaHotKey = ideaHotKey
         preferences.editorFontSize = editorFontSize
         preferences.markdownFontFamily = markdownFontFamily
         preferences.markdownFontSize = markdownFontSize

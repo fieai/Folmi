@@ -32,6 +32,9 @@ struct FolmiSettingsSheet: View {
                     Menu("Markdown 阅读排版") { MarkdownReadingMenu(model: model) }
                     Text("Markdown 阅读字体、字号和宽度独立于代码编辑器，可按长文阅读习惯调整。")
                         .font(.caption).foregroundStyle(.secondary)
+                    IdeaHotKeyRecorder(model: model)
+                    Text("在任何 App 里按它，弹出一个小编辑框，记下的内容实时存进当前项目的 ideas/ 文件夹；按 Esc 或再按一次收起。")
+                        .font(.caption).foregroundStyle(.secondary)
                 }.formStyle(.grouped)
                 settingsFooter
             }.padding(20).tabItem { Label("编辑器", systemImage: "textformat") }
@@ -46,6 +49,59 @@ struct FolmiSettingsSheet: View {
             Text("外观与编辑偏好自动保存；AI 设置需点保存。").font(.caption).foregroundStyle(.secondary)
             Spacer()
             Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
+        }
+    }
+}
+
+/// Click 录制, press the new shortcut. Esc cancels; a key that cannot be global (a letter alone) is refused on the spot.
+private struct IdeaHotKeyRecorder: View {
+    @Bindable var model: FolmiModel
+    @State private var recording = false
+    @State private var monitor: Any?
+    @State private var problem: String?
+
+    var body: some View {
+        LabeledContent("随手记快捷键") {
+            HStack(spacing: 8) {
+                if let problem { Text(problem).font(.caption).foregroundStyle(.red) }
+                Button(recording ? "按下新的快捷键…" : model.ideaHotKey.title) { recording ? stop(nil) : start() }
+                    .monospacedDigit()
+                if model.ideaHotKey != .standard, !recording {
+                    Button("恢复默认") { apply(.standard) }.buttonStyle(.link)
+                }
+            }
+        }
+        .onDisappear { stop(nil) }
+    }
+
+    private func start() {
+        problem = nil; recording = true
+        InboxPanel.shared.suspend()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 { stop(nil); return nil } // Esc
+            guard let key = IdeaHotKey(keyCode: event.keyCode, flags: event.modifierFlags, characters: event.charactersIgnoringModifiers) else {
+                problem = "要带上 ⌃、⌥ 或 ⌘（F 键可以单独用）"
+                return nil
+            }
+            stop(key)
+            return nil
+        }
+    }
+
+    private func stop(_ key: IdeaHotKey?) {
+        if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
+        guard recording else { return }
+        recording = false
+        apply(key ?? model.ideaHotKey)
+    }
+
+    private func apply(_ key: IdeaHotKey) {
+        if InboxPanel.shared.install(key) {
+            if key != model.ideaHotKey { model.ideaHotKey = key }
+            problem = nil
+        } else {
+            problem = "\(key.title) 已被别的 App 占用"
+            InboxPanel.shared.install(model.ideaHotKey)
         }
     }
 }
