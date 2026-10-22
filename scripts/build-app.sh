@@ -3,15 +3,23 @@ set -euo pipefail
 
 app_root="${0:A:h:h}"
 cd "$app_root"
-case "${1:-}" in
-  ""|--preview|--navigation-preview|--editor-preview) ;;
-  --help|-h)
-    print '用法：./scripts/build-app.sh [--preview|--navigation-preview|--editor-preview]'
-    print '构建 Apple Silicon / macOS 14+ 本地测试 App（有 Apple Development 证书时用它签名，否则 ad-hoc）。'
-    exit 0 ;;
-  *) print -u2 "未知参数：$1"; exit 1 ;;
-esac
-if (( $# > 1 )); then print -u2 '构建脚本最多接受一个预览参数'; exit 1; fi
+relaunch=0
+variant=""
+for argument in "$@"; do
+  case "$argument" in
+    --preview|--navigation-preview|--editor-preview)
+      if [[ -n "$variant" ]]; then print -u2 '构建脚本最多接受一个预览参数'; exit 1; fi
+      variant="$argument" ;;
+    --relaunch) relaunch=1 ;;
+    --help|-h)
+      print '用法：./scripts/build-app.sh [--preview|--navigation-preview|--editor-preview] [--relaunch]'
+      print '构建 Apple Silicon / macOS 14+ 本地测试 App（有 Apple Development 证书时用它签名，否则 ad-hoc）。'
+      print -- '--relaunch  打包完退出正在运行的这个 App（有没保存的内容会先问你），再打开新版。'
+      exit 0 ;;
+    *) print -u2 "未知参数：$argument"; exit 1 ;;
+  esac
+done
+set -- ${variant:+"$variant"}
 app_icon="$app_root/Sources/Folmi/Resources/Brand/Folmi.icns"
 if [[ ! -s "$app_icon" ]]; then
   print -u2 "缺少 App 图标：$app_icon"
@@ -147,3 +155,24 @@ mv "$app_dir" "$app_destination"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app_destination" || true
 /System/Library/CoreServices/pbs -update || true
 print "已生成：$app_destination（签名：$sign_identity）"
+
+# The running copy keeps its old binary (it was moved to dist/legacy), so a rebuild only shows after a restart.
+# Quit goes through the app like ⌘Q: unsaved edits still get their prompt, and cancelling it keeps the old copy open.
+if (( relaunch )); then
+  is_running() { [[ "$(/usr/bin/osascript -e "application id \"$bundle_id\" is running" 2>/dev/null)" == true ]] }
+  if is_running; then
+    print "退出正在运行的 $bundle_title …"
+    if ! /usr/bin/osascript -e "tell application id \"$bundle_id\" to quit" >/dev/null 2>&1; then
+      print -u2 "没能让 $bundle_title 退出（可能要在「系统设置 › 隐私与安全性 › 自动化」里允许终端控制它）。请手动退出后打开：$app_destination"
+      exit 1
+    fi
+    # Up to a minute, for a save prompt to be answered.
+    for _ in {1..120}; do is_running || break; sleep 0.5; done
+    if is_running; then
+      print -u2 "$bundle_title 还开着（可能取消了退出），没有打开新版。退出后打开：$app_destination"
+      exit 1
+    fi
+  fi
+  /usr/bin/open "$app_destination"
+  print "已打开新版 $bundle_title"
+fi

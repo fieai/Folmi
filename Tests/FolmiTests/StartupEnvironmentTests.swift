@@ -112,6 +112,16 @@ final class StartupEnvironmentTests: XCTestCase {
                 renderer.scale = 1
                 let image = try XCTUnwrap(renderer.nsImage)
                 XCTAssertEqual(image.size, NSSize(width: 1000, height: 650))
+                if name == "checking" {
+                    // Only a title and a spinner: they sit in the middle, not at the left of the results column.
+                    let bitmap = try XCTUnwrap(NSBitmapImageRep(data: XCTUnwrap(image.tiffRepresentation)))
+                    let background = bitmap.colorAt(x: 2, y: 2)
+                    let inked = (0..<bitmap.pixelsWide).filter { x in
+                        stride(from: 0, to: bitmap.pixelsHigh, by: 2).contains { bitmap.colorAt(x: x, y: $0) != background }
+                    }
+                    let middle = (Double(try XCTUnwrap(inked.first)) + Double(try XCTUnwrap(inked.last))) / 2
+                    XCTAssertEqual(middle, 500, accuracy: 12)
+                }
                 if let directory = ProcessInfo.processInfo.environment["FOLMI_QA_OUTPUT"] {
                     let url = URL(fileURLWithPath: directory)
                     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

@@ -15,6 +15,7 @@ Folmi 是一个原生 macOS 应用（SwiftUI + AppKit，macOS 14+，Apple Silico
 swift build                          # debug 构建
 ./scripts/test.sh                    # 全部测试（带超时）；--filter XxxTests 只跑一部分
 ./scripts/build-app.sh               # 打包 dist/Folmi.app
+./scripts/build-app.sh --relaunch    # 打包后退出正在运行的 Folmi（会问没保存的内容），再打开新版
 ./scripts/check.sh                   # 提交前的完整检查：编译、测试、性能门槛、打包
 ```
 

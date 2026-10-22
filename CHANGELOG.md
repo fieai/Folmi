@@ -2,6 +2,12 @@
 
 每个版本改了什么。版本号见 [VERSION](VERSION)，安装包在 [Releases](https://github.com/fieai/Folmi/releases)。
 
+## 未发布
+
+### 修复
+
+- 启动时「正在检查 Git 环境」的加载画面偏左，现在居中显示。
+
 ## 0.10.0 — 2026-10-22
 
 ### 改进

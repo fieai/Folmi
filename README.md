@@ -124,6 +124,8 @@ open -n dist/Folmi-EditorPreview.app --args --demo --workspace-file /tmp/Folmi-D
 
 `./scripts/build-app.sh` 不带参数时生成 `dist/Folmi.app`。有 Apple Development 证书时用它签名，否则做 ad-hoc 签名，只能在本机运行。
 
+加上 `--relaunch`，打包完会退出正在运行的这个 App，再打开新版；有没保存的内容会先问你，取消退出就不打开新版。第一次用时 macOS 会问是否允许终端控制 Folmi。
+
 提交代码前建议跑一遍完整检查，包括编译、测试、性能门槛和打包：
 
 ```sh

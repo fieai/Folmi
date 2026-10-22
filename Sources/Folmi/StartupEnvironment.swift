@@ -67,8 +67,11 @@ extension FolmiModel {
 struct StartupEnvironmentView: View {
     let model: FolmiModel
 
+    /// Checking shows only the title and a spinner, centered; the results below read as a left-aligned column.
+    private var checking: Bool { if case .checking = model.gitStartupState { return true }; return false }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: checking ? .center : .leading, spacing: 18) {
             Label {
                 Text("准备使用 Folmi")
             } icon: {
@@ -107,7 +110,7 @@ struct StartupEnvironmentView: View {
         }
         .textSelection(.enabled)
         .padding(30)
-        .frame(maxWidth: 620, alignment: .leading)
+        .frame(maxWidth: checking ? nil : 620, alignment: .leading)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.theme(model.theme, \.canvas))
     }
