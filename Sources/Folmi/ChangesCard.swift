@@ -116,7 +116,11 @@ struct ChangesPane: View {
                 ReviewConflictNotice(model: model, watch: watch).padding(.horizontal, 10).padding(.bottom, 8)
             }
             if staged.isEmpty && working.isEmpty {
-                if model.fileSearch.isEmpty, model.snapshot?.files.isEmpty == true { DoneState(model: model) }
+                if model.fileSearch.isEmpty, model.snapshot?.files.isEmpty == true {
+                    if model.diffPageShowsWrapUp {
+                        panePlaceholder(symbol: "checkmark.circle", title: "没有改动", detail: "今天的收尾情况在右边。")
+                    } else { DoneState(model: model) }
+                }
                 else { panePlaceholder(symbol: "magnifyingglass", title: "没有匹配的改动", detail: "换个关键词，或清空搜索。") }
             } else {
                 ReviewEntryRow(model: model).padding(.horizontal, 10).padding(.bottom, 6)

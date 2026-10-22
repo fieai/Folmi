@@ -368,6 +368,10 @@ extension FolmiModel {
         return unpushedCount == 0 && (snapshot.behind ?? 0) == 0 && stashedCount == 0
     }
     var stashedCount: Int { snapshot?.stashCount ?? 0 }
+    /// The 差异 page carries the wrap-up card when it is on screen; the 改动 tab then keeps quiet instead of repeating it.
+    var diffPageShowsWrapUp: Bool {
+        content == .diff && paneLayout.isShown(.editor) && paneLayout.isShown(.changes)
+    }
 
     // MARK: Diff cache
 
