@@ -19,6 +19,11 @@ public enum UndoStep: Sendable, Equatable {
     case ref(ref: String, restore: String?, current: String?)
     /// Undo renames branch `to` back to `from` (short names).
     case renameBranch(from: String, to: String)
+    /// Undo moves the work-tree file or folder at `current` back to `restore`, never over something already there.
+    case move(restore: String, current: String)
+    /// `path` was sent to the Trash and sits at `trashed` (an absolute path): undo puts it back. With `trashed == nil`
+    /// it is in place again, and undo (the redo of putting it back) sends it to the Trash once more.
+    case trash(path: String, trashed: String?)
     /// A stash action to take back (see `StashUndo`).
     case stash(StashUndo)
     /// Several steps that undo together, newest last.
@@ -28,6 +33,8 @@ public enum UndoStep: Sendable, Equatable {
         switch self {
         case .worktree(let files): return files.map(\.path)
         case .index(let entries): return entries.map(\.path)
+        case .move(let restore, let current): return [restore, current]
+        case .trash(let path, _): return [path]
         case .head, .reset, .stash, .ref, .renameBranch: return []
         case .group(let steps): return steps.flatMap(\.paths)
         }
@@ -98,7 +105,7 @@ extension GitRepository {
         switch step {
         case .worktree(let files): return try await captureWorktree(files.map(\.path))
         case .index(let entries): return try await captureIndex(entries.map(\.path))
-        case .head, .reset, .stash, .ref, .renameBranch: return step
+        case .head, .reset, .stash, .ref, .renameBranch, .move, .trash: return step
         case .group(let steps):
             var result: [UndoStep] = []
             for step in steps { result.append(try await recapture(step)) }
@@ -183,6 +190,21 @@ extension GitRepository {
         case let .renameBranch(from, to):
             _ = try runner().run(["branch", "-m", "--", to, from])
             return .renameBranch(from: to, to: from)
+        case let .move(restore, current):
+            let root = try runner().directory
+            let source = try Self.contained(current, root: root), destination = try Self.contained(restore, root: root)
+            try Self.makeFolders(for: restore, root: root)
+            try Self.move(source, to: destination, named: restore)
+            return .move(restore: current, current: restore)
+        case let .trash(path, trashed):
+            guard let trashed else { return try await trashItem(path) }
+            let root = try runner().directory
+            guard FileManager.default.fileExists(atPath: trashed) else {
+                throw FolmiError.unsupported("废纸篓里已经找不到 \(path) 了（可能已经清空或被放回），没法撤销。")
+            }
+            try Self.makeFolders(for: path, root: root)
+            try Self.move(URL(fileURLWithPath: trashed), to: try Self.contained(path, root: root), named: path)
+            return .trash(path: path, trashed: nil)
         case .stash(let change):
             return try undoStash(change)
         case .group(let steps):

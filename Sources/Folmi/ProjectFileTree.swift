@@ -328,10 +328,13 @@ struct ProjectFileTreeView: View {
     var onLoadFolder: ((String) -> Void)?
     /// 新建文件: asks for a name inside the folder ("" is the project root).
     var onNewFile: ((String) -> Void)?
-    /// 重命名 a file, and why it cannot be renamed right now (unsaved edits in the editor).
+    /// 重命名 and 删除 a file or folder, and why that cannot happen right now (unsaved edits in the editor).
     var onRename: ((String) -> Void)?
+    var onDelete: ((String) -> Void)?
     var renameBlocker: ((String) -> String?)?
     @State private var hovered: String?
+    /// The row last clicked, file or folder: what Return renames and ⌘⌫ deletes. Follows the open file.
+    @State private var selection: String?
     @FocusState private var focused: Bool
 
     /// Owned by the window, so switching the left block's tabs keeps which folders are open.
@@ -350,11 +353,14 @@ struct ProjectFileTreeView: View {
             let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
             Button(node.isDirectory ? "在「\(node.name)」里新建文件…" : "在同一个文件夹里新建文件…") { onNewFile(folder) }
         }
-        if !node.isDirectory, let onRename {
-            let blocker = renameBlocker?(node.path)
+        let blocker = renameBlocker?(node.path)
+        if let onRename {
             Button(blocker.map { "重命名…（\($0)）" } ?? "重命名…") { onRename(node.path) }.disabled(blocker != nil)
         }
-        if onNewFile != nil || (!node.isDirectory && onRename != nil) { Divider() }
+        if let onDelete {
+            Button(blocker.map { "删除…（\($0)）" } ?? "删除…") { onDelete(node.path) }.disabled(blocker != nil)
+        }
+        if onNewFile != nil || onRename != nil || onDelete != nil { Divider() }
         if let onSendPath { Button("把路径发到终端") { onSendPath(node.path) } }
         if let onTerminalHere { Button(node.isDirectory ? "在终端中进入这个文件夹" : "在终端中进入所在文件夹") { onTerminalHere(node.path, node.isDirectory) } }
         if let onIgnore {
@@ -391,11 +397,12 @@ struct ProjectFileTreeView: View {
                     if let node = row.node {
                         let changed = !node.isDirectory && changedPaths.contains(node.path)
                         ProjectTreeRow(node: node, depth: row.depth, expanded: node.isDirectory && isExpanded(node.path),
-                                       selected: selectedPath == node.path && !node.isDirectory,
+                                       selected: (selection ?? selectedPath) == node.path,
                                        changeCode: node.isDirectory ? folderCodes[node.path] : changed ? (changeCodes[node.path] ?? "M") : nil,
                                        taskCount: node.isDirectory ? nil : taskCounts[node.path], busy: busy,
                                        onPress: {
                                            focused = true
+                                           selection = node.path
                                            if node.isDirectory { toggle(node.path) } else { onOpen(node.path) }
                                        },
                                        onHover: { inside in
@@ -424,10 +431,21 @@ struct ProjectFileTreeView: View {
             QuickLookPreview.shared.toggle(root.appendingPathComponent(path))
             return .handled
         }
+        // Return renames the selected row and ⌘⌫ deletes it, as in VS Code.
+        .onKeyPress(.return) { act(onRename) }
+        .onKeyPress(keys: [.delete]) { press in press.modifiers == .command ? act(onDelete) : .ignored }
         .onAppear { seedExpansion() }
         .onChange(of: nodes) { _, _ in seedExpansion() }
         .onChange(of: query) { _, _ in expansion.searchCollapsedPaths.removeAll() }
-        .onChange(of: selectedPath) { _, path in reveal(path) }
+        .onChange(of: selectedPath) { _, path in selection = path; reveal(path) }
+    }
+
+    private func act(_ action: ((String) -> Void)?) -> KeyPress.Result {
+        guard let action, !busy, let path = selection ?? selectedPath, visibleRows.contains(where: { $0.node?.path == path }) else {
+            return .ignored
+        }
+        if renameBlocker?(path) != nil { NSSound.beep() } else { action(path) }
+        return .handled
     }
 
     private struct Row: Identifiable {

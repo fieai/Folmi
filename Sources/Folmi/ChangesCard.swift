@@ -47,9 +47,11 @@ struct TreePane: View {
     /// The folder a 新建文件 box is open for ("" is the project root).
     @State private var newFileFolder: String?
     @State private var newFileName = ""
-    /// The file a 重命名 box is open for.
+    /// The file or folder a 重命名 box is open for.
     @State private var renamePath: String?
     @State private var renameName = ""
+    /// The file or folder waiting for 删除 to be confirmed.
+    @State private var deletePath: String?
 
     var body: some View {
         let _ = PerfLog.body("TreePane")
@@ -96,7 +98,7 @@ struct TreePane: View {
                                     onIgnore: { model.ignorePath($0, folder: $1) },
                                     onLoadFolder: model.loadTreeFolder,
                                     onNewFile: askNewFile(in:),
-                                    onRename: askRename(_:), renameBlocker: model.renameBlocker,
+                                    onRename: askRename(_:), onDelete: { deletePath = $0 }, renameBlocker: model.renameBlocker,
                                     expansion: expansion)
                     .id(model.repositoryURL?.path)
                 // One line: the count, then why it may be incomplete (the limit notice already says so).
@@ -127,6 +129,21 @@ struct TreePane: View {
         } message: {
             Text(renameProblem ?? "「\(renamePath ?? "")」改成什么？只改磁盘上的文件，名字里带 / 会挪到对应的文件夹。⌥⌘Z 可撤销。")
         }
+        .alert(deleteIsFolder ? "删除文件夹" : "删除文件", isPresented: Binding(get: { deletePath != nil }, set: { if !$0 { deletePath = nil } })) {
+            Button("移到废纸篓", role: .destructive) {
+                if let path = deletePath { model.deleteItem(path) }
+                deletePath = nil
+            }
+            Button("取消", role: .cancel) { deletePath = nil }
+        } message: {
+            Text("「\(deletePath ?? "")」\(deleteIsFolder ? "和里面的所有文件" : "")会移到废纸篓。⌥⌘Z 可以放回来，也能在废纸篓里找回。")
+        }
+    }
+
+    private var deleteIsFolder: Bool {
+        guard let path = deletePath, let root = model.repositoryURL else { return false }
+        var isFolder: ObjCBool = false
+        return FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path, isDirectory: &isFolder) && isFolder.boolValue
     }
 
     private func askRename(_ path: String) {
@@ -142,6 +159,7 @@ struct TreePane: View {
             let target = try GitRepository.newFilePath(renameName, in: (path as NSString).deletingLastPathComponent)
             if target == path { return nil }
             if target.lowercased() == path.lowercased() { return "只改字母大小写暂不支持。" }
+            if target.lowercased().hasPrefix(path.lowercased() + "/") { return "不能把文件夹挪进它自己里面。" }
             if FileManager.default.fileExists(atPath: root.appendingPathComponent(target).path) { return "已经有 \(target) 了，换个名字。" }
             return nil
         } catch { return error.localizedDescription }

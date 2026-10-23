@@ -144,6 +144,41 @@ extension GitRepository {
             throw FolmiError.unsupported("\(path) 不是普通文件，不能在这里改名。")
         }
         try Self.makeFolders(for: target, root: root)
+        try Self.move(source, to: destination, named: target)
+    }
+
+    /// Renames (or moves) a work-tree folder with everything in it, in one step on disk. Like `renameFile` the index
+    /// is left alone. Returns the step that moves it back.
+    public func renameFolder(_ path: String, to target: String) async throws -> UndoStep {
+        guard path != target else { return .group([]) }
+        guard path.lowercased() != target.lowercased() else { throw FolmiError.unsupported("只改字母大小写暂不支持。") }
+        guard !target.lowercased().hasPrefix(path.lowercased() + "/") else { throw FolmiError.unsupported("不能把文件夹挪进它自己里面。") }
+        let root = try runner().directory
+        let source = try Self.contained(path, root: root), destination = try Self.contained(target, root: root)
+        guard (try? FileManager.default.attributesOfItem(atPath: source.path))?[.type] as? FileAttributeType == .typeDirectory else {
+            throw FolmiError.unsupported("\(path) 不是文件夹，不能在这里改名。")
+        }
+        try Self.makeFolders(for: target, root: root)
+        try Self.move(source, to: destination, named: target)
+        return .move(restore: path, current: target)
+    }
+
+    /// Sends a work-tree file or folder to the Trash, where Finder can still put it back. Returns the step that
+    /// moves it back to `path`.
+    public func trashItem(_ path: String) async throws -> UndoStep {
+        let root = try runner().directory
+        let url = try Self.contained(path, root: root)
+        guard (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil else {
+            throw FolmiError.unsupported("\(path) 已经不在了。")
+        }
+        var trashed: NSURL?
+        try FileManager.default.trashItem(at: url, resultingItemURL: &trashed)
+        guard let trashed = trashed?.path else { throw FolmiError.unsupported("\(path) 移到废纸篓后找不到了，没法撤销。") }
+        return .trash(path: path, trashed: trashed)
+    }
+
+    /// Moves without ever replacing what is at `destination`.
+    static func move(_ source: URL, to destination: URL, named target: String) throws {
         let result = source.path.withCString { from in
             destination.path.withCString { to in renamex_np(from, to, UInt32(RENAME_EXCL)) }
         }

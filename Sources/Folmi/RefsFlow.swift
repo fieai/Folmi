@@ -123,33 +123,70 @@ extension FolmiModel {
         }
     }
 
-    /// Why a file cannot be renamed right now, said before the name box opens.
+    /// Why a file or folder cannot be renamed or deleted right now, said before the box opens.
     func renameBlocker(_ path: String) -> String? {
-        editorWorkspace?.documents.first { $0.id == path }?.isDirty == true ? "编辑器里还有没保存的改动，先保存再改名" : nil
+        editorWorkspace?.documents.contains { ($0.id == path || $0.id.hasPrefix(path + "/")) && $0.isDirty } == true
+            ? "编辑器里还有没保存的改动，先保存" : nil
     }
 
-    /// 重命名 in the file tree: a new name (with slashes, a new place) beside the file. An open tab follows the file.
+    /// Editor tabs showing `path` or anything inside it.
+    private func openTabs(under path: String) -> [String] {
+        editorWorkspace?.documents.map(\.id).filter { $0 == path || $0.hasPrefix(path + "/") } ?? []
+    }
+
+    /// 重命名 in the file tree: a new name (with slashes, a new place) beside the file or folder. Open tabs follow it.
     /// ⌥⌘Z puts it back.
     func renameFile(_ path: String, to name: String) {
-        guard let repository else { return }
-        if let blocker = renameBlocker(path) { errorMessage = blocker + "。"; return }
+        guard let repository, let root = repositoryURL else { return }
+        if let blocker = renameBlocker(path) { errorMessage = blocker + "再改名。"; return }
         let target: String
         do { target = try GitRepository.newFilePath(name, in: (path as NSString).deletingLastPathComponent) }
         catch { report(error, title: "重命名失败"); return }
         guard target != path else { return }
-        let wasOpen = editorWorkspace?.documents.contains { $0.id == path } == true
+        var isFolder: ObjCBool = false
+        FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path, isDirectory: &isFolder)
+        let tabs = openTabs(under: path)
+        let title = "重命名 \(path) → \(target)"
         var renamed = false
-        mutateUndoable("重命名 \(path) → \(target)", capture: { try await repository.captureWorktree([path, target]) },
-                       succeeded: { renamed = true },
-                       after: { [weak self] in
-                           guard renamed, wasOpen else { return }
-                           try? self?.editorWorkspace?.close(id: path)
-                           // `editPath` waits for the operation to finish, which happens right after `after`.
-                           Task { self?.editPath(target) }
-                       }) {
-            try await repository.renameFile(path, to: target)
-            return "已把 \(path) 改名为 \(target)。⌥⌘Z 可撤销。"
+        let after: () -> Void = { [weak self] in
+            guard renamed, !tabs.isEmpty else { return }
+            tabs.forEach { try? self?.editorWorkspace?.close(id: $0) }
+            // `editPath` waits for the operation to finish, which happens right after `after`.
+            Task { tabs.forEach { self?.editPath(target + $0.dropFirst(path.count)) } }
         }
+        let done = "已把 \(path) 改名为 \(target)。⌥⌘Z 可撤销。"
+        if isFolder.boolValue {
+            // A folder can hold more than undo keeps in memory, so its undo moves it back instead of rewriting files.
+            mutate(title, operation: { [weak self] in
+                let step = try await repository.renameFolder(path, to: target)
+                await MainActor.run { self?.pushUndo(title, step) }
+                return done
+            }, succeeded: { renamed = true }, after: after)
+        } else {
+            mutateUndoable(title, capture: { try await repository.captureWorktree([path, target]) },
+                           succeeded: { renamed = true }, after: after) {
+                try await repository.renameFile(path, to: target)
+                return done
+            }
+        }
+    }
+
+    /// 删除 in the file tree: the file or folder goes to the Trash (Finder can put it back too). Open tabs close.
+    /// ⌥⌘Z puts it back.
+    func deleteItem(_ path: String) {
+        guard let repository else { return }
+        if let blocker = renameBlocker(path) { errorMessage = blocker + "再删除。"; return }
+        let tabs = openTabs(under: path)
+        let title = "删除 \(path)"
+        var deleted = false
+        mutate(title, operation: { [weak self] in
+            let step = try await repository.trashItem(path)
+            await MainActor.run { self?.pushUndo(title, step) }
+            return "已把 \(path) 移到废纸篓。⌥⌘Z 可撤销。"
+        }, succeeded: { deleted = true }, after: { [weak self] in
+            guard deleted else { return }
+            tabs.forEach { try? self?.editorWorkspace?.close(id: $0) }
+        })
     }
 }
 

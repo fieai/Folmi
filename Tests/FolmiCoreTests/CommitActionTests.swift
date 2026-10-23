@@ -415,6 +415,41 @@ final class RefTests: XCTestCase {
         do { try await f.repo.renameFile("missing.txt", to: "x.txt"); XCTFail("renamed a missing file") } catch {}
         XCTAssertEqual(try f.read("sample.txt"), before)
     }
+
+    func testRenameFolderMovesEverythingAndUndoes() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write("docs/a.md", "a")
+        try f.write("docs/deep/b.md", "b")
+        let step = try await f.repo.renameFolder("docs", to: "notes/docs")
+        XCTAssertEqual(try f.read("notes/docs/deep/b.md"), "b")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("docs").path))
+        let back = try await f.repo.undo(step)
+        XCTAssertEqual(try f.read("docs/a.md"), "a")
+        _ = try await f.repo.undo(back)
+        XCTAssertEqual(try f.read("notes/docs/a.md"), "a")
+
+        try f.write("other/x.md", "x")
+        do { _ = try await f.repo.renameFolder("other", to: "notes"); XCTFail("overwrote a folder") } catch {}
+        do { _ = try await f.repo.renameFolder("other", to: "other/inner"); XCTFail("moved into itself") } catch {}
+        do { _ = try await f.repo.renameFolder("sample.txt", to: "s"); XCTFail("renamed a file as a folder") } catch {}
+        XCTAssertEqual(try f.read("other/x.md"), "x")
+    }
+
+    func testTrashItemPutsBackAndTrashesAgain() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write("old/a.md", "a")
+        let step = try await f.repo.trashItem("old")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("old").path))
+        let redo = try await f.repo.undo(step)
+        XCTAssertEqual(try f.read("old/a.md"), "a")
+        let again = try await f.repo.undo(redo)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("old").path))
+        _ = try await f.repo.undo(again)
+        XCTAssertEqual(try f.read("old/a.md"), "a")
+        do { _ = try await f.repo.trashItem("missing.md"); XCTFail("trashed a missing file") } catch {}
+    }
 }
 
 final class WorktreeStatusTests: XCTestCase {
