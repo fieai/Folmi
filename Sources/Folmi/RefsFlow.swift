@@ -107,6 +107,21 @@ extension FolmiModel {
                 : "已把 \(pattern) 加进 .gitignore。"
         }
     }
+
+    /// 新建文件 in the file tree: an empty file inside `folder`, opened in the editor. ⌥⌘Z deletes it again.
+    func createFile(named name: String, in folder: String) {
+        guard let repository else { return }
+        let path: String
+        do { path = try GitRepository.newFilePath(name, in: folder) } catch { report(error, title: "新建文件失败"); return }
+        var created = false
+        mutateUndoable("新建 \(path)", capture: { try await repository.captureWorktree([path]) },
+                       succeeded: { created = true },
+                       // `editPath` waits for the operation to finish, which happens right after `after`.
+                       after: { [weak self] in if created { Task { self?.editPath(path) } } }) {
+            try await repository.createFile(path)
+            return "已新建 \(path)。⌥⌘Z 可撤销。"
+        }
+    }
 }
 
 /// The name boxes and confirmations for branch and tag actions, shown over the window.

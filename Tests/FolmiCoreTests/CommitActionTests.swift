@@ -367,6 +367,32 @@ final class RefTests: XCTestCase {
         let untracked = try await f.repo.isTracked("junk.log")
         XCTAssertTrue(tracked); XCTAssertFalse(untracked)
     }
+
+    func testNewFilePathsAndCreateFile() async throws {
+        XCTAssertEqual(try GitRepository.newFilePath(" notes.md ", in: ""), "notes.md")
+        XCTAssertEqual(try GitRepository.newFilePath("a/b.md", in: "docs"), "docs/a/b.md")
+        XCTAssertEqual(try GitRepository.newFilePath("/top.md", in: "docs"), "top.md")
+        for bad in ["", "  ", "dir/", "../x", "a//b", "./x", ".git/config", "a/.GIT/x"] {
+            XCTAssertThrowsError(try GitRepository.newFilePath(bad, in: ""), bad)
+        }
+        let f = try ActionFixture()
+        try f.initial()
+        try await f.repo.createFile("docs/new/idea.md")
+        XCTAssertEqual(try f.read("docs/new/idea.md"), "")
+        do { try await f.repo.createFile("sample.txt"); XCTFail("overwrote an existing file") } catch {}
+        XCTAssertNotEqual(try f.read("sample.txt"), "")
+        do { try await f.repo.createFile("sample.txt/inner.md"); XCTFail("used a file as a folder") } catch {}
+        let outside = f.directory.deletingLastPathComponent().appendingPathComponent("outside-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: f.directory.appendingPathComponent("link"), withDestinationURL: outside)
+        do { try await f.repo.createFile("link/escape.md"); XCTFail("wrote through a symlink") } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.appendingPathComponent("escape.md").path))
+        // Undo of a creation records the file as absent, so it removes it again.
+        let step = try await f.repo.captureWorktree(["fresh.txt"])
+        try await f.repo.createFile("fresh.txt")
+        _ = try await f.repo.undo(step)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("fresh.txt").path))
+    }
 }
 
 final class WorktreeStatusTests: XCTestCase {

@@ -44,21 +44,29 @@ struct TreePane: View {
     /// What is typed. The tree (and the window state holding `query`) follows after a short pause, so typing does not
     /// redraw the window and refilter thousands of files on every key.
     @State private var typed: String?
+    /// The folder a 新建文件 box is open for ("" is the project root).
+    @State private var newFileFolder: String?
+    @State private var newFileName = ""
 
     var body: some View {
         let _ = PerfLog.body("TreePane")
         let text = typed ?? query
         VStack(spacing: 0) {
-            TextField("按文件名筛选…", text: Binding(get: { text }, set: { typed = $0 }))
-                .themedTextField().padding(.horizontal, 10).padding(.top, 8)
-                .padding(.bottom, text.trimmingCharacters(in: .whitespaces).isEmpty ? 8 : 4)
-                .onSubmit { typed.map { query = $0 } }
-                .task(id: typed) {
-                    guard let typed, typed != query else { return }
-                    do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
-                    query = typed
-                }
-                .onChange(of: query) { _, new in if typed != new { typed = nil } }
+            HStack(spacing: 4) {
+                TextField("按文件名筛选…", text: Binding(get: { text }, set: { typed = $0 }))
+                    .themedTextField()
+                    .onSubmit { typed.map { query = $0 } }
+                    .task(id: typed) {
+                        guard let typed, typed != query else { return }
+                        do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+                        query = typed
+                    }
+                    .onChange(of: query) { _, new in if typed != new { typed = nil } }
+                PaneIconButton(symbol: "doc.badge.plus", help: "在项目根目录新建文件（文件夹上右键可以建在里面）") { askNewFile(in: "") }
+                    .disabled(model.busy || model.projectTree == nil)
+            }
+            .padding(.horizontal, 10).padding(.top, 8)
+            .padding(.bottom, text.trimmingCharacters(in: .whitespaces).isEmpty ? 8 : 4)
             // The field filters names; the words inside files are 全局搜索's job, one click away.
             if !text.trimmingCharacters(in: .whitespaces).isEmpty {
                 HStack(spacing: 4) {
@@ -84,6 +92,7 @@ struct TreePane: View {
                                     onSendPath: { model.sendTextToTerminal($0) },
                                     onIgnore: { model.ignorePath($0, folder: $1) },
                                     onLoadFolder: model.loadTreeFolder,
+                                    onNewFile: askNewFile(in:),
                                     expansion: expansion)
                     .id(model.repositoryURL?.path)
                 // One line: the count, then why it may be incomplete (the limit notice already says so).
@@ -92,6 +101,36 @@ struct TreePane: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 6)
             } else { Spacer(minLength: 0) }
         }
+        .alert("新建文件", isPresented: Binding(get: { newFileFolder != nil }, set: { if !$0 { newFileFolder = nil } })) {
+            TextField("文件名，例如 notes.md 或 docs/notes.md", text: $newFileName)
+            Button("新建") {
+                if let folder = newFileFolder { model.createFile(named: newFileName, in: folder) }
+                newFileFolder = nil
+            }
+            .disabled(newFileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || newFileProblem != nil)
+            Button("取消", role: .cancel) { newFileFolder = nil }
+        } message: {
+            Text(newFileProblem ?? "建在\(newFileFolder.map { $0.isEmpty ? "项目根目录" : "「\($0)」" } ?? "")里，是一个空文件，建好后直接打开。名字里带 / 会顺便建文件夹。⌥⌘Z 可撤销。")
+        }
+    }
+
+    private func askNewFile(in folder: String) {
+        newFileName = ""
+        newFileFolder = folder
+    }
+
+    /// Why the typed name cannot be created, worked out before 新建 is pressed.
+    private var newFileProblem: String? {
+        guard let folder = newFileFolder, let root = model.repositoryURL,
+              !newFileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        do {
+            let path = try GitRepository.newFilePath(newFileName, in: folder)
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path, isDirectory: &isDirectory) {
+                return isDirectory.boolValue ? "已经有叫这个名字的文件夹了。" : "已经有 \(path) 了，换个名字。"
+            }
+            return nil
+        } catch { return error.localizedDescription }
     }
 }
 

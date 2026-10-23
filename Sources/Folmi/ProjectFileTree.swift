@@ -326,6 +326,8 @@ struct ProjectFileTreeView: View {
     var onIgnore: ((String, Bool) -> Void)?
     /// Reads an ignored folder the first time it is shown open.
     var onLoadFolder: ((String) -> Void)?
+    /// 新建文件: asks for a name inside the folder ("" is the project root).
+    var onNewFile: ((String) -> Void)?
     @State private var hovered: String?
     @FocusState private var focused: Bool
 
@@ -339,6 +341,11 @@ struct ProjectFileTreeView: View {
             Button("打开") { onOpen(node.path) }
             if changed, let onShowChanges { Button("看改动") { onShowChanges(node.path) } }
             if let root { Button("快速查看") { QuickLookPreview.shared.toggle(root.appendingPathComponent(node.path)) } }
+            Divider()
+        }
+        if let onNewFile {
+            let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
+            Button(node.isDirectory ? "在这个文件夹里新建文件…" : "在旁边新建文件…") { onNewFile(folder) }
             Divider()
         }
         if let onSendPath { Button("把路径发到终端") { onSendPath(node.path) } }

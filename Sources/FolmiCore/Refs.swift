@@ -102,3 +102,43 @@ extension GitRepository {
         !(try runner().run(["ls-files", "--", path]).text.isEmpty)
     }
 }
+
+extension GitRepository {
+    /// The project path for a name typed into the file tree's 新建文件 box, created inside `folder` ("" is the root).
+    /// A name with slashes makes the folders on the way; a name ending in a slash is refused (that is a folder).
+    public static func newFilePath(_ name: String, in folder: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw FolmiError.unsupported("请输入文件名。") }
+        guard !trimmed.hasSuffix("/") else { throw FolmiError.unsupported("文件名不能以 / 结尾。") }
+        let path = folder.isEmpty || trimmed.hasPrefix("/") ? String(trimmed.drop { $0 == "/" }) : folder + "/" + trimmed
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !path.contains("\0"),
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && $0.lowercased() != ".git" }) else {
+            throw FolmiError.unsupported("文件名不能包含空的路径段、. 、.. 或 .git。")
+        }
+        return path
+    }
+
+    /// Creates an empty file, making the folders on the way. Never overwrites, and never writes through a symlink
+    /// or into a path that is a file.
+    public func createFile(_ path: String) async throws {
+        let root = try runner().directory
+        let url = try Self.contained(path, root: root)
+        let manager = FileManager.default
+        var folder = root
+        for component in path.split(separator: "/").dropLast() {
+            folder.appendPathComponent(String(component))
+            let attributes = try? manager.attributesOfItem(atPath: folder.path)
+            switch attributes?[.type] as? FileAttributeType {
+            case nil: try manager.createDirectory(at: folder, withIntermediateDirectories: false)
+            case .typeDirectory?: continue
+            case .typeSymbolicLink?: throw FolmiError.unsupported("\(component) 是符号链接，不在里面新建文件。")
+            default: throw FolmiError.unsupported("已经有一个叫 \(component) 的文件，不能把它当文件夹。")
+            }
+        }
+        guard (try? manager.attributesOfItem(atPath: url.path)) == nil else {
+            throw FolmiError.unsupported("已经有 \(path) 了。")
+        }
+        try Data().write(to: url, options: .withoutOverwriting)
+    }
+}
