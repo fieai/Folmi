@@ -393,6 +393,28 @@ final class RefTests: XCTestCase {
         _ = try await f.repo.undo(step)
         XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("fresh.txt").path))
     }
+
+    func testRenameFileMovesOnlyTheWorkTreeAndUndoes() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let before = try f.read("sample.txt")
+        let step = try await f.repo.captureWorktree(["sample.txt", "docs/renamed.txt"])
+        try await f.repo.renameFile("sample.txt", to: "docs/renamed.txt")
+        XCTAssertEqual(try f.read("docs/renamed.txt"), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("sample.txt").path))
+        // Nothing is staged for the user: the index still has the old path.
+        XCTAssertEqual(try f.git(["diff", "--cached", "--name-only"]), "")
+        _ = try await f.repo.undo(step)
+        XCTAssertEqual(try f.read("sample.txt"), before)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("docs/renamed.txt").path))
+
+        try f.write("other.txt", "other")
+        do { try await f.repo.renameFile("sample.txt", to: "other.txt"); XCTFail("overwrote a file") } catch {}
+        XCTAssertEqual(try f.read("other.txt"), "other")
+        do { try await f.repo.renameFile("sample.txt", to: "SAMPLE.txt"); XCTFail("case-only rename") } catch {}
+        do { try await f.repo.renameFile("missing.txt", to: "x.txt"); XCTFail("renamed a missing file") } catch {}
+        XCTAssertEqual(try f.read("sample.txt"), before)
+    }
 }
 
 final class WorktreeStatusTests: XCTestCase {

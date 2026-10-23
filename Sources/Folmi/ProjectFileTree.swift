@@ -328,6 +328,9 @@ struct ProjectFileTreeView: View {
     var onLoadFolder: ((String) -> Void)?
     /// 新建文件: asks for a name inside the folder ("" is the project root).
     var onNewFile: ((String) -> Void)?
+    /// 重命名 a file, and why it cannot be renamed right now (unsaved edits in the editor).
+    var onRename: ((String) -> Void)?
+    var renameBlocker: ((String) -> String?)?
     @State private var hovered: String?
     @FocusState private var focused: Bool
 
@@ -345,9 +348,13 @@ struct ProjectFileTreeView: View {
         }
         if let onNewFile {
             let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
-            Button(node.isDirectory ? "在这个文件夹里新建文件…" : "在旁边新建文件…") { onNewFile(folder) }
-            Divider()
+            Button(node.isDirectory ? "在「\(node.name)」里新建文件…" : "在同一个文件夹里新建文件…") { onNewFile(folder) }
         }
+        if !node.isDirectory, let onRename {
+            let blocker = renameBlocker?(node.path)
+            Button(blocker.map { "重命名…（\($0)）" } ?? "重命名…") { onRename(node.path) }.disabled(blocker != nil)
+        }
+        if onNewFile != nil || (!node.isDirectory && onRename != nil) { Divider() }
         if let onSendPath { Button("把路径发到终端") { onSendPath(node.path) } }
         if let onTerminalHere { Button(node.isDirectory ? "在终端中进入这个文件夹" : "在终端中进入所在文件夹") { onTerminalHere(node.path, node.isDirectory) } }
         if let onIgnore {
@@ -404,6 +411,11 @@ struct ProjectFileTreeView: View {
                     }
                 }
             }.padding(.horizontal, 6).padding(.vertical, 5)
+        }
+        // Right-click on the blank space below the rows; a row's own menu wins over this one.
+        .contentShape(Rectangle())
+        .contextMenu {
+            if let onNewFile { Button("新建文件…") { onNewFile("") } }
         }
         .focusable().focusEffectDisabled().focused($focused)
         // Space: Quick Look of the file under the pointer, else the open one (like Finder).

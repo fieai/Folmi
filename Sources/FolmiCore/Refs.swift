@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Branch and tag housekeeping. Each change returns the step that undoes it.
@@ -124,6 +125,36 @@ extension GitRepository {
     public func createFile(_ path: String) async throws {
         let root = try runner().directory
         let url = try Self.contained(path, root: root)
+        try Self.makeFolders(for: path, root: root)
+        guard (try? FileManager.default.attributesOfItem(atPath: url.path)) == nil else {
+            throw FolmiError.unsupported("已经有 \(path) 了。")
+        }
+        try Data().write(to: url, options: .withoutOverwriting)
+    }
+
+    /// Renames (or moves) a work-tree file. Only the file on disk moves; the index is left as it is, so Git sees the
+    /// old path deleted and the new one added until the user stages them. Never overwrites a file already there.
+    public func renameFile(_ path: String, to target: String) async throws {
+        guard path != target else { return }
+        // On a case-insensitive disk both names are the same file, and undo would delete it.
+        guard path.lowercased() != target.lowercased() else { throw FolmiError.unsupported("只改字母大小写暂不支持。") }
+        let root = try runner().directory
+        let source = try Self.contained(path, root: root), destination = try Self.contained(target, root: root)
+        guard (try? FileManager.default.attributesOfItem(atPath: source.path))?[.type] as? FileAttributeType == .typeRegular else {
+            throw FolmiError.unsupported("\(path) 不是普通文件，不能在这里改名。")
+        }
+        try Self.makeFolders(for: target, root: root)
+        let result = source.path.withCString { from in
+            destination.path.withCString { to in renamex_np(from, to, UInt32(RENAME_EXCL)) }
+        }
+        guard result == 0 else {
+            if errno == EEXIST { throw FolmiError.unsupported("已经有 \(target) 了。") }
+            throw FolmiError.unsupported("改名失败：\(String(cString: strerror(errno)))")
+        }
+    }
+
+    /// Makes the folders above `path`, refusing a symlink or a file on the way.
+    static func makeFolders(for path: String, root: URL) throws {
         let manager = FileManager.default
         var folder = root
         for component in path.split(separator: "/").dropLast() {
@@ -132,13 +163,9 @@ extension GitRepository {
             switch attributes?[.type] as? FileAttributeType {
             case nil: try manager.createDirectory(at: folder, withIntermediateDirectories: false)
             case .typeDirectory?: continue
-            case .typeSymbolicLink?: throw FolmiError.unsupported("\(component) 是符号链接，不在里面新建文件。")
+            case .typeSymbolicLink?: throw FolmiError.unsupported("\(component) 是符号链接，不在里面放文件。")
             default: throw FolmiError.unsupported("已经有一个叫 \(component) 的文件，不能把它当文件夹。")
             }
         }
-        guard (try? manager.attributesOfItem(atPath: url.path)) == nil else {
-            throw FolmiError.unsupported("已经有 \(path) 了。")
-        }
-        try Data().write(to: url, options: .withoutOverwriting)
     }
 }

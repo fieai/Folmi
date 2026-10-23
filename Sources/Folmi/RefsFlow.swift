@@ -122,6 +122,35 @@ extension FolmiModel {
             return "已新建 \(path)。⌥⌘Z 可撤销。"
         }
     }
+
+    /// Why a file cannot be renamed right now, said before the name box opens.
+    func renameBlocker(_ path: String) -> String? {
+        editorWorkspace?.documents.first { $0.id == path }?.isDirty == true ? "编辑器里还有没保存的改动，先保存再改名" : nil
+    }
+
+    /// 重命名 in the file tree: a new name (with slashes, a new place) beside the file. An open tab follows the file.
+    /// ⌥⌘Z puts it back.
+    func renameFile(_ path: String, to name: String) {
+        guard let repository else { return }
+        if let blocker = renameBlocker(path) { errorMessage = blocker + "。"; return }
+        let target: String
+        do { target = try GitRepository.newFilePath(name, in: (path as NSString).deletingLastPathComponent) }
+        catch { report(error, title: "重命名失败"); return }
+        guard target != path else { return }
+        let wasOpen = editorWorkspace?.documents.contains { $0.id == path } == true
+        var renamed = false
+        mutateUndoable("重命名 \(path) → \(target)", capture: { try await repository.captureWorktree([path, target]) },
+                       succeeded: { renamed = true },
+                       after: { [weak self] in
+                           guard renamed, wasOpen else { return }
+                           try? self?.editorWorkspace?.close(id: path)
+                           // `editPath` waits for the operation to finish, which happens right after `after`.
+                           Task { self?.editPath(target) }
+                       }) {
+            try await repository.renameFile(path, to: target)
+            return "已把 \(path) 改名为 \(target)。⌥⌘Z 可撤销。"
+        }
+    }
 }
 
 /// The name boxes and confirmations for branch and tag actions, shown over the window.

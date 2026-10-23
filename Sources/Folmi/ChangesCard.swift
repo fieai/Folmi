@@ -47,6 +47,9 @@ struct TreePane: View {
     /// The folder a 新建文件 box is open for ("" is the project root).
     @State private var newFileFolder: String?
     @State private var newFileName = ""
+    /// The file a 重命名 box is open for.
+    @State private var renamePath: String?
+    @State private var renameName = ""
 
     var body: some View {
         let _ = PerfLog.body("TreePane")
@@ -93,6 +96,7 @@ struct TreePane: View {
                                     onIgnore: { model.ignorePath($0, folder: $1) },
                                     onLoadFolder: model.loadTreeFolder,
                                     onNewFile: askNewFile(in:),
+                                    onRename: askRename(_:), renameBlocker: model.renameBlocker,
                                     expansion: expansion)
                     .id(model.repositoryURL?.path)
                 // One line: the count, then why it may be incomplete (the limit notice already says so).
@@ -112,6 +116,35 @@ struct TreePane: View {
         } message: {
             Text(newFileProblem ?? "建在\(newFileFolder.map { $0.isEmpty ? "项目根目录" : "「\($0)」" } ?? "")里，是一个空文件，建好后直接打开。名字里带 / 会顺便建文件夹。⌥⌘Z 可撤销。")
         }
+        .alert("重命名", isPresented: Binding(get: { renamePath != nil }, set: { if !$0 { renamePath = nil } })) {
+            TextField("新名字", text: $renameName)
+            Button("改名") {
+                if let path = renamePath { model.renameFile(path, to: renameName) }
+                renamePath = nil
+            }
+            .disabled(renameName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || renameProblem != nil)
+            Button("取消", role: .cancel) { renamePath = nil }
+        } message: {
+            Text(renameProblem ?? "「\(renamePath ?? "")」改成什么？只改磁盘上的文件，名字里带 / 会挪到对应的文件夹。⌥⌘Z 可撤销。")
+        }
+    }
+
+    private func askRename(_ path: String) {
+        renameName = (path as NSString).lastPathComponent
+        renamePath = path
+    }
+
+    /// Why the typed name cannot be used, worked out before 改名 is pressed.
+    private var renameProblem: String? {
+        guard let path = renamePath, let root = model.repositoryURL,
+              !renameName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        do {
+            let target = try GitRepository.newFilePath(renameName, in: (path as NSString).deletingLastPathComponent)
+            if target == path { return nil }
+            if target.lowercased() == path.lowercased() { return "只改字母大小写暂不支持。" }
+            if FileManager.default.fileExists(atPath: root.appendingPathComponent(target).path) { return "已经有 \(target) 了，换个名字。" }
+            return nil
+        } catch { return error.localizedDescription }
     }
 
     private func askNewFile(in folder: String) {
