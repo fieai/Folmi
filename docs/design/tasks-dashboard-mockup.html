@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>待办面板样式稿</title>
+<style>
+:root {
+  --font: -apple-system, "PingFang SC", "SF Pro Text", sans-serif;
+  --mono: "SF Mono", Menlo, monospace;
+}
+[data-theme="dark"] {
+  --wall: radial-gradient(1200px 700px at 15% 10%, #3a4a78 0%, transparent 60%),
+          radial-gradient(900px 600px at 90% 90%, #5b3a6e 0%, transparent 60%),
+          linear-gradient(160deg, #1d2740, #241c33);
+  --win: rgba(30, 33, 42, .62);
+  --rail: rgba(40, 44, 56, .28);
+  --card: rgba(24, 26, 32, .82);
+  --hair: rgba(255, 255, 255, .09);
+  --text: #e8e9ed; --text2: #a3a7b3; --text3: #6f7480;
+  --accent: #5aa2ff; --accent-bg: rgba(90, 162, 255, .16);
+  --add: #4cc38a; --mod: #e9a35a; --del: #ef6b6b; --ai: #b48cff;
+  --chip: rgba(255, 255, 255, .06);
+  --sel: rgba(255, 255, 255, .07);
+}
+[data-theme="light"] {
+  --wall: radial-gradient(1200px 700px at 15% 10%, #b9d0ff 0%, transparent 60%),
+          radial-gradient(900px 600px at 90% 90%, #f1c8e0 0%, transparent 60%),
+          linear-gradient(160deg, #dfe7f5, #efe4f0);
+  --win: rgba(246, 247, 250, .62);
+  --rail: rgba(255, 255, 255, .30);
+  --card: rgba(255, 255, 255, .84);
+  --hair: rgba(0, 0, 0, .08);
+  --text: #1d1e22; --text2: #5c606b; --text3: #9195a0;
+  --accent: #1f6fe0; --accent-bg: rgba(31, 111, 224, .10);
+  --add: #1f9d62; --mod: #c9771c; --del: #d24545; --ai: #7b4fd6;
+  --chip: rgba(0, 0, 0, .05);
+  --sel: rgba(0, 0, 0, .05);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--wall); background-attachment: fixed; font-family: var(--font); color: var(--text);
+  padding: 24px 16px 40px; -webkit-font-smoothing: antialiased; font-size: 13px; }
+button { font: inherit; color: inherit; }
+.controls { max-width: 1320px; margin: 0 auto 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.seg { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--win); border: 1px solid var(--hair); backdrop-filter: blur(20px); }
+.seg button { background: transparent; border: 0; padding: 5px 10px; border-radius: 6px; color: var(--text2); cursor: pointer; }
+.seg button.on { background: var(--chip); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair); }
+.note { color: var(--text2); }
+
+.window { max-width: 1320px; min-height: 860px; margin: 0 auto; display: grid; grid-template-columns: 52px minmax(0, 1fr);
+  border-radius: 16px; overflow: hidden; background: var(--win); border: 1px solid var(--hair);
+  backdrop-filter: blur(48px) saturate(1.6); -webkit-backdrop-filter: blur(48px) saturate(1.6);
+  box-shadow: 0 30px 80px rgba(0,0,0,.35); }
+.rail { background: var(--rail); border-right: 1px solid var(--hair); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 0; }
+.rail .dots { display: flex; gap: 6px; margin-bottom: 14px; }
+.rail .dots i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; display: block; }
+.rail .dots i:nth-child(2) { background: #febc2e; } .rail .dots i:nth-child(3) { background: #28c840; }
+.rail .dots { flex-direction: column; }
+.rail-btn { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; color: var(--text2); position: relative; }
+.rail-btn.on { background: var(--chip); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair); }
+.rail-btn .badge { position: absolute; right: -2px; top: -2px; font-size: 9px; background: var(--del); color: #fff; border-radius: 7px; padding: 0 4px; line-height: 14px; }
+.rail-btn.proj { font-size: 12px; font-weight: 600; background: var(--chip); }
+.rail-btn svg { width: 18px; height: 18px; }
+
+.main { display: grid; grid-template-rows: 46px minmax(0, 1fr); min-width: 0; }
+.topbar { display: flex; align-items: center; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--hair); }
+.topbar h1 { font-size: 14px; margin: 0; font-weight: 600; }
+.topbar .sub { color: var(--text3); font-size: 12px; }
+.topbar .spacer { flex: 1; }
+.topbar .kbd { font-family: var(--mono); font-size: 11px; color: var(--text3); border: 1px solid var(--hair); border-radius: 4px; padding: 1px 5px; }
+
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 14px; padding: 14px; min-height: 0; }
+.left { display: grid; gap: 14px; align-content: start; min-width: 0; }
+.card { background: var(--card); border: 1px solid var(--hair); border-radius: 12px; }
+.card-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px 0; }
+.card-head h2 { font-size: 13px; margin: 0; font-weight: 600; }
+.card-head .hint { color: var(--text3); font-size: 11px; }
+.card-head .spacer { flex: 1; }
+
+/* Numbers */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.stat { padding: 12px 14px; cursor: pointer; text-align: left; border: 1px solid var(--hair); border-radius: 12px; background: var(--card); }
+.stat:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--hair)); }
+.stat.on { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.stat .label { color: var(--text2); font-size: 12px; }
+.stat .num { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; margin: 4px 0 2px; }
+.stat .num small { font-size: 12px; font-weight: 400; color: var(--text2); margin-left: 2px; }
+.stat .foot { color: var(--text3); font-size: 11px; }
+.up { color: var(--mod); } .down { color: var(--add); } .red { color: var(--del); } .ai { color: var(--ai); }
+
+/* Calendar */
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; margin: 10px 14px 14px; background: var(--hair); border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; }
+.cal-grid .wd { background: var(--card); color: var(--text3); font-size: 11px; padding: 6px 8px; }
+.day { background: var(--card); min-height: 92px; padding: 6px 7px 16px; position: relative; cursor: pointer; }
+.day:hover { background: color-mix(in srgb, var(--card) 90%, var(--accent)); }
+.day.other { opacity: .38; }
+.day.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.day.picked { background: var(--accent-bg); }
+.day .n { font-size: 12px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.day.today .n { color: var(--accent); font-weight: 600; }
+.day .t { font-size: 11px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 6px; border-left: 2px solid var(--accent); margin-top: 3px; }
+.day .t.over { border-color: var(--del); color: var(--del); }
+.day .t.done { border-color: var(--text3); color: var(--text3); text-decoration: line-through; }
+.day .more { font-size: 10px; color: var(--text3); margin-top: 2px; }
+.day .heat { position: absolute; left: 7px; bottom: 5px; display: flex; gap: 2px; }
+.day .heat i { width: 5px; height: 5px; border-radius: 1.5px; background: var(--add); display: block; }
+
+/* Flow */
+.flow { padding: 6px 14px 4px; }
+.flow svg { width: 100%; height: 150px; display: block; }
+.legend { display: flex; gap: 14px; color: var(--text3); font-size: 11px; align-items: center; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.feed { border-top: 1px solid var(--hair); margin-top: 6px; padding: 8px 14px 12px; display: grid; gap: 6px; }
+.feed .row { display: flex; gap: 10px; align-items: baseline; font-size: 12px; }
+.feed .when { color: var(--text3); width: 76px; flex: none; font-variant-numeric: tabular-nums; }
+.feed .what { flex: 1; min-width: 0; }
+.feed .go { color: var(--accent); font-size: 11px; flex: none; }
+.who { font-size: 10px; border-radius: 4px; padding: 0 5px; line-height: 16px; display: inline-block; margin-right: 4px; }
+.who.claude { background: color-mix(in srgb, var(--ai) 18%, transparent); color: var(--ai); }
+.who.me { background: var(--chip); color: var(--text2); }
+
+/* List */
+.list { display: flex; flex-direction: column; min-height: 0; }
+.list-head { padding: 12px 12px 8px; display: grid; gap: 8px; }
+.search { display: flex; gap: 8px; }
+.search input { flex: 1; min-width: 0; background: var(--chip); border: 1px solid var(--hair); border-radius: 7px; padding: 6px 9px; color: var(--text); font: inherit; outline: none; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip { font-size: 11px; background: var(--chip); border: 1px solid var(--hair); border-radius: 10px; padding: 1px 8px; color: var(--text2); }
+.chip.active { background: var(--accent-bg); color: var(--accent); border-color: transparent; }
+.chip .x { margin-left: 4px; cursor: pointer; }
+.groups { overflow: auto; padding: 0 6px 10px; flex: 1; }
+.group h3 { font-size: 11px; color: var(--text3); font-weight: 600; margin: 12px 8px 4px; display: flex; gap: 6px; }
+.group h3 .c { font-weight: 400; }
+.group.over h3 { color: var(--del); }
+.task { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; align-items: start; padding: 6px 8px; border-radius: 7px; cursor: default; }
+.task:hover { background: var(--sel); }
+.task.sel { background: var(--sel); box-shadow: inset 2px 0 0 var(--accent); }
+.box { width: 15px; height: 15px; border: 1.5px solid var(--text3); border-radius: 4px; margin-top: 2px; cursor: pointer; display: grid; place-items: center; font-size: 10px; }
+.box.doing { border-color: var(--accent); background: linear-gradient(90deg, var(--accent) 50%, transparent 50%); }
+.task.done .box { background: var(--add); border-color: var(--add); color: #fff; }
+.task.done .title { text-decoration: line-through; color: var(--text3); }
+.title { line-height: 18px; }
+.meta { color: var(--text3); font-size: 11px; font-family: var(--mono); margin-top: 1px; }
+.pill { font-size: 11px; border-radius: 5px; padding: 0 6px; line-height: 18px; background: var(--chip); color: var(--text2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pill.over { background: color-mix(in srgb, var(--del) 16%, transparent); color: var(--del); }
+.pill.today { background: var(--accent-bg); color: var(--accent); }
+.list-foot { border-top: 1px solid var(--hair); padding: 8px 12px; color: var(--text3); font-size: 11px; display: flex; gap: 10px; flex-wrap: wrap; }
+.list-foot b { font-family: var(--mono); font-weight: 500; color: var(--text2); }
+
+.callouts { max-width: 1320px; margin: 18px auto 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.callouts div { background: var(--win); border: 1px solid var(--hair); border-radius: 12px; padding: 12px 14px; backdrop-filter: blur(20px); line-height: 1.6; color: var(--text2); }
+.callouts b { color: var(--text); display: block; margin-bottom: 2px; }
+
+@media (max-width: 1100px) {
+  .body { grid-template-columns: minmax(0, 1fr); }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .callouts { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .window { grid-template-columns: minmax(0, 1fr); }
+  .rail { display: none; }
+  .day { min-height: 56px; } .day .t, .day .more { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="controls">
+  <div class="seg" id="theme"><button data-v="dark" class="on">深色</button><button data-v="light">浅色</button></div>
+  <span class="note">样式稿：数据是假的。左边是项目轨，「待办」在顶部切换栏里。点数字、日历的某天、复选框试试。</span>
+</div>
+
+<div class="window">
+  <nav class="rail" title="项目轨">
+    <div class="dots"><i></i><i></i><i></i></div>
+    <div class="rail-btn on proj" title="Folmi">Fo<span class="badge">3</span></div>
+    <div class="rail-btn proj" title="site">si</div>
+    <div class="rail-btn proj" title="notes">no</div>
+  </nav>
+
+  <section class="main">
+    <header class="topbar">
+      <div class="seg"><button>差异</button><button>编辑</button><button>全部改动</button><button>历史</button><button class="on">待办</button></div>
+      <span class="sub">Folmi · 来自 23 个 Markdown 文件</span>
+      <span class="spacer"></span>
+      <div class="seg"><button class="on">这个项目</button><button>所有项目</button></div>
+      <span class="kbd">⌘⇧T</span>
+    </header>
+
+    <div class="body">
+      <div class="left">
+        <div class="stats" id="stats">
+          <button class="stat" data-f="open"><div class="label">没做完的</div><div class="num">27</div><div class="foot"><span class="down">比上周 −6</span> · 进行中 3</div></button>
+          <button class="stat" data-f="due"><div class="label">今天和过期的</div><div class="num">5<small>条</small></div><div class="foot"><span class="red">过期 3</span> · 今天 2</div></button>
+          <button class="stat" data-f="done"><div class="label">这周做完的</div><div class="num">14</div><div class="foot">你 9 · <span class="ai">AI 5</span>（来自 Git）</div></button>
+          <button class="stat" data-f="ai"><div class="label">AI 留下的</div><div class="num ai">8</div><div class="foot">Claude 加的、还没做完</div></button>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>2026 年 10 月</h2>
+            <span class="hint">格子里是截止的待办，底下的点是那天做完几条；把右边的待办拖到某天可改截止日期</span>
+            <span class="spacer"></span>
+            <div class="seg"><button class="on">月</button><button>周</button></div>
+          </div>
+          <div class="cal-grid" id="cal"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>流转</h2><span class="hint">近 30 天，从 Git 历史和工作区算</span>
+            <span class="spacer"></span>
+            <div class="legend"><span><i style="background:var(--accent)"></i>新加</span><span><i style="background:var(--add)"></i>做完</span><span><i style="background:var(--mod);height:2px"></i>没做完的总数</span></div>
+          </div>
+          <div class="flow"><svg id="flow" viewBox="0 0 600 150" preserveAspectRatio="none"></svg></div>
+          <div class="feed">
+            <div class="row"><span class="when">今天 10:42</span><span class="what"><span class="who claude">Claude · 第 3 轮</span>在 <code>docs/plan.md</code> 加了 4 条，勾掉了 2 条</span><span class="go">按轮次看 →</span></div>
+            <div class="row"><span class="when">今天 09:15</span><span class="what"><span class="who me">你</span>勾掉了「性能门槛加上待办索引」</span><span class="go">没提交</span></div>
+            <div class="row"><span class="when">昨天 18:03</span><span class="what"><span class="who me">你</span>随手记 <code>ideas/2026-10-25.md</code> 加了 3 条</span><span class="go">a41c9e2 →</span></div>
+            <div class="row"><span class="when">10/23</span><span class="what"><span class="who claude">Codex</span>把「改设置页的说明」标成不做了</span><span class="go">7be0d11 →</span></div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="card list">
+        <div class="list-head">
+          <div class="search"><input placeholder="筛选待办、文件…"><div class="seg"><button class="on">按日期</button><button>按文件</button></div></div>
+          <div class="chips" id="chips"></div>
+        </div>
+        <div class="groups" id="groups"></div>
+        <div class="list-foot"><span><b>↑↓</b> 选</span><span><b>空格</b> 勾选</span><span><b>⏎</b> 打开到那一行</span><span><b>D</b> 设日期</span><span><b>⌘Z</b> 撤销</span></div>
+      </aside>
+    </div>
+  </section>
+</div>
+
+<div class="callouts">
+  <div><b>不另存数据</b>日期写在待办那一行里（<code>📅 2026-10-30</code>，Obsidian Tasks 的写法）；流转和「谁动的」从 Git 历史算。</div>
+  <div><b>AI 留下的、AI 勾掉的</b>紫色标记来自 Claude Code / Codex 的轮次。验收时一处改动里有 <code>[ ]→[x]</code>，卡片上写「勾掉了 1 条待办」。</div>
+  <div><b>分步做</b>① 页面、数字、列表、日期写法 ② 日历和拖动改日期 ③ Git 流转和最近动静 ④ 所有项目、收工卡片。</div>
+</div>
+
+<script>
+const TODAY = '2026-10-26';
+const tasks = [
+  { t: '补完 MarkdownIndex 的日期解析', f: 'docs/plan.md', l: 12, d: '2026-10-22', ai: true },
+  { t: '设置页加「勾选时补完成日期」', f: 'docs/plan.md', l: 15, d: '2026-10-23', ai: true },
+  { t: '回复 issue #212 的复现步骤', f: 'TODO.md', l: 4, d: '2026-10-24' },
+  { t: '日历拖动改截止日期的撤销', f: 'docs/plan.md', l: 18, d: '2026-10-26', ai: true, doing: true },
+  { t: '更新官网截图', f: 'TODO.md', l: 7, d: '2026-10-26' },
+  { t: '流转图的性能门槛', f: 'docs/design/tasks-dashboard.md', l: 40, d: '2026-10-28', ai: true },
+  { t: '收工卡片加「今天做完 n 条」', f: 'docs/plan.md', l: 21, d: '2026-10-29', ai: true },
+  { t: '0.11 发版说明', f: 'TODO.md', l: 9, d: '2026-10-30' },
+  { t: '跨项目汇总的读取顺序', f: 'docs/plan.md', l: 24, d: '2026-11-04', ai: true },
+  { t: '试一下 Dataview 的 [due:: ] 写法', f: 'ideas/2026-10-25.md', l: 3 },
+  { t: '菜单栏要不要显示今天到期数', f: 'ideas/2026-10-25.md', l: 4 },
+  { t: '窄窗口下日历怎么折叠', f: 'ideas/2026-10-25.md', l: 5, ai: true },
+];
+const done = { '2026-10-05': 2, '2026-10-06': 1, '2026-10-08': 3, '2026-10-09': 1, '2026-10-12': 2, '2026-10-13': 4, '2026-10-14': 1,
+  '2026-10-15': 2, '2026-10-19': 3, '2026-10-20': 2, '2026-10-21': 4, '2026-10-22': 1, '2026-10-23': 3, '2026-10-24': 2, '2026-10-26': 2 };
+const doneTitles = { '2026-10-21': ['待办索引改成增量'], '2026-10-20': ['⌘K 的 [ 前缀显示日期'] };
+let filter = null, pickedDay = null, selected = 3;
+
+const fmt = d => d.toISOString().slice(0, 10);
+const short = s => { const [, m, d] = s.split('-'); return `${+m}/${+d}`; };
+const bucket = t => !t.d ? '没日期' : t.d < TODAY ? '过期' : t.d === TODAY ? '今天' : t.d <= '2026-11-01' ? '这周' : '以后';
+
+function renderCal() {
+  const cal = document.getElementById('cal');
+  cal.innerHTML = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'].map(w => `<div class="wd">${w}</div>`).join('');
+  const start = new Date(Date.UTC(2026, 8, 28));
+  for (let i = 0; i < 35; i++) {
+    const date = new Date(start.getTime() + i * 86400000), key = fmt(date);
+    const due = tasks.filter(t => t.d === key && !t.checked);
+    const cls = ['day', date.getUTCMonth() !== 9 && 'other', key === TODAY && 'today', key === pickedDay && 'picked'].filter(Boolean).join(' ');
+    let html = `<div class="n">${date.getUTCDate()}</div>`;
+    (doneTitles[key] || []).forEach(t => html += `<div class="t done">${t}</div>`);
+    due.slice(0, 3).forEach(t => html += `<div class="t ${key < TODAY ? 'over' : ''}">${t.t}</div>`);
+    if (due.length > 3) html += `<div class="more">还有 ${due.length - 3} 条</div>`;
+    const n = done[key] || 0;
+    if (n) html += `<div class="heat">${'<i></i>'.repeat(Math.min(n, 6))}</div>`;
+    cal.insertAdjacentHTML('beforeend', `<div class="${cls}" data-k="${key}" title="${n ? `做完 ${n} 条` : ''}">${html}</div>`);
+  }
+  cal.querySelectorAll('.day').forEach(el => el.onclick = () => { pickedDay = pickedDay === el.dataset.k ? null : el.dataset.k; filter = null; render(); });
+}
+
+function renderFlow() {
+  const added = [2,1,0,3,4,1,0,2,5,1,2,0,0,3,4,2,1,6,2,0,1,3,2,1,0,4,3,1,2,5];
+  const fin =   [1,2,1,0,2,3,0,1,3,2,1,0,1,2,4,1,2,1,3,0,0,2,4,3,1,2,1,3,0,2];
+  let open = 33; const total = added.map((a, i) => open += a - fin[i]);
+  const w = 600 / 30, max = 7, h = 150, base = 130;
+  let s = '';
+  for (let y = 0; y <= max; y += 7 / 2) s += `<line x1="0" x2="600" y1="${base - y / max * 110}" y2="${base - y / max * 110}" stroke="var(--hair)"/>`;
+  added.forEach((a, i) => {
+    s += `<rect x="${i * w + 3}" y="${base - a / max * 110}" width="${w / 2 - 3}" height="${a / max * 110}" rx="1.5" fill="var(--accent)" opacity=".85"/>`;
+    s += `<rect x="${i * w + w / 2}" y="${base - fin[i] / max * 110}" width="${w / 2 - 3}" height="${fin[i] / max * 110}" rx="1.5" fill="var(--add)" opacity=".85"/>`;
+  });
+  const lo = Math.min(...total) - 2, hi = Math.max(...total) + 2;
+  const pts = total.map((v, i) => `${i * w + w / 2},${base - (v - lo) / (hi - lo) * 110}`).join(' ');
+  s += `<polyline points="${pts}" fill="none" stroke="var(--mod)" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+  s += `<text x="2" y="146" font-size="10" fill="var(--text3)">9/27</text><text x="598" y="146" font-size="10" fill="var(--text3)" text-anchor="end">今天</text>`;
+  document.getElementById('flow').innerHTML = s;
+}
+
+function renderList() {
+  let list = tasks.map((t, i) => ({ ...t, i }));
+  const chips = [];
+  if (filter === 'due') { list = list.filter(t => t.d && t.d <= TODAY); chips.push('今天和过期的'); }
+  if (filter === 'ai') { list = list.filter(t => t.ai); chips.push('AI 留下的'); }
+  if (filter === 'done') chips.push('这周做完的（样式稿里没列）');
+  if (pickedDay) { list = list.filter(t => t.d === pickedDay); chips.push(`截止 ${short(pickedDay)}`); }
+  document.getElementById('chips').innerHTML = chips.length
+    ? chips.map(c => `<span class="chip active">${c}<span class="x" onclick="filter=null;pickedDay=null;render()">×</span></span>`).join('')
+    : `<span class="chip">${list.filter(t => !t.checked).length} 条没做完</span><span class="chip">📅 截止</span><span class="chip">⏳ 哪天做</span><span class="chip">[/] 进行中</span>`;
+  const order = ['过期', '今天', '这周', '以后', '没日期'];
+  const groups = order.map(g => [g, list.filter(t => bucket(t) === g)]).filter(([, l]) => l.length);
+  document.getElementById('groups').innerHTML = groups.map(([g, l]) => `
+    <div class="group ${g === '过期' ? 'over' : ''}"><h3>${g}<span class="c">${l.length}</span></h3>
+    ${l.map(t => `<div class="task ${t.checked ? 'done' : ''} ${t.i === selected ? 'sel' : ''}" data-i="${t.i}" draggable="true">
+      <span class="box ${t.doing && !t.checked ? 'doing' : ''}" data-i="${t.i}">${t.checked ? '✓' : ''}</span>
+      <div><div class="title">${t.ai ? '<span class="who claude">AI</span>' : ''}${t.t}</div><div class="meta">${t.f}:${t.l}</div></div>
+      ${t.d ? `<span class="pill ${g === '过期' ? 'over' : g === '今天' ? 'today' : ''}">📅 ${short(t.d)}</span>` : ''}
+    </div>`).join('')}</div>`).join('') || '<p class="note" style="padding:20px 10px">这天没有截止的待办。</p>';
+  document.querySelectorAll('.box').forEach(b => b.onclick = e => { e.stopPropagation(); const t = tasks[b.dataset.i]; t.checked = !t.checked; render(); });
+  document.querySelectorAll('.task').forEach(r => r.onclick = () => { selected = +r.dataset.i; renderList(); });
+}
+
+function render() {
+  document.querySelectorAll('.stat').forEach(s => s.classList.toggle('on', s.dataset.f === filter));
+  renderCal(); renderList();
+}
+document.querySelectorAll('.stat').forEach(s => s.onclick = () => { filter = filter === s.dataset.f ? null : s.dataset.f; pickedDay = null; render(); });
+document.querySelectorAll('#theme button').forEach(b => b.onclick = () => {
+  document.documentElement.dataset.theme = b.dataset.v;
+  document.querySelectorAll('#theme button').forEach(x => x.classList.toggle('on', x === b));
+});
+renderFlow(); render();
+</script>
+</body>
+</html>
