@@ -113,7 +113,7 @@ struct FolmiCommands: Commands {
             .keyboardShortcut("l", modifiers: [.command, .shift]).disabled(model.terminalSession == nil)
             Button("翻译选中内容", action: model.translateSelection).keyboardShortcut("t", modifiers: [.command, .control])
             Button("只看 AI 最近一轮的改动", action: { model.showTurn(model.turnChoices.first?.id) }).disabled(!model.hasSnapshot || model.turnChoices.isEmpty)
-            Button("全项目待办", action: { model.showTasks = true }).keyboardShortcut("t", modifiers: [.command, .shift])
+            Button("待办", action: { model.toggleTasks() }).keyboardShortcut("t", modifiers: [.command, .shift])
                 .disabled(!model.hasSnapshot)
             Button("项目总览", action: { model.showOverview = true }).keyboardShortcut("o", modifiers: [.command, .shift])
             Button("这份文档的演变史", action: { model.showDocHistory = true }).keyboardShortcut("y", modifiers: [.command, .shift])

@@ -497,6 +497,9 @@ enum MarkdownReaderPage {
     input.task:checked{background:var(--accent);border-color:var(--accent)}
     input.task:checked::after{content:"";width:.28em;height:.55em;border:solid var(--on-accent);border-width:0 2px 2px 0;transform:translateY(-.06em) rotate(45deg)}
     li.task-item:has(>input:checked)>p,li.task-item:has(>input:checked)>p *{color:var(--muted);text-decoration:line-through}
+    input.task.doing{border-color:var(--accent);background:linear-gradient(90deg,var(--accent) 50%,transparent 50%)}
+    input.task.dropped:checked{background:transparent;border-color:var(--muted)}input.task.dropped:checked::after{width:.55em;height:0;border-width:0 0 2px 0;border-color:var(--muted);transform:none}
+    .task-date{font-size:.8em;color:var(--muted);background:var(--code-bg);border-radius:5px;padding:.05em .4em;white-space:nowrap;text-decoration:none}
     hr{border:0;border-top:1px solid var(--border);margin:1.8em 0}
     .table{overflow-x:auto;margin:.4em 0 1.2em;border:1px solid var(--border);border-radius:10px}
     table{border-collapse:collapse;font-size:.9em;line-height:1.6;min-width:100%;font-variant-numeric:tabular-nums}

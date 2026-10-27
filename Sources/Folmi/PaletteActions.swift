@@ -32,7 +32,7 @@ extension FolmiModel {
             PaletteCommand(id: "changes", title: "显示改动列表", keywords: "changes 改动 git", enabled: open) { [weak self] in self?.showSideTab(.changes) },
             PaletteCommand(id: "history", title: "提交历史", keywords: "history log 历史 提交图", enabled: open) { [weak self] in self?.showContent(.history) },
             PaletteCommand(id: "turn", title: "只看 AI 最近一轮的改动", keywords: "replay claude codex ai 回放 轮次 每一轮 批次 turn", enabled: open && !turnChoices.isEmpty) { [weak self] in self?.showTurn(self?.turnChoices.first?.id) },
-            PaletteCommand(id: "tasks", title: "全项目待办", keywords: "tasks todo 待办 任务", enabled: open) { [weak self] in self?.showTasks = true },
+            PaletteCommand(id: "tasks", title: "待办", keywords: "tasks todo 待办 任务 日期 截止 全项目待办", enabled: open) { [weak self] in self?.showContent(.tasks) },
             PaletteCommand(id: "terminal", title: "显示 / 隐藏终端", keywords: "terminal 终端 shell", enabled: open) { [weak self] in self?.toggleTerminal() },
             PaletteCommand(id: "newTerminal", title: "新建终端标签", keywords: "terminal new 终端", enabled: open) { [weak self] in self?.newTerminalTab() },
             PaletteCommand(id: "hooks", title: "接入 agent（hooks / MCP）", keywords: "claude codex hooks mcp 接入 活动 撤回 guardrails 评论", enabled: open) { [weak self] in self?.showHooksSetup = true },
@@ -146,7 +146,8 @@ extension FolmiModel {
                 items.append(PaletteItem(id: "line:" + entry.id, kind: .heading, title: entry.text,
                                          subtitle: "\(entry.path) · H\(level)", action: .openLine(entry.path, entry.line)))
             case .task(let done) where !done:
-                items.append(PaletteItem(id: "line:" + entry.id, kind: .task, title: entry.text, subtitle: entry.path, action: .openLine(entry.path, entry.line)))
+                let day = entry.dates.day.map { " · \(entry.dates.due == nil ? "⏳" : "📅") \($0)" } ?? ""
+                items.append(PaletteItem(id: "line:" + entry.id, kind: .task, title: entry.text, subtitle: entry.path + day, action: .openLine(entry.path, entry.line)))
             default: break
             }
         }

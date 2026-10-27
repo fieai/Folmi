@@ -223,7 +223,8 @@ final class PaneColumnsTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         defer { window.orderOut(nil); window.close() }
         try await Task.sleep(nanoseconds: 600_000_000)
-        let text = try ScreenText.read(host, top: 90)
+        // The columns' own title row, below the card's page switcher.
+        let text = try ScreenText.read(host, top: 90, skip: 40)
         XCTAssertTrue(text.contains("差异"), text)
         XCTAssertTrue(text.contains((change.path as NSString).lastPathComponent), text)
         XCTAssertEqual(model.splitRoom[.editor], true, "1400 points leave room for a third column")

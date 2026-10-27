@@ -62,6 +62,8 @@ final class EditorWorkspace: ObservableObject {
     /// Caret and scroll per tab. Deliberately not published: it changes on every caret move and scroll frame, and
     /// publishing it re-rendered the whole window while typing or scrolling. `onSessionChange` reports it instead.
     var tabStates: [String: EditorTabState] = [:]
+    /// The task line the task page changed last (MarkdownTaskCompletion.swift).
+    var lastTaskLineEdit: TaskLineEdit?
     /// Called after caret or scroll state changed, so the owner can save the session later.
     var onSessionChange: (() -> Void)?
     /// "发送到终端" in the editor's right-click menu, with the text view's selection.
@@ -297,9 +299,10 @@ final class EditorWorkspace: ObservableObject {
               source.substring(with: NSRange(location: offset - 1, length: 1)) == "[",
               source.substring(with: NSRange(location: offset + 1, length: 1)) == "]" else { return }
         let mark = source.substring(with: NSRange(location: offset, length: 1))
-        guard [" ", "x", "X"].contains(mark) else { return }
+        // In progress (/) completes; done (x) and dropped (-) open again.
+        guard [" ", "/", "x", "X", "-"].contains(mark) else { return }
         let wasClean = !document.isDirty
-        updateText(id: documentID, text: source.replacingCharacters(in: NSRange(location: offset, length: 1), with: mark == " " ? "x" : " "))
+        updateText(id: documentID, text: source.replacingCharacters(in: NSRange(location: offset, length: 1), with: [" ", "/"].contains(mark) ? "x" : " "))
         if wasClean, selectedDocumentID == documentID { try saveSelected() }
     }
 

@@ -18,7 +18,7 @@ enum MarkdownEditing {
         var number: Int? { Int(marker.dropLast()) }
     }
 
-    private static let listPattern = try! NSRegularExpression(pattern: #"^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)(\[[ xX]\][ \t]+)?"#)
+    private static let listPattern = try! NSRegularExpression(pattern: #"^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)(\[[ xX/-]\][ \t]+)?"#)
     private static let quotePattern = try! NSRegularExpression(pattern: #"^([ \t]*)((?:>[ \t]?)+)"#)
     private static let rulePattern = try! NSRegularExpression(pattern: #"^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*$"#)
     private static let headingPattern = try! NSRegularExpression(pattern: #"^(#{1,6})[ \t]+"#)

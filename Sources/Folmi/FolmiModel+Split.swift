@@ -9,7 +9,7 @@ extension FolmiModel {
         switch pane {
         case .editor:
             guard let editor = editorWorkspace else { return "先打开一个项目" }
-            if content == .allChanges || content == .history || content == .calls { return "切到编辑或差异页后可以拆分" }
+            if content == .allChanges || content == .history || content == .tasks || content == .calls { return "切到编辑或差异页后可以拆分" }
             if !editor.columns.canSplit { return "最多拆成 \(PaneColumns.limit) 栏" }
             if content == .diff, fileDiffs.isEmpty { return "左侧先选一处改动" }
             if content == .editor, editor.selectedDocumentID == nil { return "先打开一个文件" }

@@ -5,13 +5,22 @@ import FolmiCore
 /// in the file tree. Built off the main thread; a rebuild re-reads only files whose size or date changed.
 struct MarkdownIndex: Sendable, Equatable {
     struct Entry: Sendable, Equatable, Identifiable {
+        /// `done` is true for every closed task, `[x]` and `[-]` alike: the progress rings count both as dealt with.
         enum Kind: Sendable, Equatable { case heading(Int), task(done: Bool) }
         let path: String
         /// 0-based line.
         let line: Int
         let kind: Kind
+        /// For a task, the title with its date markers taken out.
         let text: String
+        var status: TaskStatus = .open
+        var dates = TaskDates()
         var id: String { "\(path):\(line)" }
+        /// On the 待办 page: still to do, or done on a day written on the line.
+        var isListed: Bool {
+            guard case .task = kind else { return false }
+            return status.isOpen || (status == .done && dates.done != nil)
+        }
     }
     struct FileInfo: Sendable, Equatable {
         let size: Int
@@ -60,7 +69,7 @@ struct MarkdownIndex: Sendable, Equatable {
         return index
     }
 
-    /// Headings (ATX `#`) and task items (`- [ ]`, `* [x]`, `1. [ ]`) outside fenced code.
+    /// Headings (ATX `#`) and task items (`- [ ]`, `* [x]`, `1. [ ]`, `- [/]`, `- [-]`) outside fenced code.
     static func parse(_ text: String, path: String) -> [Entry] {
         var entries: [Entry] = []
         var fence: Substring?
@@ -88,12 +97,95 @@ struct MarkdownIndex: Sendable, Equatable {
                     body[..<dot].allSatisfy(\.isNumber), body[body.index(after: dot)...].first == " " {
                 body = body[body.index(dot, offsetBy: 2)...]
             } else { return }
-            guard body.count >= 3, body.hasPrefix("["), body.dropFirst(2).first == "]" else { return }
-            let mark = body.dropFirst().first!
-            guard mark == " " || mark == "x" || mark == "X" else { return }
-            let title = body.dropFirst(3).trimmingCharacters(in: .whitespaces)
-            entries.append(Entry(path: path, line: lineNumber, kind: .task(done: mark != " "), text: title.isEmpty ? "（空任务）" : title))
+            guard body.count >= 3, body.hasPrefix("["), body.dropFirst(2).first == "]",
+                  let status = TaskStatus(mark: body.dropFirst().first!) else { return }
+            let (title, dates) = TaskDates.split(body.dropFirst(3).trimmingCharacters(in: .whitespaces))
+            entries.append(Entry(path: path, line: lineNumber, kind: .task(done: !status.isOpen), text: title.isEmpty ? "（空任务）" : title,
+                                 status: status, dates: dates))
         }
         return entries
+    }
+}
+
+/// A task's checkbox, in Obsidian Tasks' notation: `[ ]`, `[/]` in progress, `[x]` done, `[-]` dropped.
+enum TaskStatus: Sendable, Equatable {
+    case open, inProgress, done, cancelled
+    init?(mark: Character) {
+        switch mark {
+        case " ": self = .open
+        case "/": self = .inProgress
+        case "x", "X": self = .done
+        case "-": self = .cancelled
+        default: return nil
+        }
+    }
+    var mark: Character {
+        switch self {
+        case .open: return " "
+        case .inProgress: return "/"
+        case .done: return "x"
+        case .cancelled: return "-"
+        }
+    }
+    var isOpen: Bool { self == .open || self == .inProgress }
+}
+
+/// The dates written on a task line, as Obsidian Tasks writes them (`📅 2026-10-30`). Kept as `yyyy-MM-dd` text,
+/// which sorts and compares as dates do, so nothing here depends on a time zone.
+struct TaskDates: Sendable, Equatable {
+    enum Kind: CaseIterable, Sendable { case due, scheduled, done
+        var marker: String {
+            switch self {
+            case .due: return "📅"
+            case .scheduled: return "⏳"
+            case .done: return "✅"
+            }
+        }
+    }
+    var due: String?
+    var scheduled: String?
+    var done: String?
+
+    subscript(kind: Kind) -> String? {
+        get { switch kind { case .due: due; case .scheduled: scheduled; case .done: done } }
+        set { switch kind { case .due: due = newValue; case .scheduled: scheduled = newValue; case .done: done = newValue } }
+    }
+
+    /// The day a task belongs to on a list: its deadline, else the day it was planned for.
+    var day: String? { due ?? scheduled }
+
+    static func key(_ date: Date, calendar: Calendar = .current) -> String { DailyStats.dayKey(date, calendar: calendar) }
+    static func date(_ key: String, calendar: Calendar = .current) -> Date? {
+        let parts = key.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+
+    private static let pattern = try! NSRegularExpression(pattern: #"\s*(📅|⏳|✅)\uFE0F?\s*(\d{4}-\d{2}-\d{2})"#)
+
+    /// The title without its date markers, and the dates. A marker written twice keeps the first.
+    static func split(_ text: String) -> (title: String, dates: TaskDates) {
+        guard text.contains("📅") || text.contains("⏳") || text.contains("✅") else { return (text, TaskDates()) }
+        let source = text as NSString
+        var dates = TaskDates()
+        for match in pattern.matches(in: text, range: NSRange(location: 0, length: source.length)) {
+            let value = source.substring(with: match.range(at: 2))
+            guard let kind = Kind.allCases.first(where: { $0.marker == source.substring(with: match.range(at: 1)) }), dates[kind] == nil else { continue }
+            dates[kind] = value
+        }
+        let title = pattern.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: source.length), withTemplate: "")
+        return (title.trimmingCharacters(in: .whitespaces), dates)
+    }
+
+    /// `line` with its `kind` date set to `value` (nil takes it out). A new date goes at the end of the line.
+    static func setting(_ kind: Kind, to value: String?, in line: String) -> String {
+        let source = line as NSString
+        let existing = pattern.matches(in: line, range: NSRange(location: 0, length: source.length))
+            .first { source.substring(with: $0.range(at: 1)) == kind.marker }
+        let written = value.map { " \(kind.marker) \($0)" } ?? ""
+        if let existing { return source.replacingCharacters(in: existing.range, with: written) }
+        guard value != nil else { return line }
+        let trimmed = line.replacingOccurrences(of: #"[ \t]+$"#, with: "", options: .regularExpression)
+        return trimmed + written
     }
 }

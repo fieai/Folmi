@@ -72,7 +72,6 @@ struct FolmiView: View {
         .sheet(isPresented: $model.showMemory) { MemorySheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showWorktrees) { WorktreesSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showRemotes) { RemotesSheet(model: model).sheetEntrance() }
-        .sheet(isPresented: $model.showTasks) { TasksSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showOverview) { ProjectOverviewSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showDocHistory) { DocHistorySheet(model: model).sheetEntrance() }
         .modifier(RefPrompts(model: model))

@@ -35,6 +35,7 @@ struct EditorCardTabs: View {
         switch model.content {
         case .diff: return model.fileDiffs.isEmpty ? nil : "\(model.fileDiffs.count) 个文件"
         case .allChanges: return model.snapshot.map { "\($0.files.count) 个文件" }
+        case .tasks: return model.currentIdeaTasks.map { "随手记 \($0.filter(\.entry.status.isOpen).count) 项没做完" }
         default: return nil
         }
     }
@@ -46,24 +47,27 @@ struct ContentModeSwitcher: View {
     @Namespace private var fill
     private static let modes: [(FolmiContent, String, String)] = [
         (.editor, "doc.text", "编辑（打开的文件）"), (.diff, "plus.forwardslash.minus", "差异（左侧选中的改动）"),
-        (.allChanges, "checklist", "全部改动（逐处验收）"), (.history, "clock", "历史（提交记录）")]
+        (.allChanges, "checklist", "全部改动（逐处验收）"), (.history, "clock", "历史（提交记录）"),
+        (.tasks, "checkmark.square", "待办（随手记里的待办，⌘⇧T）")]
 
     var body: some View {
         let _ = PerfLog.body("ContentModeSwitcher")
+        // 待办 gives up its title first, so the four review pages keep theirs a while longer on a narrow card.
         ViewThatFits(in: .horizontal) {
-            navigation(showTitles: true)
-            navigation(showTitles: false)
+            navigation(titled: Set(Self.modes.map(\.0)))
+            navigation(titled: Set(Self.modes.map(\.0)).subtracting([.tasks]))
+            navigation(titled: [])
         }
     }
 
-    private func navigation(showTitles: Bool) -> some View {
+    private func navigation(titled: Set<FolmiContent>) -> some View {
         HStack(spacing: 1) {
             ForEach(Self.modes, id: \.0) { mode, symbol, help in
                 let selected = model.content == mode
                 Button { model.showContent(mode) } label: {
                     HStack(spacing: 4) {
                         Image(systemName: symbol).font(.system(size: Metrics.iconSize, weight: .medium))
-                        if showTitles || selected {
+                        if titled.contains(mode) || selected {
                             Text(mode.rawValue).themedFont(.system(size: 12, weight: .medium), points: 12).fixedSize()
                         }
                     }
@@ -128,7 +132,7 @@ struct EditorCardPage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let _ = PerfLog.body("EditorCardPage")
-        // Switching 编辑 / 差异 / 全部改动 / 历史 cross-fades; the pages stay the same views otherwise.
+        // Switching 编辑 / 差异 / 全部改动 / 历史 / 待办 cross-fades; the pages stay the same views otherwise.
         // 编辑 and 差异 share one page, so moving between a file column and the 差异 column keeps both.
         let editorPage = model.content == .editor || model.content == .diff
         ZStack {
@@ -138,6 +142,8 @@ struct EditorCardPage: View {
                 AllChangesView(model: model).id(model.repositoryURL?.path).transition(.opacity)
             } else if model.content == .history {
                 HistoryView(model: model).id(model.repositoryURL?.path).transition(.opacity)
+            } else if model.content == .tasks {
+                TasksPage(model: model).id(model.repositoryURL?.path).transition(.opacity)
             } else if model.content == .calls {
                 CallMapPage(model: model).transition(.opacity)
             } else { DiffPane(model: model).transition(.opacity) }

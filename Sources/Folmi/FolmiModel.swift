@@ -13,7 +13,7 @@ struct ActivityEntry: Identifiable {
     let isError: Bool
     let projectPath: String?
 }
-enum FolmiContent: String, CaseIterable { case diff = "差异", editor = "编辑", allChanges = "全部改动", history = "历史", calls = "调用关系" }
+enum FolmiContent: String, CaseIterable { case diff = "差异", editor = "编辑", allChanges = "全部改动", history = "历史", tasks = "待办", calls = "调用关系" }
 
 @MainActor
 @Observable
@@ -122,6 +122,14 @@ final class FolmiModel {
     /// Size and date of each project's comment-replies.jsonl when last read.
     @ObservationIgnored var commentReplyStamps: [String: String?] = [:]
     var content: FolmiContent = .diff
+    /// Open tasks in every project's ideas/ (IdeaTasks.swift); nil until first read.
+    var ideaTasks: [ProjectTask]?
+    @ObservationIgnored var ideaTasksTask: Task<Void, Never>?
+    /// Notes in every project's ideas/, for the calendar on the 待办 page; nil until first read.
+    var ideaNotes: [IdeaNote]?
+    @ObservationIgnored var pendingProjectOpen: (root: String, open: @MainActor (FolmiModel) -> Void)?
+    /// Where ⌘⇧T goes back to from 待办.
+    @ObservationIgnored var contentBeforeTasks: FolmiContent = .editor
     /// Every changed file in one page: staged (HEAD → index) first, then unstaged (index → work tree).
     var allChanges: [FileDiff] = []
     var allChangesLoading = false
@@ -151,13 +159,13 @@ final class FolmiModel {
     var worktrees: [WorktreeStatus] = []
     @ObservationIgnored var worktreesRead: Date?
     var showWorktrees = false
+    /// 调用关系: the call graph, its center and the page's own state.
+    let callMap = CallMapState()
     /// The 远端 sheet: the project's remotes with their addresses, read when it opens and after each change.
     var showRemotes = false
     var remoteList: [GitRemote] = []
     /// A remote waiting for the delete confirmation, with what removing it takes away.
     var remoteRemoval: RemoteRecord?
-    /// 调用关系: the call graph, its center and the page's own state.
-    let callMap = CallMapState()
     @ObservationIgnored var historyRequest = UUID()
     @ObservationIgnored var commitRequest = UUID()
     static let historyLimit = 500
@@ -242,7 +250,6 @@ final class FolmiModel {
 
     // ⌘K, the Markdown index, tasks.
     var showPalette = false
-    var showTasks = false
     var showHooksSetup = false
     // AI activity from Claude Code hooks.
     var aiBatches: [AIBatch] = []
@@ -531,6 +538,7 @@ final class FolmiModel {
             } catch let error where FolmiModel.isNotRepository(error) { reportNotRepository(url) }
             catch { report(error, title: "打开项目失败") }
             busy = false
+            openPendingTaskLine()
             // The saved status is replaced right away; a project that can no longer be read says so.
             if cached != nil { refreshInBackground(reportingErrors: true) }
         }
@@ -786,7 +794,7 @@ final class FolmiModel {
     /// A click on the window outside an open sheet closes it, like a popover.
     func dismissSheets() {
         showDelivery = false; showPull = false; showStashes = false; showActivity = false; showAISettings = false; showPalette = false; showHooksSetup = false; showMemory = false; showWorktrees = false; showRemotes = false
-        showTasks = false; showOverview = false; showDocHistory = false; readerCommentDraft = nil; showQuickOpen = false; showProjectSearch = false; showSettings = false
+        showOverview = false; showDocHistory = false; readerCommentDraft = nil; showQuickOpen = false; showProjectSearch = false; showSettings = false
     }
     /// The file tree's 看改动: the change's diff, in the area that has it.
     func showChanges(ofPath path: String) {
@@ -823,10 +831,16 @@ final class FolmiModel {
             Task { await loadAllChanges() }
             return
         }
-        if requested == .calls { showCallMap(); return }
         if requested == .history {
             content = .history
             Task { await loadHistory() }
+            return
+        }
+        if requested == .calls { showCallMap(); return }
+        if requested == .tasks {
+            if content != .tasks { contentBeforeTasks = content }
+            content = .tasks
+            loadIdeaTasks()
             return
         }
         if requested == .editor {
@@ -838,6 +852,10 @@ final class FolmiModel {
                selectedFileIDs.count <= 1 || !selectedFileIDs.contains(path) { targetDiff(path: path) }
             content = .diff
         }
+    }
+    /// ⌘⇧T: 待办, and from there back to the page it came from.
+    func toggleTasks() {
+        showContent(content == .tasks ? (contentBeforeTasks == .tasks ? .editor : contentBeforeTasks) : .tasks)
     }
     /// "查看改动" from the editor: the file's diff in the editor card.
     func showChanges(of path: String) {

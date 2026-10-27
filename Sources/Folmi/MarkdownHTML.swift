@@ -492,15 +492,17 @@ private struct Renderer {
         for item in items {
             var content = item.lines
             var box = ""
-            if let first = content.first, let checked = taskState(first.text) {
+            if let first = content.first, let status = taskState(first.text) {
                 let prefix = first.text.prefix { $0 == " " }.count
-                box = "<input type=\"checkbox\" class=\"task\" data-offset=\"\(first.offset + prefix + 1)\"\(checked ? " checked" : "")>"
+                let kind = status == .inProgress ? " doing" : status == .cancelled ? " dropped" : ""
+                box = "<input type=\"checkbox\" class=\"task\(kind)\" data-offset=\"\(first.offset + prefix + 1)\"\(status.isOpen ? "" : " checked")>"
                 content[0] = first.dropping(units: prefix + 3).dropping(columns: 1)
             }
             let lastLine = item.lines.last(where: { !$0.isBlank }) ?? item.lines[0]
             let firstLine = SourceLine(text: "", number: item.lines[0].number, offset: 0)
             let className = box.isEmpty ? "" : " class=\"task-item\""
-            html += "<li\(className) \(range(firstLine, lastLine))>\(box)\(blocks(content[...]))</li>"
+            let body = box.isEmpty ? blocks(content[...]) : Self.taskDates(blocks(content[...]))
+            html += "<li\(className) \(range(firstLine, lastLine))>\(box)\(body)</li>"
         }
         html += "</\(tag)>\n"
         return end + 1
@@ -515,14 +517,22 @@ private struct Renderer {
         return false
     }
 
-    private func taskState(_ text: String) -> Bool? {
+    private func taskState(_ text: String) -> TaskStatus? {
         let trimmed = text.drop { $0 == " " }
-        guard trimmed.count >= 3, trimmed.hasPrefix("["), trimmed.dropFirst(2).first == "]" else { return nil }
-        let mark = trimmed.dropFirst().first!
-        guard mark == " " || mark == "x" || mark == "X" else { return nil }
+        guard trimmed.count >= 3, trimmed.hasPrefix("["), trimmed.dropFirst(2).first == "]",
+              let status = TaskStatus(mark: trimmed.dropFirst().first!) else { return nil }
         let after = trimmed.dropFirst(3)
         guard after.isEmpty || after.first == " " || after.first == "\t" else { return nil }
-        return mark != " "
+        return status
+    }
+
+    private static let taskDatePattern = try! NSRegularExpression(pattern: #"(📅|⏳|✅)\uFE0F?\s*(\d{4}-\d{2}-\d{2})"#)
+
+    /// A task's `📅 2026-10-30` as a quiet chip, the way the 待办 page shows it; the source text is unchanged.
+    static func taskDates(_ html: String) -> String {
+        guard html.contains("📅") || html.contains("⏳") || html.contains("✅") else { return html }
+        return taskDatePattern.stringByReplacingMatches(in: html, range: NSRange(location: 0, length: (html as NSString).length),
+                                                        withTemplate: "<span class=\"task-date\">$1 $2</span>")
     }
 
     // MARK: Paragraphs

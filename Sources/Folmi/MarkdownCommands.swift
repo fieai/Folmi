@@ -73,7 +73,7 @@ enum MarkdownCommands {
 
     struct SlashCommand: Equatable, Identifiable {
         enum Action: Equatable {
-            case paragraph, heading(Int), bullet, numbered, task, quote, rule, code, table, image, link, wiki
+            case paragraph, heading(Int), bullet, numbered, task, date(TaskDates.Kind), quote, rule, code, table, image, link, wiki
         }
         let id: String
         let title: String
@@ -94,6 +94,8 @@ enum MarkdownCommands {
         SlashCommand(id: "bullet", title: "无序列表", symbol: "list.bullet", hint: "- ", aliases: ["wuxuliebiao", "wxlb", "liebiao", "lb", "bullet", "ul", "list"], action: .bullet),
         SlashCommand(id: "numbered", title: "有序列表", symbol: "list.number", hint: "1. ", aliases: ["youxuliebiao", "yxlb", "bianhao", "bh", "ol", "number", "numbered"], action: .numbered),
         SlashCommand(id: "task", title: "待办", symbol: "checklist", hint: "- [ ]", aliases: ["daiban", "db", "renwu", "rw", "todo", "task", "checkbox"], action: .task),
+        SlashCommand(id: "due", title: "截止日期", symbol: "calendar", hint: "📅", aliases: ["jiezhi", "jz", "riqi", "rq", "due", "deadline", "date", "日期"], action: .date(.due)),
+        SlashCommand(id: "scheduled", title: "哪天做", symbol: "hourglass", hint: "⏳", aliases: ["natianzuo", "ntz", "jihua", "jh", "scheduled", "plan", "计划"], action: .date(.scheduled)),
         SlashCommand(id: "quote", title: "引用", symbol: "text.quote", hint: "> ", aliases: ["yinyong", "yy", "quote", "blockquote"], action: .quote),
         SlashCommand(id: "rule", title: "分隔线", symbol: "minus", hint: "---", aliases: ["fengexian", "fgx", "divider", "hr", "line", "rule"], action: .rule),
         SlashCommand(id: "code", title: "代码块", symbol: "chevron.left.forwardslash.chevron.right", hint: "```", aliases: ["daimakuai", "daima", "dm", "dmk", "code", "codeblock"], action: .code),
@@ -152,7 +154,7 @@ enum MarkdownCommands {
     }
 
     /// The edit a `/` command makes, replacing its trigger. Nil for `.image`, which needs a file first (`imageEdit`).
-    static func slashEdit(_ action: SlashCommand.Action, text: String, trigger: NSRange) -> Edit? {
+    static func slashEdit(_ action: SlashCommand.Action, text: String, trigger: NSRange, today: String = TaskDates.key(Date())) -> Edit? {
         let source = text as NSString
         guard NSMaxRange(trigger) <= source.length else { return nil }
         // The trigger's line without its newline, and the same line with the trigger taken out.
@@ -186,6 +188,12 @@ enum MarkdownCommands {
         case .bullet: return prefixed("- ")
         case .numbered: return prefixed("1. ")
         case .task: return prefixed("- [ ] ")
+        case .date(let kind):
+            // The date is selected, so typing another one replaces it; a space before it unless one is there.
+            let spaced = trigger.location > line.location && ![32, 9].contains(source.character(at: trigger.location - 1))
+            let marker = (spaced ? " " : "") + kind.marker + " "
+            return Edit(range: trigger, replacement: marker + today,
+                        selection: NSRange(location: trigger.location + (marker as NSString).length, length: (today as NSString).length))
         case .quote: return prefixed("> ")
         case .rule:
             // The new line after the rule is where typing goes on.
@@ -219,7 +227,7 @@ enum MarkdownCommands {
 
     /// The text of a line after its heading, list, task or quote prefix (indentation kept out too).
     static func strippedBlockPrefix(_ line: String) -> (text: String, prefix: String) {
-        let patterns = [#"^[ \t]*#{1,6}[ \t]+"#, #"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?"#, #"^[ \t]*(?:>[ \t]?)+"#]
+        let patterns = [#"^[ \t]*#{1,6}[ \t]+"#, #"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX/-]\][ \t]+)?"#, #"^[ \t]*(?:>[ \t]?)+"#]
         for pattern in patterns {
             if let range = line.range(of: pattern, options: .regularExpression) {
                 return (String(line[range.upperBound...]), String(line[range]))
