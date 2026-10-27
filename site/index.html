@@ -502,7 +502,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
   <div class="wrap">
     <div class="kicker">一个循环</div>
     <h2>AI 照常写，<br>你按自己的节奏看。</h2>
-    <p class="sub">Folmi 不拦着 AI，也不给它加审批。它写完一轮，你看一轮；没看完的就留着，下次接着看。</p>
+    <p class="sub">Folmi 不给 AI 加审批，它照常写。它写完一轮，你看一轮；没看完的就留着，下次接着看。</p>
     <ol class="loop" style="padding:0">
       <li class="reveal"><h3>AI 改完</h3><p>Claude Code、Codex 在终端里改完，Folmi 马上就看到；窗口在后台时发通知。</p></li>
       <li class="reveal"><h3>一处一处看</h3>
@@ -637,12 +637,14 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
         <div>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M7.3 10.9 16.7 6.1M7.3 13.1l9.4 4.8"/></svg></div>
           <h3>这处改动牵连到哪</h3>
-          <p>AI 改了一个函数，改动上方就写出它被几处调用；删掉或改了名，旧名字还有谁在用；参数改了，哪几处调用没跟着改。按 <code>⌃⌥H</code> 看一个函数谁调用它、它又调用了谁，能顺着 import 别名、路径别名、再导出找过去。支持 JS、TS 和 Python。</p>
+          <p>AI 改了一个函数，改动上方就写出它被几处调用；删掉或改了名，旧名字还有谁在用；参数改了，哪几处调用没跟着改。AI 一轮改完准备结束时，Folmi 先查一遍，有落下的调用就把清单交回给它，改好再结束；AI 也能通过 MCP 自己查谁在调用。按 <code>⌃⌥H</code> 看一个函数谁调用它、它又调用了谁，能顺着 import 别名、路径别名找过去。支持 JS、TS 和 Python。</p>
         </div>
         <div class="mini-list">
           <div>影响 <code>loadInvoice 被 3 处调用</code></div>
           <div>✗ <code>getOrder 改名为 loadOrder，旧名字还有 2 处在调用</code></div>
           <div>✗ <code>参数 (id) → (id, currency)，2 处没跟着改</code></div>
+          <div>↩ 交回 AI <code>先改好这 2 处再结束</code></div>
+          <div>MCP <code>callers · callees · change_impact</code></div>
           <div>⌃⌥H <code>上下游 · 关系图</code></div>
         </div>
       </div>
@@ -743,7 +745,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
           <tr><th>它是什么</th><td class="us">看改动、收改动的 macOS 原生应用</td><td>带 AI 的代码编辑器，基于 VS Code</td><td>通用代码编辑器，靠扩展接 AI</td></tr>
           <tr><th>谁来写代码</th><td class="us">终端里的 Claude Code、Codex，或任何别的 AI</td><td>主要是 Cursor 自带的 agent</td><td>Copilot 或其他扩展</td></tr>
           <tr><th>看 AI 的改动</th><td class="us">一处一处过，空格 / ⏎ / ⌫ 全用键盘；依赖、配置、大段删除排在前面，并写明原因</td><td>在编辑器里逐块接受或拒绝自带 agent 的改动</td><td>在差异编辑器里保留或撤销 Copilot 的改动</td></tr>
-          <tr><th>改动牵连到哪</th><td class="us">写在改动上方：改了的函数被几处调用、改名后旧名字还有谁在用、参数改了调用方有没有跟着改</td><td colspan="2">用「查找所有引用」一个个查</td></tr>
+          <tr><th>改动牵连到哪</th><td class="us">写在改动上方：改了的函数被几处调用、改名后旧名字还有谁在用、参数改了调用方有没有跟着改；AI 结束一轮前先自查一遍</td><td colspan="2">用「查找所有引用」一个个查</td></tr>
           <tr><th>终端里 Claude Code / Codex 改的文件</th><td class="us">按轮次接入：整批退回、按轮次看、拦危险命令</td><td colspan="2">当作普通文件改动，在源代码管理面板里看</td></tr>
           <tr><th>反馈给 AI</th><td class="us">评论带文件和行号一键发回终端；反复丢弃的改动归纳成规则写进 CLAUDE.md / AGENTS.md</td><td>在自带的对话里说</td><td>在 Copilot 对话里说</td></tr>
           <tr><th>AI 写的 Markdown</th><td class="us">默认阅读视图：公式、Mermaid、渲染后的差异、大纲、文档历史</td><td colspan="2">Markdown 预览；公式和 Mermaid 通常要装扩展</td></tr>
