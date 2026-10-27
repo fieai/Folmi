@@ -43,12 +43,12 @@ final class MCPServerTests: XCTestCase {
         let list = try send(server, ["jsonrpc": "2.0", "id": 2, "method": "tools/list"])
         let names = ((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
         XCTAssertEqual(Set(names), ["list_review_comments", "mark_comment_addressed", "review_status", "recent_decisions", "show_in_folmi",
-                                    "callers", "callees", "change_impact"])
+                                    "callers", "callees", "change_impact", "endpoints"])
         XCTAssertFalse(names.contains { $0.contains("commit") || $0.contains("stage") || $0.contains("push") })
         let readOnly = ((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.filter {
             ($0["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool == true
         }.compactMap { $0["name"] as? String } ?? []
-        XCTAssertEqual(Set(readOnly), ["list_review_comments", "review_status", "recent_decisions", "callers", "callees", "change_impact"])
+        XCTAssertEqual(Set(readOnly), ["list_review_comments", "review_status", "recent_decisions", "callers", "callees", "change_impact", "endpoints"])
         let unknown = try send(server, ["jsonrpc": "2.0", "id": 3, "method": "resources/list"])
         XCTAssertEqual((unknown["error"] as? [String: Any])?["code"] as? Int, -32601)
     }
@@ -105,6 +105,39 @@ final class MCPServerTests: XCTestCase {
         XCTAssertEqual((file["changedFunctions"] as? [[String: Any]])?.compactMap { $0["function"] as? String }, ["loadOrder", "formatTotal"])
         XCTAssertTrue((object["summary"] as? String ?? "").hasPrefix("1 call(s) still use"), "\(object["summary"] ?? "")")
         XCTAssertTrue(try call(server, "change_impact", ["paths": ["src/page.ts"]]).text.contains("No changed"), "filtered to an unchanged file")
+    }
+
+    /// Another language, in a project the user indexed with CodeGraph: callers and callees come from `codegraph`
+    /// (a stand-in script here that prints what the real one prints, including its plain-text "not found").
+    func testOtherLanguagesComeFromCodeGraph() throws {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(".codegraph"), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: root.appendingPathComponent(".codegraph/codegraph.db").path, contents: Data())
+        try Data("package main\nfunc Load() {}\n".utf8).write(to: root.appendingPathComponent("main.go"))
+        let script = root.appendingPathComponent("codegraph")
+        try Data("""
+        #!/bin/sh
+        [ -n "$DO_NOT_TRACK" ] || { echo telemetry; exit 3; }
+        if [ "$2" != "Load" ]; then echo "Symbol \\"$2\\" not found"; exit 0; fi
+        if [ "$1" = callers ]; then list='"callers":[{"name":"main","kind":"function","filePath":"'"$5"'/cmd/main.go","startLine":7,"relationships":["calls"]}]'
+        else list='"callees":[]'; fi
+        echo '{"symbol":"Load","targets":[{"name":"Load","kind":"function","filePath":"main.go","startLine":2}],"ambiguous":false,'"$list"',"total":1,"truncated":false}'
+        """.utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let calls = try XCTUnwrap(try CodeGraphTool.calls(.callers, of: "Load", root: root, executable: script.path))
+        XCTAssertEqual(calls.target.path, "main.go")
+        XCTAssertEqual(calls.callers?.map(\.path), ["cmd/main.go"], "absolute paths come back relative to the project")
+        XCTAssertNil(try CodeGraphTool.calls(.callers, of: "Nope", root: root, executable: script.path), "its text answer means not found")
+
+        let server = server()
+        server.locateCodeGraph = { script.path }
+        var reply = try call(server, "callers", ["function": "Load", "file": "main.go"])
+        XCTAssertFalse(reply.error, reply.text)
+        XCTAssertTrue(reply.text.contains("CodeGraph") && reply.text.contains("\"file\" : \"cmd/main.go\""), reply.text)
+        reply = try call(server, "callees", ["function": "Load"])
+        XCTAssertFalse(reply.error, "no JS / TS / Python here: CodeGraph answers: \(reply.text)")
+        reply = try call(server, "callers", ["function": "Nope"])
+        XCTAssertTrue(reply.error, reply.text)
     }
 
     func testNewSideLinesFromAZeroContextDiff() {

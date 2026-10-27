@@ -7,7 +7,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class CallMapState {
-    enum Mode: String, CaseIterable { case tree = "上下游", graph = "关系图" }
+    enum Mode: String, CaseIterable { case tree = "上下游", graph = "关系图", endpoints = "接口" }
     var root: String?
     var graph: CallGraph?
     @ObservationIgnored var cache = CallGraphCache()
@@ -27,6 +27,29 @@ final class CallMapState {
     var removed: [String: [RemovedCallImpact]] = [:]
     /// Functions each diff gave new parameters, with every call checked; keyed like `removed`.
     var signatures: [String: [SignatureImpact]] = [:]
+    /// Symbol ids of the functions the latest AI turn changed, marked 本轮改过 in both views.
+    var turnChanged: Set<String> = []
+    /// A function in another language, as CodeGraph sees it; shown instead of the call map's own views.
+    var codeGraph: CodeGraphCenter?
+    var codeGraphTrail: [CodeGraphTool.Node] = []
+    var codeGraphLoading = false
+    /// Where `codegraph` is installed, looked up once ("" when it is not).
+    @ObservationIgnored var codeGraphExecutable: String?
+    /// Back-end routes paired with front-end requests, here and in linked projects (接口).
+    var endpoints: EndpointMap?
+    /// The endpoint 影响 asked to show, opened in the 接口 list.
+    var endpointFocus: String?
+    /// Linked projects' outlines, so a rebuild rereads only their changed files.
+    @ObservationIgnored var linkedCaches: [String: CallGraphCache] = [:]
+}
+
+/// One function with CodeGraph's callers and callees of it.
+struct CodeGraphCenter: Equatable {
+    let target: CodeGraphTool.Node
+    let callers: [CodeGraphTool.Node]
+    let callees: [CodeGraphTool.Node]
+    let ambiguous: Bool
+    let truncated: Bool
 }
 
 extension FolmiModel {
@@ -42,7 +65,12 @@ extension FolmiModel {
     /// The function at `location` in `path` (the editor's text), centered on the 调用关系 page.
     func showCalls(path: String, text: String, location: Int) {
         guard Self.callMapExtensions.contains((path as NSString).pathExtension.lowercased()) else {
-            editorWorkspace?.showNotice("调用关系目前支持 JS、TS 和 Python 文件")
+            // Other languages: CodeGraph answers, when the user has it and has indexed this project.
+            if let root = repositoryURL, CodeGraphTool.isIndexed(root), let word = Self.word(in: text, at: location).0 {
+                showCodeGraph(name: word, file: path)
+            } else {
+                editorWorkspace?.showNotice("调用关系自带 JS、TS 和 Python；其他语言要装 CodeGraph，并在项目里运行过 codegraph init")
+            }
             return
         }
         let (word, line) = Self.word(in: text, at: location)
@@ -89,6 +117,7 @@ extension FolmiModel {
             callMap.buildTask?.cancel()
             callMap.root = root.path; callMap.graph = nil; callMap.cache = CallGraphCache(); callMap.builtAt = nil
             callMap.focus = nil; callMap.trail = []; callMap.expanded = []; callMap.problem = nil
+            callMap.codeGraph = nil; callMap.codeGraphTrail = []; callMap.endpoints = nil; callMap.endpointFocus = nil
         }
         if !force, callMap.graph != nil, callMap.builtAt == key { return }
         if let running = callMap.buildTask { await running.value; if callMap.builtAt == key, !force { return } }
@@ -102,6 +131,8 @@ extension FolmiModel {
             let (graph, saved) = await Task.detached(priority: .userInitiated) { CallGraph.build(root: root, files: files, cache: cache) }.value
             guard let self, self.repositoryURL == root else { return }
             self.callMap.graph = graph; self.callMap.cache = saved; self.callMap.builtAt = key; self.callMap.building = false
+            self.callMap.turnChanged = self.turnChangedSymbols(graph, root: root)
+            await self.refreshEndpoints(graph, root: root)
             // The center may have moved lines or gone; keep it by name.
             if let focus = self.callMap.focus, graph.index(of: focus) == nil {
                 self.callMap.focus = graph.symbols.first { $0.path == focus.path && $0.qualifiedName == focus.qualifiedName }
@@ -179,7 +210,44 @@ extension FolmiModel {
         focusCall(symbol)
     }
 
+    /// A function CodeGraph knows, centered: its callers and callees, asked in the background. `file` narrows a
+    /// name several definitions share; `back` is set when going back, so the trail does not grow.
+    func showCodeGraph(name: String, file: String?, back: Bool = false) {
+        guard let root = repositoryURL else { return }
+        showCallMap()
+        if !back, let current = callMap.codeGraph?.target { callMap.codeGraphTrail.append(current) }
+        callMap.codeGraphLoading = true; callMap.problem = nil
+        let known = callMap.codeGraphExecutable
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { () -> (String, Result<CodeGraphCenter?, Error>) in
+                let executable = known ?? CodeGraphTool.locate() ?? ""
+                guard !executable.isEmpty else { return ("", .success(nil)) }
+                return (executable, Result {
+                    guard let up = try CodeGraphTool.calls(.callers, of: name, file: file, root: root, executable: executable),
+                          let down = try CodeGraphTool.calls(.callees, of: name, file: file, root: root, executable: executable) else { return nil }
+                    return CodeGraphCenter(target: up.target, callers: up.callers ?? [], callees: down.callees ?? [],
+                                           ambiguous: up.ambiguous, truncated: up.truncated || down.truncated)
+                })
+            }.value
+            guard repositoryURL == root else { return }
+            callMap.codeGraphExecutable = result.0
+            callMap.codeGraphLoading = false
+            switch result.1 {
+            case .success(let center?): callMap.codeGraph = center; callMap.focus = nil
+            case .success(nil):
+                callMap.problem = result.0.isEmpty ? "没找到 codegraph 命令。装好 CodeGraph 后再试。" : "CodeGraph 里没有叫 \(name) 的函数。"
+            case .failure(let error): callMap.problem = "CodeGraph 出错：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func codeGraphBack() {
+        guard let previous = callMap.codeGraphTrail.popLast() else { return }
+        showCodeGraph(name: previous.name, file: previous.path, back: true)
+    }
+
     func focusCall(_ symbol: CodeSymbol) {
+        callMap.codeGraph = nil; callMap.codeGraphTrail = []
         if let current = callMap.focus, current != symbol { callMap.trail.append(current) }
         callMap.focus = symbol
         callMap.query = ""; callMap.problem = nil; callMap.expanded = []
@@ -188,6 +256,25 @@ extension FolmiModel {
     func callMapBack() {
         guard let previous = callMap.trail.popLast() else { return }
         callMap.focus = previous; callMap.expanded = []
+    }
+
+    /// A click on the path above the graph: back to that center, dropping the ones visited after it.
+    func callMapJump(to index: Int) {
+        guard callMap.trail.indices.contains(index) else { return }
+        callMap.focus = callMap.trail[index]; callMap.trail.removeSubrange(index...); callMap.expanded = []
+    }
+
+    /// The functions the latest AI turn (not taken back) changed: its touched files against their copies from
+    /// before the turn.
+    func turnChangedSymbols(_ graph: CallGraph, root: URL) -> Set<String> {
+        guard let gitDir = aiGitDir, let batch = aiBatches.last(where: { !$0.paths.isEmpty && !$0.undone }) else { return [] }
+        let pre = AIEventStore.batch(batch.id, gitDir: gitDir).appendingPathComponent("pre", isDirectory: true)
+        var before: [String: Data?] = [:]
+        for path in batch.paths where SourceLanguage.of(path: path) != nil {
+            if AIEventStore.isAbsent(path, in: pre) { before[path] = .some(nil); continue }
+            if let data = try? Data(contentsOf: pre.appendingPathComponent(path)) { before[path] = data }
+        }
+        return before.isEmpty ? [] : graph.changedSymbols(before: before, root: root)
     }
 
     /// Opens `path` at `line` in the editor.
@@ -217,14 +304,18 @@ struct CallMapPage: View {
             }
             Divider()
             Group {
-                if let graph = state.graph {
+                if state.mode == .endpoints, let graph = state.graph {
+                    EndpointsView(model: model, map: state.endpoints ?? .empty, graph: graph)
+                } else if let center = state.codeGraph, state.query.isEmpty {
+                    CodeGraphCallsView(model: model, center: center)
+                } else if let graph = state.graph {
                     if !state.query.isEmpty { results(graph.search(state.query)) }
                     else if graph.isEmpty { panePlaceholder(symbol: "point.3.connected.trianglepath.dotted", title: "没有可以分析的文件",
                                                             detail: "调用关系目前读 JS、TS 和 Python 文件，这个项目里没有。") }
                     else if let focus = state.focus {
                         switch state.mode {
                         case .tree: CallTreeView(model: model, graph: graph, focus: focus)
-                        case .graph: CallGraphView(model: model, graph: graph, focus: focus)
+                        case .graph, .endpoints: CallGraphView(model: model, graph: graph, focus: focus)
                         }
                     } else { start(graph) }
                 } else {
@@ -240,18 +331,29 @@ struct CallMapPage: View {
         .background(Color.theme(theme, \.card))
         .task(id: model.snapshot?.fingerprint) { await model.ensureCallGraph() }
         .onKeyPress(.delete) {
-            guard !searching, !state.trail.isEmpty else { return .ignored }
+            guard !searching else { return .ignored }
+            if state.codeGraph != nil { guard !state.codeGraphTrail.isEmpty else { return .ignored }; model.codeGraphBack(); return .handled }
+            guard !state.trail.isEmpty else { return .ignored }
             model.callMapBack(); return .handled
         }
     }
 
     private func header(_ state: CallMapState) -> some View {
         HStack(spacing: 8) {
-            Button { model.callMapBack() } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(.borderless).disabled(state.trail.isEmpty).help("回到上一个函数（⌫）")
-            if let focus = state.focus {
+            Button { state.codeGraph != nil ? model.codeGraphBack() : model.callMapBack() } label: { Image(systemName: "chevron.left") }
+                .buttonStyle(.borderless).disabled(state.codeGraph != nil ? state.codeGraphTrail.isEmpty : state.trail.isEmpty)
+                .help("回到上一个函数（⌫）")
+            if let center = state.codeGraph {
+                Text(center.target.name).themedFont(.body.weight(.semibold), points: 13).lineLimit(1).truncationMode(.middle)
+                Button("\(center.target.fileName):\(center.target.line)") { model.openCallSite(center.target.path, line: center.target.line) }
+                    .buttonStyle(.link).themedFont(.caption, points: 10)
+                Text("来自 CodeGraph").themedFont(.caption2, points: 9).foregroundStyle(.secondary)
+                    .padding(.horizontal, 4).padding(.vertical, 1).themedCapsule(ThemeColor(token: .selectedFill))
+            } else if let focus = state.focus {
+                trailPath(state.trail)
                 Image(systemName: CallSymbolIcon.name(focus.kind)).foregroundStyle(.secondary)
                 Text(focus.qualifiedName).themedFont(.body.weight(.semibold), points: 13).lineLimit(1).truncationMode(.middle)
+                if state.turnChanged.contains(focus.id) { CallTurnTag() }
                 Button("\(focus.fileName):\(focus.line)") { model.openCallSite(focus.path, line: focus.line) }
                     .buttonStyle(.link).themedFont(.caption, points: 10).help("打开 \(focus.path) 第 \(focus.line) 行")
             } else {
@@ -264,8 +366,8 @@ struct CallMapPage: View {
             Picker("", selection: Binding(get: { state.mode }, set: { state.mode = $0 })) {
                 ForEach(CallMapState.Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 130)
-            if state.building { ProgressView().controlSize(.small) }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+            if state.building || state.codeGraphLoading { ProgressView().controlSize(.small) }
             else {
                 Button { Task { await model.ensureCallGraph(force: true) } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless).help("重新读一遍项目")
@@ -280,6 +382,19 @@ struct CallMapPage: View {
             }
         }
         .padding(.bottom, state.graph == nil ? 0 : 12)
+    }
+
+    /// The centers clicked through to get here, the last three, each a way back.
+    @ViewBuilder
+    private func trailPath(_ trail: [CodeSymbol]) -> some View {
+        let shown = Array(trail.enumerated().suffix(3))
+        if trail.count > shown.count { Text("…").foregroundStyle(.tertiary) }
+        ForEach(shown, id: \.offset) { index, symbol in
+            Button(symbol.name) { model.callMapJump(to: index) }
+                .buttonStyle(.link).themedFont(.callout, points: 12).lineLimit(1).frame(maxWidth: 140)
+                .help("回到 \(symbol.qualifiedName)")
+            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+        }
     }
 
     private func results(_ found: [CodeSymbol]) -> some View {
@@ -321,6 +436,8 @@ struct CallImpactRow: View {
     let impacts: [CallImpact]
     var removed: [RemovedCallImpact] = []
     var signatures: [SignatureImpact] = []
+    /// Endpoints whose handlers the change touches, with how many front-end requests reach each.
+    var endpoints: [Endpoint] = []
     @State private var openRemoved: String?
     private static let shown = 4
 
@@ -331,6 +448,7 @@ struct CallImpactRow: View {
             // A name callers still use but that is gone comes first: it is the one that breaks.
             ForEach(removed.sorted { $0.sites.count > $1.sites.count }) { item in removedChip(item) }
             ForEach(signatures.sorted { $0.broken.count > $1.broken.count }) { item in signatureChip(item) }
+            ForEach(endpoints) { endpoint in endpointChip(endpoint) }
             ForEach(impacts.prefix(Self.shown)) { impact in
                 Button { model.showCallMap(for: impact.symbol) } label: {
                     (Text(impact.symbol.qualifiedName).font(.system(size: 11, design: .monospaced))
@@ -351,6 +469,20 @@ struct CallImpactRow: View {
         .padding(.horizontal, 12).padding(.vertical, 5)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("影响")
+    }
+
+    private func endpointChip(_ endpoint: Endpoint) -> some View {
+        let uses = model.callMap.endpoints?.uses(of: endpoint) ?? []
+        return Button { model.showEndpoint(endpoint) } label: {
+            (Text("接口 ") + Text(endpoint.title).font(.system(size: 11, design: .monospaced))
+             + Text(uses.isEmpty ? " 没找到前端调用" : " 前端 \(uses.count) 处在调"))
+                .themedFont(.caption, points: 10).lineLimit(1)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .themedCapsule(ThemeColor(token: uses.isEmpty ? .selectedFill : .modified, opacity: uses.isEmpty ? 1 : 0.14))
+        }
+        .buttonStyle(.plain)
+        .help(uses.isEmpty ? "这处改动在这个接口的处理函数里；没认出前端哪里调用它"
+              : "这处改动在这个接口的处理函数里。调用它的：" + uses.prefix(8).map { "\($0.caller)（\(($0.file as NSString).lastPathComponent):\($0.line)）" }.joined(separator: "、"))
     }
 
     private func removedChip(_ item: RemovedCallImpact) -> some View {
@@ -511,6 +643,69 @@ struct CallSymbolLabel: View {
     }
 }
 
+/// 本轮改过: the latest AI turn changed this function.
+struct CallTurnTag: View {
+    var body: some View {
+        Text("本轮改过").themedFont(.caption2, points: 9).foregroundStyle(ThemeColor(token: .modified))
+            .padding(.horizontal, 4).padding(.vertical, 1)
+            .overlay(Capsule().stroke(ThemeColor(token: .modified), lineWidth: 1))
+            .help("AI 最近一轮改了这个函数")
+    }
+}
+
+// MARK: - CodeGraph
+
+/// Callers and callees from CodeGraph, one level, for a language the call map does not read. A click centers the
+/// function; its location opens the definition.
+private struct CodeGraphCallsView: View {
+    let model: FolmiModel
+    let center: CodeGraphCenter
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                column(center.callers.isEmpty ? "没找到调用它的地方" : "谁调用它（\(center.callers.count)）", center.callers,
+                       empty: "没找到，不代表没人用。CodeGraph 的索引由它自己更新，可能比磁盘上的文件旧。")
+                Divider()
+                column(center.callees.isEmpty ? "它没有调用别的函数" : "它调用了谁（\(center.callees.count)）", center.callees,
+                       empty: "CodeGraph 没记下它调用的函数。")
+            }
+            Text((center.ambiguous ? "有几个同名的定义，列的是它们合起来的。" : "") + (center.truncated ? "只列了前 100 个。" : "")
+                 + "来自 CodeGraph 的索引，Folmi 只读不改；位置是函数定义所在的行。")
+                .themedFont(.caption2, points: 9).foregroundStyle(.tertiary).frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+        }
+    }
+
+    private func column(_ title: String, _ nodes: [CodeGraphTool.Node], empty: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title).themedFont(.caption.weight(.semibold), points: 10).foregroundStyle(.secondary)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if nodes.isEmpty { Text(empty).themedFont(.caption, points: 10).foregroundStyle(.tertiary).padding(12) }
+                    ForEach(nodes) { node in
+                        HStack(spacing: 6) {
+                            Button { model.showCodeGraph(name: node.name, file: node.path) } label: {
+                                Text(node.name).themedFont(.callout, points: 12).lineLimit(1).truncationMode(.middle)
+                            }
+                            .buttonStyle(.plain).help("以它为中心展开")
+                            if !node.relationships.isEmpty, node.relationships != ["calls"] {
+                                Text(node.relationships.joined(separator: " · ")).themedFont(.caption2, points: 9).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 6)
+                            Button("\(node.fileName):\(node.line)") { model.openCallSite(node.path, line: node.line) }
+                                .buttonStyle(.link).themedFont(.caption, points: 10).lineLimit(1).help("打开 \(node.path)")
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 3)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
 // MARK: - 上下游
 
 private enum CallDirection { case up, down }
@@ -586,6 +781,7 @@ private struct CallTreeRow: View {
                         .padding(.horizontal, 4).padding(.vertical, 1).themedCapsule(ThemeColor(token: .selectedFill))
                 }
                 if cycle { Text("↺ 递归").themedFont(.caption2, points: 9).foregroundStyle(.tertiary) }
+                if let symbol = link.symbol, model.callMap.turnChanged.contains(symbol.id) { CallTurnTag() }
                 Spacer(minLength: 6)
                 Button(location.label) { model.openCallSite(location.path, line: location.line) }
                     .buttonStyle(.link).themedFont(.caption, points: 10).lineLimit(1)
@@ -704,6 +900,34 @@ private struct GraphPanSurface: NSViewRepresentable {
     }
 }
 
+/// Row order in the 关系图 with fewer crossing lines: each outer column follows the rows of the boxes it links to,
+/// then the inner column follows the outer one, twice over (the barycenter method). Ties keep their order, so the
+/// same graph always comes out the same.
+enum CallGraphRows {
+    static func untangle(_ columns: [Int: [String]], links: [(String, String)]) -> [Int: [String]] {
+        var columns = columns
+        var neighbours: [String: [String]] = [:]
+        for (a, b) in links { neighbours[a, default: []].append(b); neighbours[b, default: []].append(a) }
+        func order(_ column: Int, by other: Int) {
+            guard let ids = columns[column], let others = columns[other], !others.isEmpty else { return }
+            let rows = Dictionary(others.enumerated().map { ($1, Double($0)) }, uniquingKeysWith: { first, _ in first })
+            let keys = ids.enumerated().map { index, id -> (Double, Int) in
+                let linked = (neighbours[id] ?? []).compactMap { rows[$0] }
+                // An unlinked box keeps its place, scaled to the other column's height.
+                let center = linked.isEmpty ? Double(index) * Double(others.count) / Double(max(ids.count, 1))
+                                            : linked.reduce(0, +) / Double(linked.count)
+                return (center, index)
+            }
+            columns[column] = keys.sorted { $0 < $1 }.map { ids[$0.1] }
+        }
+        for _ in 0..<2 {
+            order(0, by: 1); order(4, by: 3)
+            order(1, by: 0); order(3, by: 4)
+        }
+        return columns
+    }
+}
+
 /// The center with two levels of callers on the left and two of callees on the right. Click a box to center it;
 /// drag (or swipe) to move around, ⌘-scroll or pinch to zoom.
 private struct CallGraphView: View {
@@ -728,9 +952,17 @@ private struct CallGraphView: View {
         var row = 0
     }
 
+    /// One line between two boxes: left to right, how sure, and whether it is a call or a function passed along.
+    private struct Edge {
+        let from: String
+        let to: String
+        let certain: Bool
+        let passed: Bool
+    }
+
     private struct Layout {
         var nodes: [Node] = []
-        var edges: [(String, String)] = []
+        var edges: [Edge] = []
         var hidden: [Int: Int] = [:]
     }
 
@@ -744,29 +976,35 @@ private struct CallGraphView: View {
         }
         var placed: [Int: [Node]] = [:]
         var known: Set<String> = [focus.id]
-        func add(_ node: Node, from: String, toward center: Bool) {
-            result.edges.append(center ? (node.id, from) : (from, node.id))
+        func add(_ node: Node, _ link: CallLink, from: String, toward center: Bool) {
+            let passed = link.kinds.contains(.reference) && !link.kinds.contains(.call) && !link.kinds.contains(.render)
+            result.edges.append(Edge(from: center ? node.id : from, to: center ? from : node.id, certain: link.certain, passed: passed))
             guard known.insert(node.id).inserted else { return }
             if placed[node.column, default: []].count >= Self.perColumn { result.hidden[node.column, default: 0] += 1; return }
             placed[node.column, default: []].append(node)
         }
         placed[2] = [Node(id: focus.id, symbol: focus, title: focus.name, detail: Self.detail(focus), certain: true, column: 2)]
         let up = graph.callers(of: focus), down = graph.callees(of: focus)
-        for link in up { add(node(link, column: 1), from: focus.id, toward: true) }
-        for link in down { add(node(link, column: 3), from: focus.id, toward: false) }
+        for link in up { add(node(link, column: 1), link, from: focus.id, toward: true) }
+        for link in down { add(node(link, column: 3), link, from: focus.id, toward: false) }
         for parent in placed[1] ?? [] {
             guard let symbol = parent.symbol else { continue }
-            for link in graph.callers(of: symbol).prefix(6) { add(node(link, column: 0), from: parent.id, toward: true) }
+            for link in graph.callers(of: symbol).prefix(6) { add(node(link, column: 0), link, from: parent.id, toward: true) }
         }
         for parent in placed[3] ?? [] {
             guard let symbol = parent.symbol else { continue }
-            for link in graph.callees(of: symbol).prefix(6) { add(node(link, column: 4), from: parent.id, toward: false) }
+            for link in graph.callees(of: symbol).prefix(6) { add(node(link, column: 4), link, from: parent.id, toward: false) }
+        }
+        let shown = Set(placed.values.flatMap { $0 }.map(\.id))
+        result.edges = result.edges.filter { shown.contains($0.from) && shown.contains($0.to) }
+        let order = CallGraphRows.untangle(placed.mapValues { $0.map(\.id) }, links: result.edges.map { ($0.from, $0.to) })
+        for (column, ids) in order {
+            let byID = Dictionary(uniqueKeysWithValues: (placed[column] ?? []).map { ($0.id, $0) })
+            placed[column] = ids.compactMap { byID[$0] }
         }
         for column in 0...4 {
             for (row, var node) in (placed[column] ?? []).enumerated() { node.row = row; result.nodes.append(node) }
         }
-        let shown = Set(result.nodes.map(\.id))
-        result.edges = result.edges.filter { shown.contains($0.0) && shown.contains($0.1) }
         return result
     }
 
@@ -798,6 +1036,7 @@ private struct CallGraphView: View {
                 if case .active = phase { viewport.hovering = true } else { viewport.hovering = false }
             }
             .overlay(alignment: .bottomTrailing) { controls(content: content, view: geometry.size) }
+            .overlay(alignment: .bottomLeading) { legend }
             .onChange(of: focus.id, initial: true) { viewport.reset(fitting: content, in: geometry.size) }
         }
         .onAppear { viewport.start() }
@@ -809,14 +1048,14 @@ private struct CallGraphView: View {
         ZStack {
             Canvas { context, _ in
                 let color = Color.theme(theme, \.tertiaryText)
-                for (from, to) in layout.edges {
-                    guard let a = points[from], let b = points[to] else { continue }
+                for edge in layout.edges {
+                    guard let a = points[edge.from], let b = points[edge.to] else { continue }
                     let start = CGPoint(x: a.x + Self.boxWidth / 2, y: a.y), end = CGPoint(x: b.x - Self.boxWidth / 2, y: b.y)
                     var path = Path()
                     path.move(to: start)
                     let middle = (start.x + end.x) / 2
                     path.addCurve(to: end, control1: CGPoint(x: middle, y: start.y), control2: CGPoint(x: middle, y: end.y))
-                    context.stroke(path, with: .color(color.opacity(0.6)), lineWidth: 1)
+                    context.stroke(path, with: .color(color.opacity(edge.certain ? 0.7 : 0.45)), style: Self.stroke(edge))
                     var arrow = Path()
                     arrow.move(to: CGPoint(x: end.x - 5, y: end.y - 3)); arrow.addLine(to: end); arrow.addLine(to: CGPoint(x: end.x - 5, y: end.y + 3))
                     context.stroke(arrow, with: .color(color.opacity(0.8)), lineWidth: 1)
@@ -835,6 +1074,32 @@ private struct CallGraphView: View {
                     .position(x: content.width / 2, y: content.height / 2 + 40).allowsHitTesting(false)
             }
         }
+    }
+
+    /// Solid: a call. Dashed: matched by method name only (可能). Dotted: the function is passed along (`onClick={save}`).
+    private static func stroke(_ edge: Edge) -> StrokeStyle {
+        StrokeStyle(lineWidth: 1, lineCap: .round, dash: !edge.certain ? [5, 3] : edge.passed ? [1, 3] : [])
+    }
+
+    private var legend: some View {
+        HStack(spacing: 12) {
+            ForEach([("调用", Edge(from: "", to: "", certain: true, passed: false)), ("传入", Edge(from: "", to: "", certain: true, passed: true)),
+                     ("可能", Edge(from: "", to: "", certain: false, passed: false))], id: \.0) { label, edge in
+                HStack(spacing: 4) {
+                    Path { $0.move(to: CGPoint(x: 0, y: 4)); $0.addLine(to: CGPoint(x: 22, y: 4)) }
+                        .stroke(Color.theme(theme, \.tertiaryText), style: Self.stroke(edge)).frame(width: 22, height: 8)
+                    Text(label)
+                }
+            }
+            HStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 2).stroke(ThemeColor(token: .modified), lineWidth: 1.5).frame(width: 14, height: 9)
+                Text("本轮改过")
+            }
+        }
+        .themedFont(.caption2, points: 9).foregroundStyle(.secondary)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(ThemeColor(token: .canvas)))
+        .padding(10)
     }
 
     private func controls(content: CGSize, view: CGSize) -> some View {
@@ -866,6 +1131,7 @@ private struct CallGraphView: View {
 
     private func box(_ node: Node) -> some View {
         let center = node.id == focus.id
+        let changed = model.callMap.turnChanged.contains(node.id)
         return Button { if let symbol = node.symbol, !center { model.focusCall(symbol) } } label: {
             VStack(spacing: 1) {
                 Text(node.title).themedFont(center ? .callout.weight(.semibold) : .caption, points: center ? 12 : 10)
@@ -876,8 +1142,9 @@ private struct CallGraphView: View {
             .padding(.horizontal, 8).padding(.vertical, 5).frame(width: Self.boxWidth)
             .background(RoundedRectangle(cornerRadius: 6).fill(center ? ThemeColor(token: .selectedFill) : ThemeColor(token: .canvas)))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(center ? ThemeColor(token: .accent) : ThemeColor(token: .border), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 6).inset(by: -2.5).stroke(ThemeColor(token: .modified), lineWidth: 1.5).opacity(changed ? 1 : 0))
         }
         .buttonStyle(.plain)
-        .help(node.symbol.map { center ? $0.path : "以 \($0.qualifiedName) 为中心" } ?? "外部包里的函数")
+        .help((node.symbol.map { center ? $0.path : "以 \($0.qualifiedName) 为中心" } ?? "外部包里的函数") + (changed ? " · AI 最近一轮改了它" : ""))
     }
 }

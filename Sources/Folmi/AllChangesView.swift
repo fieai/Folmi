@@ -484,8 +484,9 @@ struct AllChangesView: View {
     @ViewBuilder private func impactRow(_ diff: FileDiff) -> some View {
         let impacts = model.callImpacts(for: diff) ?? []
         let removed = model.removedCallImpacts(for: diff), signatures = model.signatureImpacts(for: diff)
-        if !impacts.isEmpty || !removed.isEmpty || !signatures.isEmpty {
-            CallImpactRow(model: model, impacts: impacts, removed: removed, signatures: signatures)
+        let endpoints = model.endpointImpacts(for: diff)
+        if !impacts.isEmpty || !removed.isEmpty || !signatures.isEmpty || !endpoints.isEmpty {
+            CallImpactRow(model: model, impacts: impacts, removed: removed, signatures: signatures, endpoints: endpoints)
         }
     }
 

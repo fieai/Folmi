@@ -131,6 +131,9 @@ struct FileOutline: Sendable {
     /// `from x import *`.
     var starImports: [String] = []
     var lineCount: Int = 0
+    /// Routes this file declares and requests it makes (see `EndpointScanner`).
+    var routes: [RouteDecl] = []
+    var requests: [RequestCall] = []
 
     /// The innermost definition whose body holds token `index`; nil at the top level.
     func enclosing(_ index: Int, excluding: Int? = nil) -> Int? {
@@ -186,6 +189,9 @@ extension FileOutline {
             outline = outliner.read()
         }
         outline.lineCount = (tokens.last?.line ?? 0)
+        let exported = Set(outline.exports.map(\.exported))
+        let functions = outline.definitions.map(\.symbol).filter { $0.container == nil && exported.contains($0.name) }.map { ($0.name, $0.line) }
+        (outline.routes, outline.requests) = EndpointScanner(tokens: tokens, path: path, language: language, exportedFunctions: functions).scan()
         return outline
     }
 }

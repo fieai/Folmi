@@ -520,6 +520,15 @@ extension GitRepository {
     }
 }
 
+extension CallGraph {
+    /// The files the call map reads in a project other than the open one (a linked project in 接口).
+    public static func projectFiles(root: URL) throws -> [String] {
+        try GitProcess(directory: root, environment: [:]).run(["ls-files", "-co", "--exclude-standard", "-z"], timeout: 30,
+                                                            stdoutLimit: 64 * 1_024 * 1_024).text
+            .split(separator: "\0").map(String.init)
+    }
+}
+
 /// What a change to one function reaches: how many places call it, from how many functions.
 public struct CallImpact: Sendable, Equatable, Identifiable {
     public let symbol: CodeSymbol
@@ -547,6 +556,25 @@ extension CallGraph {
             if let symbol = innermost(gap), innermost(gap - 1) == symbol, !found.contains(symbol) { found.append(symbol) }
         }
         return found.sorted { $0.line < $1.line }
+    }
+
+    /// Functions an AI turn changed: `before` holds each touched file as it was before the turn (nil when the turn
+    /// created it), compared line by line with the file the graph read. Symbol ids, for marking them in the call map.
+    public func changedSymbols(before: [String: Data?], root: URL) -> Set<String> {
+        var ids: Set<String> = []
+        for (path, old) in before {
+            guard let indices = symbolsByPath[path] else { continue }
+            guard let old, let now = try? Data(contentsOf: root.appendingPathComponent(path)) else {
+                // New in this turn: everything in it is new.
+                ids.formUnion(indices.map { symbols[$0] }.filter { $0.kind != .module }.map(\.id)); continue
+            }
+            func lines(_ data: Data) -> [Substring] { String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false) }
+            let changes = LineDiff.changes(old: lines(old), new: lines(now), maxEdits: 5_000)
+            let added = changes.flatMap { $0.new.map { $0 + 1 } }
+            let gaps = changes.filter(\.isDeletion).map { $0.new.lowerBound + 1 }
+            ids.formUnion(changedSymbols(path: path, lines: added, gaps: gaps).map(\.id))
+        }
+        return ids
     }
 
     public func impact(of symbol: CodeSymbol) -> CallImpact {

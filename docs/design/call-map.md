@@ -40,7 +40,18 @@
 - 有问题时输出 block，把列表交给 agent，这一轮不结束：不写结束快照、不记 stop、不删当前这一轮的指针，所以接着改的内容还算同一轮。下一次 Stop 带着 `stop_hook_active`，不再检查，正常结束。Codex 的 Interrupt 也跑 `stop`，只在 `hook_event_name` 是 `Stop` 时检查。
 - 说明里写了「有意的或认错了就说明原因，不用改」，免得 agent 为了过检查乱改。
 
-下面原来的设计（接口配对、下游到表和任务、关联项目）是后面几步。
+## 已经做了：接口配对和关联项目（2026-10-27）
+
+- 识别在每个文件的大纲里一起做（`EndpointScanner`），跟着大纲按文件缓存。后端：Express / Koa 的 `app.get('/x', h)`、`router.post(...)`（按调用者的名字和第二个参数是不是函数，分清是路由还是客户端请求），NestJS 的 `@Controller` + `@Get`，Next.js 的 `app/**/route.ts` 导出的 GET / POST 和 `pages/api/**`，FastAPI / Flask 的装饰器（同文件里 `APIRouter(prefix=)`、`Blueprint(url_prefix=)` 的前缀会加上），Django `urls.py` 的 `path()`。前端：`fetch`、`$fetch`、`useSWR`、`axios.get/post`、`axios({ url, method })`、`api.get('/x')` 这类包装。
+- 配对（`EndpointMap`）：路径拆成段，参数和运行时拼进去的部分都算 `*`。方法不同不配；路径一段一段都对上，而且两边都没有看不见的前缀，算确定；`router` 挂在 `app.use('/api', router)` 下、FastAPI 的 `include_router`、Nest 的全局前缀、Django 的 `include`，以及前端通过 `api.get` 这类可能带 baseURL 的客户端发请求时，只要路径的后半段对上、而且至少有一段是写死的字一样，算「可能」，按对上的字段数取最多的，最多 3 个。
+- 关联项目存在 `ProjectPreferences.linkedProjects`（路径），读法和本项目一样（`git ls-files` + 大纲缓存），只读。
+- 「影响」：改动落在某个接口处理函数（命名的、装饰的、或者直接写在路由里的回调）的行范围里，就写出这个接口和前端的调用数。
+
+## 已经做了：其他语言交给 CodeGraph（2026-10-27）
+
+- 只在用户自己装了 `codegraph`、项目里有 `.codegraph/codegraph.db` 时用；运行 `codegraph callers|callees <名字> --json -p <项目>`，带 `DO_NOT_TRACK=1`。它找不到符号时往 stdout 打一行文字而不是 JSON，按「没找到」处理。不装、不 init、不 sync、不读它的数据库文件。
+
+下面原来的设计（下游到表和任务）是后面几步。
 
 ## 要解决什么
 

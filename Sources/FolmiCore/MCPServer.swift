@@ -17,6 +17,8 @@ public final class MCPServer {
     /// Outlines of the files read for the call map, so a later tool call rereads only what changed.
     var callCache = CallGraphCache()
     var callCacheRoot: String?
+    /// Where `codegraph` is; tests point it at a stand-in.
+    var locateCodeGraph: () -> String? = CodeGraphTool.locate
 
     public init(settingsDirectory: URL?, workingDirectory: URL, now: @escaping () -> Date = Date.init,
                 openLink: @escaping (URL, SharedAppState?) -> String? = MCPServer.openWithSystem) {
@@ -115,13 +117,16 @@ public final class MCPServer {
                  ["path": ["type": "string", "description": "File path relative to the repository root."],
                   "line": ["type": "integer", "description": "Line number (optional)."]], required: ["path"]),
             tool("callers",
-                 "Who calls a JavaScript, TypeScript or Python function in this repository: each calling function with file and lines. Names are followed through imports, re-exports, aliases and `this` / `self` members. `certain: false` means matched by method name only.",
+                 "Who calls a function in this repository: each calling function with file and lines. JavaScript, TypeScript and Python are read by Folmi (names followed through imports, re-exports, aliases and `this` / `self` members; `certain: false` means matched by method name only); other languages come from CodeGraph when the project has a CodeGraph index.",
                  callArguments, required: ["function"]),
             tool("callees",
-                 "What a JavaScript, TypeScript or Python function calls: functions in this repository (with where they are defined) and outside packages.",
+                 "What a function calls: functions in this repository (with where they are defined) and outside packages. Other languages than JavaScript, TypeScript and Python come from CodeGraph when the project has a CodeGraph index.",
                  callArguments, required: ["function"]),
+            tool("endpoints",
+                 "The back end's routes (Express, Koa, NestJS, Next.js, FastAPI, Flask, Django) with the front-end requests (fetch, axios, wrappers like api.get) that reach each, and requests no route matched. `certain: false` means only the end of the path matched (a base URL or a mount prefix in between).",
+                 ["filter": ["type": "string", "description": "Only endpoints whose method and path contain this text (optional)."]]),
             tool("change_impact",
-                 "What the uncommitted changes (staged and not, against HEAD) do to calls in JavaScript, TypeScript and Python: removed or renamed functions still called by the old name, functions whose new parameters some calls do not fit, and who calls each changed function. Run it before you finish.",
+                 "What the uncommitted changes (staged and not, against HEAD) do to calls in JavaScript, TypeScript and Python: removed or renamed functions still called by the old name, functions whose new parameters some calls do not fit, who calls each changed function, and for a changed route handler (Express, NestJS, Next.js, FastAPI, Flask, Django) which front-end requests reach it. Run it before you finish.",
                  ["paths": ["type": "array", "items": ["type": "string"], "description": "Only these files (relative to the repository root). Optional: all changed files."]]),
         ]
     }
@@ -136,6 +141,7 @@ public final class MCPServer {
         case "callers": return try callers(arguments)
         case "callees": return try callees(arguments)
         case "change_impact": return try changeImpact(arguments)
+        case "endpoints": return try endpoints(arguments)
         default: throw Failure(message: "Unknown tool: \(name)")
         }
     }

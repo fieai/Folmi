@@ -355,6 +355,17 @@ final class CallGraphTests: XCTestCase {
         XCTAssertEqual(late, [])
     }
 
+    /// 本轮改过: the functions whose lines differ from the copy kept before the turn; a file the turn created counts whole.
+    func testFunctionsAnAITurnChanged() throws {
+        let orders = "web/src/api/orders.ts", http = "web/src/lib/http.ts"
+        let old = try change(orders, "return request(`/api/orders/${encodeURIComponent(id)}`)", "return request(`/api/v2/orders/${id}`)")
+        let graph = try graph()
+        let changed = graph.changedSymbols(before: [orders: Optional(old), http: Optional<Data>.none], root: root)
+        let names = Set(graph.symbols.filter { changed.contains($0.id) }.map(\.qualifiedName))
+        XCTAssertEqual(names, ["getOrder", "http"], "listOrders is untouched; http.ts counts as new")
+        XCTAssertEqual(graph.changedSymbols(before: [orders: try Data(contentsOf: root.appendingPathComponent(orders))], root: root), [])
+    }
+
     func testUnchangedFilesComeFromTheCache() throws {
         let files = ["web/src/lib/http.ts", "web/src/api/orders.ts", "web/tsconfig.json"]
         let (first, cache) = CallGraph.build(root: root, files: files, cache: CallGraphCache())

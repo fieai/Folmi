@@ -66,6 +66,9 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     /// The editor's columns (tabs are project paths) and the terminal's (tabs are places in `terminalTabs`); nil: not split.
     var editorColumns: PaneColumns?
     var terminalColumns: PaneColumns?
+    /// 关联项目: other projects (paths) whose routes and requests pair with this one's in 接口, for a front end and
+    /// back end kept in separate repositories.
+    var linkedProjects: [String] = []
 
     init(rootPath: String, name: String, isDemo: Bool = false, environment: [String: String] = [:],
          draftMessage: String = "", amendLast: Bool = false, deliveryProfiles: [DeliveryProfile] = [],
@@ -87,7 +90,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case rootPath, name, isDemo, environment, draftMessage, amendLast, deliveryProfiles, selectedProfileID, lastArea, editorTabs, selectedEditorPath, reviewComments, terminalTabs
         case terminalDirectories, reviewedLines, lastContent, selectedChangePath, largeRepository, largeRepositoryDeclined, reviewWatches
-        case editorColumns, terminalColumns
+        case editorColumns, terminalColumns, linkedProjects
     }
 
     init(from decoder: Decoder) throws {
@@ -115,6 +118,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
         reviewWatches = (try? values.decodeIfPresent([ReviewWatch].self, forKey: .reviewWatches)) ?? []
         editorColumns = try? values.decodeIfPresent(PaneColumns.self, forKey: .editorColumns)
         terminalColumns = try? values.decodeIfPresent(PaneColumns.self, forKey: .terminalColumns)
+        linkedProjects = (try? values.decodeIfPresent([String].self, forKey: .linkedProjects)) ?? []
     }
 }
 

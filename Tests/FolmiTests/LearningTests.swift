@@ -23,6 +23,16 @@ final class LearningTests: XCTestCase {
         XCTAssertEqual(ids(config.map { decision($0.path, .reject, ago: 40 * 86_400) }), [], "old decisions fall out of the window")
     }
 
+    func testConnectedMCPProposesTheCallToolsRuleOnce() {
+        XCTAssertEqual(Learning.proposals(decisions: [], notes: [], state: LearningState(), existingRules: [], now: now).map(\.id), [])
+        XCTAssertEqual(Learning.proposals(decisions: [], notes: [], state: LearningState(), existingRules: [], callTools: true, now: now).map(\.id),
+                       ["mcp-call-tools"])
+        XCTAssertEqual(Learning.proposals(decisions: [], notes: [], state: LearningState(), existingRules: [Learning.callToolsRule],
+                                          callTools: true, now: now), [], "already in CLAUDE.md")
+        var declined = LearningState(); declined.declined["mcp-call-tools"] = now.timeIntervalSince1970 - 60
+        XCTAssertEqual(Learning.proposals(decisions: [], notes: [], state: declined, existingRules: [], callTools: true, now: now), [])
+    }
+
     func testCommentOnlyRejects() {
         let rejects = (0..<3).map { decision("f\($0).swift", .reject, commentOnly: true) }
         XCTAssertEqual(ids(rejects), ["comments"])

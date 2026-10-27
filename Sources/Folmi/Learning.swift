@@ -95,8 +95,12 @@ enum Learning {
     }
 
     /// The patterns worth proposing now, newest evidence first; declined ones wait out their cooldown.
+    /// The rule that has the agent use Folmi's call tools; agents leave MCP tools alone unless told to.
+    static let callToolsRule = "改 JS、TS、Python 函数前，先用 Folmi MCP 的 callers 看谁在调用它；改完结束前运行 change_impact，把它列出的旧名字调用和参数对不上的调用改好。"
+
+    /// `callTools`: Folmi's MCP is connected and the changes touch code the call map reads.
     static func proposals(decisions: [ReviewDecision], notes: [NoteRecord], state: LearningState, existingRules: [String],
-                          now: Date = Date()) -> [RuleProposal] {
+                          callTools: Bool = false, now: Date = Date()) -> [RuleProposal] {
         let since = now.timeIntervalSince1970 - window
         let recent = decisions.filter { $0.t >= since }
         var found: [RuleProposal] = []
@@ -142,6 +146,11 @@ enum Learning {
                                       reason: "你在 \(Set(group.map(\.path)).count) 个文件里写过 \(group.count) 次类似的\(what)：「\(body.prefix(40))」",
                                       rule: body.replacingOccurrences(of: "\n", with: " "), fromComments: true,
                                       examples: group.map { "\($0.path)：\($0.body.replacingOccurrences(of: "\n", with: " "))" }))
+        }
+
+        if callTools {
+            found.append(RuleProposal(id: "mcp-call-tools", reason: "已接入 Folmi MCP，但不写明的话，Claude / Codex 不会主动用它查调用",
+                                      rule: callToolsRule, fromComments: false))
         }
 
         return found.filter { proposal in
@@ -386,8 +395,15 @@ extension FolmiModel {
         guard let gitDir = aiGitDir else { if !ruleProposals.isEmpty { ruleProposals = [] }; return }
         let next = Learning.proposals(decisions: FolmiShared.lines(ReviewDecision.self, from: FolmiShared.decisions(gitDir: gitDir), limit: 2_000),
                                       notes: Self.learningNotes(gitDir: gitDir),
-                                      state: learningState, existingRules: projectRules)
+                                      state: learningState, existingRules: projectRules, callTools: suggestsCallTools)
         if next != ruleProposals { ruleProposals = next }
+    }
+
+    /// Folmi's MCP is connected for some agent, and the changes under review include JS / TS / Python files.
+    var suggestsCallTools: Bool {
+        guard snapshot?.files.contains(where: { Self.callMapExtensions.contains(($0.path as NSString).pathExtension.lowercased()) }) == true
+        else { return false }
+        return MCPInstaller.Client.allCases.contains { MCPInstaller.isInstalled($0) }
     }
 
     /// Review notes and rejection reasons, oldest first.

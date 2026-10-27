@@ -51,9 +51,51 @@ extension MCPServer {
         ["function": symbol.qualifiedName, "file": symbol.path, "line": symbol.line, "kind": symbol.kind.rawValue]
     }
 
+    /// Other languages go to CodeGraph when the user has it and has indexed the project: a `file` the call map does
+    /// not read, or a name it does not know.
+    func ownOrCodeGraph(_ direction: CodeGraphTool.Direction, _ arguments: [String: Any],
+                        own: (CallGraph, CodeSymbol) throws -> String) throws -> String {
+        let repo = try repository(arguments)
+        let file = (arguments["file"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let indexed = CodeGraphTool.isIndexed(repo.root)
+        if indexed, let file, SourceLanguage.of(path: file) == nil { return try codeGraph(direction, arguments, repo: repo) }
+        do {
+            let graph = try callGraph(repo)
+            return try own(graph, try symbol(in: graph, arguments))
+        } catch where indexed {
+            guard let answer = try? codeGraph(direction, arguments, repo: repo) else { throw error }
+            return answer
+        }
+    }
+
+    func codeGraph(_ direction: CodeGraphTool.Direction, _ arguments: [String: Any], repo: (root: URL, gitDir: URL)) throws -> String {
+        guard let name = (arguments["function"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty else {
+            throw Failure(message: "`function` is required.")
+        }
+        guard let executable = locateCodeGraph() else { throw Failure(message: "The project has a CodeGraph index, but no `codegraph` command was found.") }
+        guard let calls = try CodeGraphTool.calls(direction, of: name, file: arguments["file"] as? String, root: repo.root, executable: executable) else {
+            throw Failure(message: "No function named \(name) in Folmi's call map or in CodeGraph.")
+        }
+        func row(_ node: CodeGraphTool.Node) -> [String: Any] {
+            ["function": node.name, "kind": node.kind, "file": node.path, "line": node.line, "how": node.relationships]
+        }
+        var object = row(calls.target)
+        object["source"] = "CodeGraph (its own index; lines are where each function is defined)"
+        object[direction.rawValue] = (calls.callers ?? calls.callees ?? []).map(row)
+        if calls.ambiguous { object["note"] = "Several definitions share the name; the list is all of them together. Pass `file` to pick one." }
+        if calls.truncated { object["truncated"] = true }
+        return try json(object)
+    }
+
     func callers(_ arguments: [String: Any]) throws -> String {
-        let graph = try callGraph(try repository(arguments))
-        let target = try symbol(in: graph, arguments)
+        try ownOrCodeGraph(.callers, arguments) { graph, target in try self.ownCallers(graph, target) }
+    }
+
+    func callees(_ arguments: [String: Any]) throws -> String {
+        try ownOrCodeGraph(.callees, arguments) { graph, target in try self.ownCallees(graph, target) }
+    }
+
+    private func ownCallers(_ graph: CallGraph, _ target: CodeSymbol) throws -> String {
         let links = graph.callers(of: target)
         var object = describe(target)
         object["callers"] = links.map { link -> [String: Any] in
@@ -64,9 +106,7 @@ extension MCPServer {
         return try json(object)
     }
 
-    func callees(_ arguments: [String: Any]) throws -> String {
-        let graph = try callGraph(try repository(arguments))
-        let target = try symbol(in: graph, arguments)
+    private func ownCallees(_ graph: CallGraph, _ target: CodeSymbol) throws -> String {
         var object = describe(target)
         object["calls"] = graph.callees(of: target).map { link -> [String: Any] in
             var row: [String: Any] = ["function": link.title, "lines": link.siteLines, "certain": link.certain,
@@ -89,6 +129,7 @@ extension MCPServer {
         guard !changed.isEmpty else { return try json(["repository": repo.root.path, "comparedWith": "HEAD", "files": [],
                                                       "summary": "No changed JavaScript, TypeScript or Python files."]) }
         let graph = try callGraph(repo)
+        let endpointMap = EndpointMap.build([(nil, graph)])
         let start = now()
         var files: [[String: Any]] = [], unchecked: [String] = []
         var broken = 0, misfits = 0
@@ -134,6 +175,15 @@ extension MCPServer {
                 let diff = try git.run(["diff", "-U0", "--no-color", "--no-ext-diff", "HEAD", "--", path]).text
                 let (lines, gaps) = Self.newSideChanges(diff)
                 let symbols = graph.changedSymbols(path: path, lines: lines, gaps: gaps)
+                let endpoints = endpointMap.endpoints(changedIn: path, lines: lines, gaps: gaps)
+                if !endpoints.isEmpty {
+                    row["changedEndpoints"] = endpoints.map { endpoint -> [String: Any] in
+                        ["endpoint": endpoint.title, "line": endpoint.line,
+                         "calledFromFrontEnd": endpointMap.uses(of: endpoint).prefix(Self.siteLimit).map {
+                             ["function": $0.caller, "file": $0.file, "line": $0.line, "request": "\($0.method ?? "?") \($0.path)", "certain": $0.certain]
+                         }]
+                    }
+                }
                 if !symbols.isEmpty {
                     row["changedFunctions"] = symbols.map { symbol -> [String: Any] in
                         let links = graph.callers(of: symbol)
@@ -152,6 +202,25 @@ extension MCPServer {
             ? "No call is left pointing at a removed function or passing arguments that do not fit."
             : "\(broken) call(s) still use a removed or renamed name; \(misfits) call(s) do not fit changed parameters. Fix them, or tell the user why they are fine."
         return try json(object)
+    }
+
+    func endpoints(_ arguments: [String: Any]) throws -> String {
+        let map = EndpointMap.build([(nil, try callGraph(try repository(arguments)))])
+        let filter = (arguments["filter"] as? String)?.lowercased() ?? ""
+        let shown = map.endpoints.filter { filter.isEmpty || $0.title.lowercased().contains(filter) }
+        func use(_ use: EndpointUse) -> [String: Any] {
+            ["request": "\(use.method ?? "?") \(use.path)", "function": use.caller, "file": use.file, "line": use.line, "certain": use.certain]
+        }
+        return try json([
+            "endpoints": shown.prefix(200).map { endpoint -> [String: Any] in
+                var row: [String: Any] = ["endpoint": endpoint.title, "file": endpoint.file, "line": endpoint.line,
+                                          "calledFrom": map.uses(of: endpoint).prefix(Self.siteLimit).map(use)]
+                if let handler = endpoint.handler { row["handler"] = handler.qualifiedName }
+                if endpoint.prefixUnknown { row["mountedUnderUnknownPrefix"] = true }
+                return row
+            },
+            "requestsWithNoRoute": filter.isEmpty ? map.unmatched.prefix(100).map(use) : [],
+        ])
     }
 
     /// From `git diff -U0`: the new-side lines each hunk adds, and where a hunk only removes (the line after it).
