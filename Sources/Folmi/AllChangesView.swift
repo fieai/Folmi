@@ -138,6 +138,7 @@ struct AllChangesView: View {
                             if let turn, turnOnly.contains(key), !collapsed.contains(key) {
                                 TurnOnlyDiff(model: model, batch: turn.id, path: diff.file.path)
                             }
+                            if !collapsed.contains(key) { impactRow(diff) }
                             if !collapsed.contains(key) {
                                 SideBySideFile(
                                     diff: diff, selected: model.allChangesSelection[key] ?? [], busy: model.busy, columnWidth: 400,
@@ -186,6 +187,7 @@ struct AllChangesView: View {
         .animation(reduceMotion ? nil : Motion.reveal, value: model.lastReject)
         .animation(reduceMotion ? nil : Motion.reveal, value: model.lastAccept)
         .onAppear { focused = true; decideFolds(); follow() }
+        .task(id: diffs.map(\.fingerprint)) { await model.prepareCallImpacts(diffs) }
         .onChange(of: completionSnapshot, initial: true) { _, snapshot in
             if completionFeedback.observe(snapshot) { completionTick += 1 }
         }
@@ -477,6 +479,14 @@ struct AllChangesView: View {
     static func turnTitle(_ batch: AIBatch) -> String {
         let prompt = batch.prompt.map { String($0.prefix(30)) + ($0.count > 30 ? "…" : "") } ?? "（没有记下提示词）"
         return "\(batch.started.formatted(date: .omitted, time: .shortened))  \(prompt)"
+    }
+
+    @ViewBuilder private func impactRow(_ diff: FileDiff) -> some View {
+        let impacts = model.callImpacts(for: diff) ?? []
+        let removed = model.removedCallImpacts(for: diff), signatures = model.signatureImpacts(for: diff)
+        if !impacts.isEmpty || !removed.isEmpty || !signatures.isEmpty {
+            CallImpactRow(model: model, impacts: impacts, removed: removed, signatures: signatures)
+        }
     }
 
     private func header(_ diff: FileDiff, key: String) -> some View {

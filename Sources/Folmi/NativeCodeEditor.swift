@@ -251,6 +251,11 @@ struct NativeCodeEditor: NSViewRepresentable {
         // configure runs on every document switch, so the path captured here is the open one.
         let path = documentID
         editor.assistSelection = { [weak workspace] mode, text in workspace?.assistSelection?(mode, text, path) }
+        editor.showCalls = FolmiModel.callMapExtensions.contains((documentID as NSString).pathExtension.lowercased())
+            ? { [weak workspace, weak editor] location in
+                guard let editor, let document = workspace?.documents.first(where: { $0.id == path }) else { return }
+                workspace?.showCallsAt?(document.path, editor.string, location)
+            } : nil
         if ["md", "markdown", "mdown"].contains((documentID as NSString).pathExtension.lowercased()) {
             editor.toggleMarkdown = { [weak workspace] in workspace?.markdownReading.toggle() }
             editor.markdownEditing = true

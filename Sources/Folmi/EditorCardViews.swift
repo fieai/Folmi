@@ -138,6 +138,8 @@ struct EditorCardPage: View {
                 AllChangesView(model: model).id(model.repositoryURL?.path).transition(.opacity)
             } else if model.content == .history {
                 HistoryView(model: model).id(model.repositoryURL?.path).transition(.opacity)
+            } else if model.content == .calls {
+                CallMapPage(model: model).transition(.opacity)
             } else { DiffPane(model: model).transition(.opacity) }
         }
         .animation(reduceMotion ? nil : Motion.state, value: editorPage ? FolmiContent.editor : model.content)

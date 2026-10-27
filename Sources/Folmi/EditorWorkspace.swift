@@ -66,6 +66,8 @@ final class EditorWorkspace: ObservableObject {
     var onSessionChange: (() -> Void)?
     /// "发送到终端" in the editor's right-click menu, with the text view's selection.
     var sendSelectionToTerminal: ((NSRange) -> Void)?
+    /// 查看调用关系 from the editor's menu: the file, its text and the clicked position.
+    var showCallsAt: ((String, String, Int) -> Void)?
     /// "发到终端" in the Markdown reader: the text as read on the page (no Markdown marks), with its line reference.
     var sendTextToTerminal: ((String, String) -> Void)?
     /// 评论 in the Markdown reader: document path, 1-based first and last source line, and the selected text.

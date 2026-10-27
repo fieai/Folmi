@@ -13,7 +13,7 @@ struct ActivityEntry: Identifiable {
     let isError: Bool
     let projectPath: String?
 }
-enum FolmiContent: String, CaseIterable { case diff = "差异", editor = "编辑", allChanges = "全部改动", history = "历史" }
+enum FolmiContent: String, CaseIterable { case diff = "差异", editor = "编辑", allChanges = "全部改动", history = "历史", calls = "调用关系" }
 
 @MainActor
 @Observable
@@ -156,6 +156,8 @@ final class FolmiModel {
     var remoteList: [GitRemote] = []
     /// A remote waiting for the delete confirmation, with what removing it takes away.
     var remoteRemoval: RemoteRecord?
+    /// 调用关系: the call graph, its center and the page's own state.
+    let callMap = CallMapState()
     @ObservationIgnored var historyRequest = UUID()
     @ObservationIgnored var commitRequest = UUID()
     static let historyLimit = 500
@@ -601,6 +603,7 @@ final class FolmiModel {
                 self?.readerCommentDraft = ReaderCommentDraft(path: path, firstLine: first, lastLine: last, quote: quote)
             }
             editor.showChanges = { [weak self] path in self?.showChanges(of: path) }
+            editor.showCallsAt = { [weak self] path, text, location in self?.showCalls(path: path, text: text, location: location) }
             editor.showCommit = { [weak self] id in
                 guard let self else { return }
                 self.showContent(.history)
@@ -820,6 +823,7 @@ final class FolmiModel {
             Task { await loadAllChanges() }
             return
         }
+        if requested == .calls { showCallMap(); return }
         if requested == .history {
             content = .history
             Task { await loadHistory() }

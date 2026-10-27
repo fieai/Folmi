@@ -143,6 +143,8 @@ struct FolmiCommands: Commands {
             Button("发送审查评论到终端") { model.sendReviewCommentsToTerminal() }
                 .keyboardShortcut(.return, modifiers: [.command, .option])
                 .disabled(model.sendableReviewComments.isEmpty)
+            Button("查看调用关系") { model.showCallsAtCursor() }
+                .keyboardShortcut("h", modifiers: [.control, .option]).disabled(!model.hasSnapshot)
             Button("发送编辑器选中的行到终端") { model.sendEditorSelectionToTerminal() }
                 .keyboardShortcut("l", modifiers: [.command, .option])
                 .disabled(!model.hasSnapshot || model.content != .editor || model.editorWorkspace?.selectedDocument == nil)

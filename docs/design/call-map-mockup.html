@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>调用关系样式稿</title>
+<style>
+:root {
+  --font: -apple-system, "PingFang SC", "SF Pro Text", sans-serif;
+  --mono: "SF Mono", Menlo, monospace;
+}
+[data-theme="dark"] {
+  --wall: radial-gradient(1200px 700px at 15% 10%, #3a4a78 0%, transparent 60%),
+          radial-gradient(900px 600px at 90% 90%, #5b3a6e 0%, transparent 60%),
+          linear-gradient(160deg, #1d2740, #241c33);
+  --win: rgba(30, 33, 42, .62);
+  --rail: rgba(40, 44, 56, .28);
+  --card: rgba(24, 26, 32, .82);
+  --hair: rgba(255, 255, 255, .09);
+  --text: #e8e9ed; --text2: #a3a7b3; --text3: #6f7480;
+  --accent: #5aa2ff; --accent-bg: rgba(90, 162, 255, .16);
+  --add: #4cc38a; --mod: #e9a35a; --del: #ef6b6b; --ai: #b48cff;
+  --chip: rgba(255, 255, 255, .06);
+  --sel: rgba(255, 255, 255, .07);
+}
+[data-theme="light"] {
+  --wall: radial-gradient(1200px 700px at 15% 10%, #b9d0ff 0%, transparent 60%),
+          radial-gradient(900px 600px at 90% 90%, #f1c8e0 0%, transparent 60%),
+          linear-gradient(160deg, #dfe7f5, #efe4f0);
+  --win: rgba(246, 247, 250, .62);
+  --rail: rgba(255, 255, 255, .30);
+  --card: rgba(255, 255, 255, .84);
+  --hair: rgba(0, 0, 0, .08);
+  --text: #1d1e22; --text2: #5c606b; --text3: #9195a0;
+  --accent: #1f6fe0; --accent-bg: rgba(31, 111, 224, .10);
+  --add: #1f9d62; --mod: #c9771c; --del: #d24545; --ai: #7b4fd6;
+  --chip: rgba(0, 0, 0, .05);
+  --sel: rgba(0, 0, 0, .05);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--wall); background-attachment: fixed; font-family: var(--font); color: var(--text);
+  padding: 24px 16px 40px; -webkit-font-smoothing: antialiased; font-size: 13px; }
+button { font: inherit; color: inherit; }
+.controls { max-width: 1320px; margin: 0 auto 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.seg { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--win); border: 1px solid var(--hair); backdrop-filter: blur(20px); }
+.seg button { background: transparent; border: 0; padding: 5px 10px; border-radius: 6px; color: var(--text2); cursor: pointer; }
+.seg button.on { background: var(--chip); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair); }
+.note { color: var(--text2); }
+.window { max-width: 1320px; margin: 0 auto 28px; border-radius: 16px; overflow: hidden; background: var(--win); border: 1px solid var(--hair);
+  backdrop-filter: blur(48px) saturate(1.6); -webkit-backdrop-filter: blur(48px) saturate(1.6); box-shadow: 0 30px 80px rgba(0,0,0,.35); }
+.topbar { display: flex; align-items: center; gap: 12px; padding: 0 18px; height: 46px; border-bottom: 1px solid var(--hair); }
+.topbar h1 { font-size: 14px; margin: 0; font-weight: 600; }
+.topbar .sub { color: var(--text3); font-size: 12px; }
+.topbar .spacer { flex: 1; }
+.kbd { font-family: var(--mono); font-size: 11px; color: var(--text3); border: 1px solid var(--hair); border-radius: 4px; padding: 1px 5px; }
+.label { max-width: 1320px; margin: 0 auto 8px; color: var(--text2); font-size: 12px; }
+.mono { font-family: var(--mono); }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 10px; background: var(--chip); color: var(--text2); font-size: 11px; white-space: nowrap; }
+.chip.ai { color: var(--ai); } .chip.warn { color: var(--mod); } .chip.ok { color: var(--add); }
+
+/* Review card */
+.card { background: var(--card); border: 1px solid var(--hair); border-radius: 12px; margin: 14px; }
+.card-head { padding: 12px 14px; border-bottom: 1px solid var(--hair); display: grid; gap: 6px; }
+.card-head .file { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.card-head .risk { color: var(--mod); font-size: 12px; }
+.impact { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--text2); cursor: pointer; padding: 6px 8px; margin: 0 -8px; border-radius: 7px; }
+.impact:hover { background: var(--sel); }
+.impact b { color: var(--text); font-weight: 600; }
+.diff { font-family: var(--mono); font-size: 12px; padding: 8px 0; }
+.diff div { padding: 1px 14px; white-space: pre; }
+.diff .a { background: color-mix(in srgb, var(--add) 14%, transparent); }
+.diff .d { background: color-mix(in srgb, var(--del) 14%, transparent); }
+
+/* Call map page */
+.page-head { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--hair); flex-wrap: wrap; }
+.crumbs { display: flex; gap: 6px; align-items: center; color: var(--text3); font-size: 12px; }
+.crumbs span { cursor: pointer; } .crumbs span:last-child { color: var(--text); cursor: default; }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .9fr) minmax(0, 1fr); gap: 14px; padding: 14px; }
+.col { background: var(--card); border: 1px solid var(--hair); border-radius: 12px; min-width: 0; }
+.col h2 { font-size: 12px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--hair); color: var(--text2); font-weight: 600; display: flex; gap: 8px; }
+.col h2 .c { color: var(--text3); font-weight: 400; }
+.group { padding: 8px 6px; }
+.group h3 { font-size: 12px; margin: 4px 8px 4px; font-weight: 600; display: flex; gap: 6px; align-items: center; }
+.row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 5px 8px; border-radius: 7px; cursor: pointer; }
+.row:hover, .row.sel { background: var(--sel); }
+.row .ico { color: var(--text3); font-size: 11px; text-align: center; }
+.row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .m { color: var(--text3); font-size: 11px; font-family: var(--mono); }
+.row.changed .t::after { content: " ●"; color: var(--mod); font-size: 10px; }
+.row.maybe .t { color: var(--text2); }
+.indent1 { padding-left: 24px; } .indent2 { padding-left: 40px; } .indent3 { padding-left: 56px; }
+.center { padding: 16px; display: grid; gap: 12px; }
+.center .ep { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+.center .ep .method { color: var(--accent); margin-right: 6px; }
+.kv { display: grid; grid-template-columns: 70px 1fr; gap: 6px 10px; font-size: 12px; }
+.kv dt { color: var(--text3); } .kv dd { margin: 0; }
+.foot { padding: 10px 18px 14px; color: var(--text3); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.btn { border: 1px solid var(--hair); background: var(--chip); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+@media (max-width: 1100px) { .cols { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="controls">
+  <div class="seg" id="theme"><button data-v="dark" class="on">深色</button><button data-v="light">浅色</button></div>
+  <span class="note">点改动卡片上「影响」那一行打开调用关系页；关系页里点任何一行 = 以它为中心重新展开。</span>
+</div>
+
+<p class="label">① 逐个验收：改动卡片头部多一行「影响」</p>
+<div class="window">
+  <div class="topbar"><h1>逐个验收</h1><span class="sub">第 3 轮 · Claude · 4 / 11</span><span class="spacer"></span><span class="kbd">空格</span><span class="sub">下一处</span><span class="kbd">⏎</span><span class="sub">收下</span></div>
+  <div class="card">
+    <div class="card-head">
+      <div class="file"><span class="mono">server/routes/orders.ts</span><span class="chip ai">AI 改的</span></div>
+      <div class="risk">接口的返回改了</div>
+      <div class="impact" onclick="document.getElementById('map').scrollIntoView({behavior:'smooth'})">
+        影响：<b>3 个页面</b>调这个接口
+        <span class="chip">订单详情页</span><span class="chip">订单列表</span><span class="chip">退款弹窗</span>
+        · 写 <span class="chip mono">orders</span> · 发任务 <span class="chip mono">send-receipt</span>
+        · <span class="chip warn">调用方这轮没改</span>
+        <span class="kbd" style="margin-left:auto">⌥⌘H</span>
+      </div>
+    </div>
+    <div class="diff">
+      <div>  router.get('/api/orders/:id', async (req, res) =&gt; {</div>
+      <div>    const order = await loadOrder(req.params.id)</div>
+      <div class="d">-   res.json({ total: order.total, items: order.items })</div>
+      <div class="a">+   res.json({ amount: order.total, lines: order.items, status: order.status })</div>
+      <div>  })</div>
+    </div>
+  </div>
+</div>
+
+<p class="label">② 调用关系页：以一个接口为中心，往上谁在用，往下它用了谁</p>
+<div class="window" id="map">
+  <div class="topbar"><h1>调用关系</h1><span class="sub">差异 · 编辑 · 全部改动 · 历史 · 待办 · <b style="color:var(--text)">调用关系</b></span><span class="spacer"></span><span class="kbd">←→</span><span class="sub">换栏</span><span class="kbd">⏎</span><span class="sub">打开</span><span class="kbd">⌫</span><span class="sub">后退</span></div>
+  <div class="page-head">
+    <div class="crumbs" id="crumbs"></div>
+    <span class="spacer" style="flex:1"></span>
+    <span class="chip ok">12 条确定</span><span class="chip">3 条可能</span><span class="note" style="font-size:12px">没找到的不代表没有</span>
+  </div>
+  <div class="cols" id="cols"></div>
+  <div class="foot">
+    <span>● 这一轮改过</span><span>灰字 = 可能（路径是拼出来的，或同名函数不止一个）</span>
+    <span class="spacer" style="flex:1"></span>
+    <button class="btn">问 AI 补上漏的</button>
+  </div>
+</div>
+
+<script>
+const graphs = {
+  ep: {
+    crumb: 'GET /api/orders/:id',
+    up: [
+      ['订单详情页', 'web/app/orders/[id]/page.tsx', [
+        ['useOrder()', 'web/hooks/useOrder.ts:12', ''],
+        ['OrderSummary', 'web/components/OrderSummary.tsx:31', 'changed']]],
+      ['订单列表', 'web/app/orders/page.tsx', [['OrderRow 预加载', 'web/components/OrderRow.tsx:18', '']]],
+      ['退款弹窗', 'web/components/RefundDialog.tsx', [['api.get(`/orders/${id}`)', 'web/components/RefundDialog.tsx:44', 'maybe']]],
+    ],
+    center: `<div class="center"><div class="ep"><span class="method">GET</span>/api/orders/:id</div>
+      <dl class="kv"><dt>处理函数</dt><dd class="mono">server/routes/orders.ts:22</dd><dt>这轮</dt><dd><span class="chip warn">返回字段改了：total→amount，items→lines</span></dd>
+      <dt>前端</dt><dd>3 个页面，4 处调用，这轮改了 1 处</dd><dt>来源</dt><dd>Express 路由声明</dd></dl></div>`,
+    down: [
+      ['loadOrder', 'server/services/orders.ts:8', 1, 'fn', ''],
+      ['prisma.order.findUnique', '读 orders', 2, 'db', ''],
+      ['prisma.orderItem.findMany', '读 order_items', 2, 'db', ''],
+      ['markViewed', 'server/services/orders.ts:40', 1, 'fn', 'changed'],
+      ['prisma.order.update', '写 orders', 2, 'db', 'changed'],
+      ['queue.add("send-receipt")', '后台任务', 2, 'job', ''],
+      ['sendReceipt', 'server/jobs/receipt.ts:5', 3, 'fn', 'maybe'],
+    ],
+  },
+  table: {
+    crumb: '表 orders',
+    up: [
+      ['接口', '', [['GET /api/orders/:id', '读、写', ''], ['POST /api/orders', '写', ''], ['POST /api/orders/:id/refund', '写', 'changed']]],
+      ['后台任务', '', [['send-receipt', '读', ''], ['nightly-reconcile（每天 02:00）', '写', '']]],
+    ],
+    center: `<div class="center"><div class="ep">表 orders</div>
+      <dl class="kv"><dt>模型</dt><dd class="mono">prisma/schema.prisma:14 · model Order</dd><dt>写它的</dt><dd>3 个接口，1 个定时任务</dd>
+      <dt>这轮</dt><dd><span class="chip warn">migrations/20261026_add_status 加了 status 列</span></dd></dl></div>`,
+    down: [['（表是终点）', '', 1, '', '']],
+  },
+};
+const icons = { fn: 'ƒ', db: '▤', job: '⧗' };
+let trail = ['ep'];
+function render() {
+  const g = graphs[trail[trail.length - 1]];
+  document.getElementById('crumbs').innerHTML = trail.map((k, i) => `<span data-i="${i}">${graphs[k].crumb}</span>`).join(' › ');
+  const up = g.up.map(([page, file, rows]) => `<div class="group"><h3>${page}<span class="m mono" style="color:var(--text3);font-weight:400;font-size:11px">${file}</span></h3>
+    ${rows.map(([t, m, c]) => `<div class="row ${c}"><span class="ico">↗</span><span class="t">${t}</span><span class="m">${m}</span></div>`).join('')}</div>`).join('');
+  const down = g.down.map(([t, m, d, k, c]) => `<div class="row indent${d} ${c}" ${k === 'db' ? 'data-go="table"' : ''}><span class="ico">${icons[k] || ''}</span><span class="t mono">${t}</span><span class="m">${m}</span></div>`).join('');
+  document.getElementById('cols').innerHTML = `
+    <div class="col"><h2>往上：谁在用<span class="c">${g.up.reduce((n, x) => n + x[2].length, 0)}</span></h2>${up}</div>
+    <div class="col"><h2>它本身</h2>${g.center}</div>
+    <div class="col"><h2>往下：它用了谁<span class="c">点表名看谁写它</span></h2><div class="group">${down}</div></div>`;
+  document.querySelectorAll('[data-go]').forEach(r => r.onclick = () => { trail.push(r.dataset.go); render(); });
+  document.querySelectorAll('#crumbs span').forEach(s => s.onclick = () => { trail = trail.slice(0, +s.dataset.i + 1); render(); });
+  document.querySelectorAll('.row:not([data-go])').forEach(r => r.onclick = () => {
+    document.querySelectorAll('.row').forEach(x => x.classList.remove('sel')); r.classList.add('sel'); });
+}
+document.querySelectorAll('#theme button').forEach(b => b.onclick = () => {
+  document.documentElement.dataset.theme = b.dataset.v;
+  document.querySelectorAll('#theme button').forEach(x => x.classList.toggle('on', x === b));
+});
+render();
+</script>
+</body>
+</html>

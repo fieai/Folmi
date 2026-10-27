@@ -19,6 +19,8 @@ class EditorTextView: NSTextView {
     var openLink: ((String) -> Void)?
     /// Pastes the selected lines, with their file and line numbers, into the terminal.
     var sendSelection: ((NSRange) -> Void)?
+    /// Set for JavaScript, TypeScript and Python files: 查看调用关系 for the name at a position.
+    var showCalls: ((Int) -> Void)?
     var assistSelection: ((AIAssistState.Mode, String) -> Void)?
     /// Pasted or dropped image files, or a pasted picture, turned into Markdown to insert.
     var importImages: ((_ files: [URL], _ png: Data?) -> String?)?
@@ -183,6 +185,13 @@ class EditorTextView: NSTextView {
     /// Right-click in a table or a code block adds its commands above the usual ones.
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
+        if let showCalls {
+            let location = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
+            let entry = MarkdownMenuItem(title: "查看调用关系") { showCalls(location) }
+            entry.keyEquivalent = "h"; entry.keyEquivalentModifierMask = [.control, .option]
+            menu.insertItem(.separator(), at: 0)
+            menu.insertItem(entry, at: 0)
+        }
         if let sendSelection {
             let range = selectedRange()
             let entry = MarkdownMenuItem(title: range.length > 0 ? "发送选中的行到终端" : "发送这一行到终端") { sendSelection(range) }
