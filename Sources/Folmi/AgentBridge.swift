@@ -291,7 +291,7 @@ struct MCPClientsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("让 agent 读到你的审阅（MCP）").themedFont(.headline, points: 13)
-            Text("接入后，Claude / Codex 能读到你写的审阅评论和验收结果，改完逐条标「已处理」，不用再粘贴。它不能替你收下、提交或推送。")
+            Text("接入后，Claude / Codex 能读到你写的审阅评论和验收结果，改完逐条标「已处理」，不用再粘贴；改 JS、TS、Python 函数前后，还能查谁在调用它、这次改动有没有落下的调用。它不能替你收下、提交或推送。")
                 .themedFont(.callout, points: 12).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ForEach(MCPInstaller.Client.allCases) { client in
                 HStack {

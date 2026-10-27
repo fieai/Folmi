@@ -67,6 +67,24 @@ final class CallMapPageTests: XCTestCase {
         shown = try ScreenText.read(hosting)
         XCTAssertTrue(shown.contains("showInvoicePage") && shown.contains("formatTotal"), "graph: \(shown)")
 
+        // Dragging the background moves the graph: pulled 500 points left, the callers column leaves the window.
+        let left = { try ScreenText.read(hosting).contains("showInvoicePage") }
+        XCTAssertTrue(try left())
+        func mouse(_ type: NSEvent.EventType, _ x: CGFloat) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 60), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        // Queue the moves before mouseDown: AppKit may track the drag in a loop of its own.
+        for x in stride(from: 680, through: 200, by: -40) { NSApp.postEvent(mouse(.leftMouseDragged, CGFloat(x)), atStart: false) }
+        NSApp.postEvent(mouse(.leftMouseUp, 200), atStart: false)
+        window.sendEvent(mouse(.leftMouseDown, 700))
+        while let event = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: Date(), inMode: .default, dequeue: true) {
+            if event.windowNumber == window.windowNumber { window.sendEvent(event) }
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let afterDrag = try ScreenText.read(hosting)
+        XCTAssertFalse(afterDrag.contains("showInvoicePage"), "dragged left: \(afterDrag)")
+
         let callee = try XCTUnwrap(model.callMap.graph?.callees(of: model.callMap.focus!).first?.symbol)
         model.focusCall(callee)
         XCTAssertEqual(model.callMap.focus?.name, "formatTotal")
@@ -76,6 +94,30 @@ final class CallMapPageTests: XCTestCase {
 
         model.leaveCallMap()
         XCTAssertNotEqual(model.content, .calls)
+    }
+
+    /// The wheel and two-finger swipes pan the 关系图 only while the pointer is over it; with ⌘ they zoom, within limits.
+    @MainActor
+    func testGraphViewportPansZoomsAndFits() throws {
+        let viewport = CallGraphViewport()
+        func wheel(_ dy: Int32, _ dx: Int32 = 0, command: Bool = false) throws -> NSEvent {
+            let event = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0))
+            if command { event.flags = .maskCommand }
+            return try XCTUnwrap(NSEvent(cgEvent: event))
+        }
+        XCTAssertFalse(viewport.handle(try wheel(30)), "not over the graph: the event goes on")
+        viewport.hovering = true
+        XCTAssertTrue(viewport.handle(try wheel(30, -20)))
+        XCTAssertGreaterThan(viewport.offset.height, 0); XCTAssertLessThan(viewport.offset.width, 0)
+        XCTAssertTrue(viewport.handle(try wheel(40, command: true)))
+        XCTAssertGreaterThan(viewport.scale, 1)
+        for _ in 0..<40 { viewport.zoom(by: 1.25) }
+        XCTAssertEqual(viewport.scale, CallGraphViewport.scales.upperBound)
+        viewport.reset(fitting: CGSize(width: 1150, height: 2000), in: CGSize(width: 900, height: 500))
+        XCTAssertEqual(viewport.offset, .zero)
+        XCTAssertEqual(viewport.scale, 0.3, "a tall graph shrinks to fit, but no further than 30%")
+        viewport.reset(fitting: CGSize(width: 600, height: 300), in: CGSize(width: 900, height: 500))
+        XCTAssertEqual(viewport.scale, 1, "a small graph stays at 100%")
     }
 
     /// 逐个验收: a changed TypeScript function gets an 影响 row with its caller count, which opens 调用关系.

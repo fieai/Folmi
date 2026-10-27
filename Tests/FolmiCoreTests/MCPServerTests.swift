@@ -42,10 +42,75 @@ final class MCPServerTests: XCTestCase {
         XCTAssertNil(server.handle(Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8)), "notifications get no reply")
         let list = try send(server, ["jsonrpc": "2.0", "id": 2, "method": "tools/list"])
         let names = ((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
-        XCTAssertEqual(Set(names), ["list_review_comments", "mark_comment_addressed", "review_status", "recent_decisions", "show_in_folmi"])
+        XCTAssertEqual(Set(names), ["list_review_comments", "mark_comment_addressed", "review_status", "recent_decisions", "show_in_folmi",
+                                    "callers", "callees", "change_impact"])
         XCTAssertFalse(names.contains { $0.contains("commit") || $0.contains("stage") || $0.contains("push") })
+        let readOnly = ((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.filter {
+            ($0["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool == true
+        }.compactMap { $0["name"] as? String } ?? []
+        XCTAssertEqual(Set(readOnly), ["list_review_comments", "review_status", "recent_decisions", "callers", "callees", "change_impact"])
         let unknown = try send(server, ["jsonrpc": "2.0", "id": 3, "method": "resources/list"])
         XCTAssertEqual((unknown["error"] as? [String: Any])?["code"] as? Int, -32601)
+    }
+
+    /// A committed project, then changed the way an agent would: callers and callees follow imports, change_impact
+    /// lists the old name still called and the call that no longer fits.
+    func testCallMapTools() throws {
+        func git(_ arguments: String...) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git"); process.currentDirectoryURL = root
+            process.arguments = ["-c", "user.name=t", "-c", "user.email=t@example.com"] + arguments
+            process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+            try process.run(); process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, arguments.joined(separator: " "))
+        }
+        try FileManager.default.removeItem(at: gitDir)
+        try git("init", "-q")
+        func write(_ path: String, _ text: String) throws {
+            let url = root.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: url)
+        }
+        try write("src/orders.ts", "export function getOrder(id: string) { return id }\nexport function formatTotal(amount: number) { return String(amount) }\n")
+        try write("src/page.ts", "import { getOrder, formatTotal as total } from './orders'\nexport function page(id: string) {\n  return total(Number(getOrder(id)))\n}\n")
+        try write("src/other.ts", "export function load() { return 1 }\n")
+        try write("src/more.ts", "export function load() { return 2 }\n")
+        let server = server()
+        XCTAssertTrue(try call(server, "change_impact").text.contains("nothing to compare"), "no commit yet")
+        try git("add", "-A"); try git("commit", "-qm", "init")
+
+        var reply = try call(server, "callers", ["function": "getOrder"])
+        XCTAssertFalse(reply.error, reply.text)
+        XCTAssertTrue(reply.text.contains("\"function\" : \"page\"") && reply.text.contains("\"file\" : \"src/page.ts\""), reply.text)
+        reply = try call(server, "callees", ["function": "page"])
+        XCTAssertTrue(reply.text.contains("\"definedIn\" : \"src/orders.ts:2\""), "formatTotal through `as total`: \(reply.text)")
+        reply = try call(server, "callers", ["function": "load"])
+        XCTAssertTrue(reply.error && reply.text.contains("pass `file`"), reply.text)
+        XCTAssertFalse(try call(server, "callers", ["function": "load", "file": "src/more.ts"]).error)
+        reply = try call(server, "callers", ["function": "getOrdr"])
+        XCTAssertTrue(reply.error && reply.text.contains("Similar: getOrder"), reply.text)
+        XCTAssertTrue(try call(server, "change_impact").text.contains("No changed JavaScript"))
+
+        try write("src/orders.ts", "export function loadOrder(id: string) { return id }\nexport function formatTotal(amount: number, currency: string) { return currency + amount }\n")
+        reply = try call(server, "change_impact")
+        XCTAssertFalse(reply.error, reply.text)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(reply.text.utf8)) as? [String: Any])
+        let file = try XCTUnwrap((object["files"] as? [[String: Any]])?.first)
+        let removed = try XCTUnwrap((file["removedButStillCalled"] as? [[String: Any]])?.first)
+        XCTAssertEqual(removed["function"] as? String, "getOrder"); XCTAssertEqual(removed["renamedTo"] as? String, "loadOrder")
+        XCTAssertEqual(((removed["stillCalledFrom"] as? [[String: Any]])?.first)?["line"] as? Int, 3)
+        let parameters = try XCTUnwrap((file["parameterChanges"] as? [[String: Any]])?.first)
+        XCTAssertEqual(parameters["after"] as? String, "(amount, currency)")
+        XCTAssertEqual(((parameters["callsThatDoNotFit"] as? [[String: Any]])?.first)?["problem"] as? String, "少了 1 个参数（currency）")
+        XCTAssertEqual((file["changedFunctions"] as? [[String: Any]])?.compactMap { $0["function"] as? String }, ["loadOrder", "formatTotal"])
+        XCTAssertTrue((object["summary"] as? String ?? "").hasPrefix("1 call(s) still use"), "\(object["summary"] ?? "")")
+        XCTAssertTrue(try call(server, "change_impact", ["paths": ["src/page.ts"]]).text.contains("No changed"), "filtered to an unchanged file")
+    }
+
+    func testNewSideLinesFromAZeroContextDiff() {
+        let diff = "@@ -1 +1 @@\n-a\n+b\n@@ -5,2 +4,0 @@\n-c\n-d\n@@ -9,0 +9,2 @@\n+e\n+f\n"
+        let changes = MCPServer.newSideChanges(diff)
+        XCTAssertEqual(changes.lines, [1, 9, 10]); XCTAssertEqual(changes.gaps, [5])
     }
 
     func testCommentsAndReplies() throws {

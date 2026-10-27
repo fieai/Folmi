@@ -633,13 +633,90 @@ private struct CallTreeRow: View {
 
 // MARK: - 关系图
 
-/// The center with two levels of callers on the left and two of callees on the right. Click a box to center it.
+/// Where the 关系图 is panned and how far it is zoomed. A drag on the empty background pans (`GraphPanSurface`);
+/// the wheel, two-finger swipes and pinches reach the view under the pointer (often a box), so a local monitor
+/// takes them while the pointer is over the graph.
+@MainActor @Observable
+final class CallGraphViewport {
+    static let scales: ClosedRange<CGFloat> = 0.3...2
+    var offset: CGSize = .zero
+    var scale: CGFloat = 1
+    @ObservationIgnored var hovering = false
+    @ObservationIgnored private var monitor: Any?
+
+    func clamp(_ scale: CGFloat) -> CGFloat { min(max(scale, Self.scales.lowerBound), Self.scales.upperBound) }
+    func zoom(by factor: CGFloat) { scale = clamp(scale * factor) }
+    /// Back to the center, at 100% or smaller when the graph would not fit.
+    func reset(fitting content: CGSize, in view: CGSize) {
+        offset = .zero
+        guard content.width > 0, content.height > 0 else { scale = 1; return }
+        scale = clamp(min(1, view.width / content.width, view.height / content.height))
+    }
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify]) { [weak self] event in
+            MainActor.assumeIsolated { self?.handle(event) ?? false } ? nil : event
+        }
+    }
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    /// Two-finger swipes and the wheel pan; with ⌘ held they zoom, as a pinch does. Returns whether the event was used.
+    func handle(_ event: NSEvent) -> Bool {
+        guard hovering else { return false }
+        if event.type == .magnify { zoom(by: 1 + event.magnification); return true }
+        let step: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 12
+        if event.modifierFlags.contains(.command) {
+            zoom(by: exp(event.scrollingDeltaY * step * 0.01))
+        } else {
+            offset.width += event.scrollingDeltaX * step
+            offset.height += event.scrollingDeltaY * step
+        }
+        return true
+    }
+}
+
+/// The empty background of the 关系图: pressing and dragging on it moves the graph. AppKit rather than a SwiftUI
+/// drag gesture, so the boxes above keep their clicks and the drag follows the mouse exactly.
+private struct GraphPanSurface: NSViewRepresentable {
+    let pan: (CGSize) -> Void
+    func makeNSView(context: Context) -> SurfaceView { SurfaceView() }
+    func updateNSView(_ view: SurfaceView, context: Context) { view.pan = pan }
+
+    final class SurfaceView: NSView {
+        var pan: ((CGSize) -> Void)?
+        private var last: NSPoint?
+        override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+        // A drag in a window that is not in front moves the graph too, as it does in maps and canvases.
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) { last = event.locationInWindow; NSCursor.closedHand.push() }
+        override func mouseDragged(with event: NSEvent) {
+            guard let last else { return }
+            let point = event.locationInWindow
+            // Window coordinates grow upward; SwiftUI offsets grow downward.
+            pan?(CGSize(width: point.x - last.x, height: last.y - point.y))
+            self.last = point
+        }
+        override func mouseUp(with event: NSEvent) { if last != nil { NSCursor.pop() }; last = nil }
+    }
+}
+
+/// The center with two levels of callers on the left and two of callees on the right. Click a box to center it;
+/// drag (or swipe) to move around, ⌘-scroll or pinch to zoom.
 private struct CallGraphView: View {
     let model: FolmiModel
     let graph: CallGraph
     let focus: CodeSymbol
     @Environment(\.folmiTheme) private var theme
-    private static let perColumn = 12
+    @State private var viewport = CallGraphViewport()
+    /// The graph can be moved now, so a column holds far more than fits on screen.
+    private static let perColumn = 40
+    private static let boxWidth: CGFloat = 180
+    private static let columnStep: CGFloat = 230
+    private static let rowStep: CGFloat = 48
 
     private struct Node: Identifiable {
         let id: String
@@ -693,59 +770,101 @@ private struct CallGraphView: View {
         return result
     }
 
+    /// The whole graph at 100%: five columns, as tall as the fullest one (plus its 还有 n 个 line).
+    private static func contentSize(_ layout: Layout) -> CGSize {
+        let rows = Dictionary(grouping: layout.nodes, by: \.column).values.map(\.count).max() ?? 1
+        return CGSize(width: columnStep * 5, height: CGFloat(rows) * rowStep + (layout.hidden.isEmpty ? 0 : 28) + 24)
+    }
+
     var body: some View {
         let layout = layout()
+        let content = Self.contentSize(layout)
+        let counts = Dictionary(grouping: layout.nodes, by: \.column).mapValues(\.count)
+        let tallest = CGFloat(counts.values.max() ?? 1)
+        let points = Dictionary(uniqueKeysWithValues: layout.nodes.map { node in
+            (node.id, position(node, count: counts[node.column] ?? 1, tallest: tallest))
+        })
         GeometryReader { geometry in
-            let size = geometry.size
-            let counts = Dictionary(grouping: layout.nodes, by: \.column).mapValues(\.count)
-            let points = Dictionary(uniqueKeysWithValues: layout.nodes.map { node in
-                (node.id, position(node, count: counts[node.column] ?? 1, hidden: layout.hidden[node.column] ?? 0, size: size))
-            })
             ZStack {
-                Canvas { context, _ in
-                    let color = Color.theme(theme, \.tertiaryText)
-                    for (from, to) in layout.edges {
-                        guard let a = points[from], let b = points[to] else { continue }
-                        let start = CGPoint(x: a.x + boxWidth(size) / 2, y: a.y), end = CGPoint(x: b.x - boxWidth(size) / 2, y: b.y)
-                        var path = Path()
-                        path.move(to: start)
-                        let middle = (start.x + end.x) / 2
-                        path.addCurve(to: end, control1: CGPoint(x: middle, y: start.y), control2: CGPoint(x: middle, y: end.y))
-                        context.stroke(path, with: .color(color.opacity(0.6)), lineWidth: 1)
-                        var arrow = Path()
-                        arrow.move(to: CGPoint(x: end.x - 5, y: end.y - 3)); arrow.addLine(to: end); arrow.addLine(to: CGPoint(x: end.x - 5, y: end.y + 3))
-                        context.stroke(arrow, with: .color(color.opacity(0.8)), lineWidth: 1)
-                    }
-                }
-                ForEach(layout.nodes) { node in
-                    box(node, width: boxWidth(size)).position(points[node.id] ?? .zero)
-                }
-                ForEach(layout.hidden.sorted(by: { $0.key < $1.key }), id: \.key) { column, count in
-                    Text("还有 \(count) 个，在「上下游」里看全").themedFont(.caption2, points: 9).foregroundStyle(.tertiary)
-                        .position(x: columnX(column, size), y: size.height - 14)
-                }
-                if layout.nodes.count == 1 {
-                    Text("没找到它的上下游。").themedFont(.caption, points: 10).foregroundStyle(.tertiary).position(x: size.width / 2, y: size.height / 2 + 40)
+                GraphPanSurface { delta in viewport.offset.width += delta.width; viewport.offset.height += delta.height }
+                graphContent(layout, points: points, content: content)
+                    .frame(width: content.width, height: content.height)
+                    .scaleEffect(viewport.scale)
+                    .offset(viewport.offset)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+            .onContinuousHover { phase in
+                if case .active = phase { viewport.hovering = true } else { viewport.hovering = false }
+            }
+            .overlay(alignment: .bottomTrailing) { controls(content: content, view: geometry.size) }
+            .onChange(of: focus.id, initial: true) { viewport.reset(fitting: content, in: geometry.size) }
+        }
+        .onAppear { viewport.start() }
+        .onDisappear { viewport.stop() }
+    }
+
+    private func graphContent(_ layout: Layout, points: [String: CGPoint], content: CGSize) -> some View {
+        // Only the boxes take clicks; the lines and empty space let a press through to the pan surface below.
+        ZStack {
+            Canvas { context, _ in
+                let color = Color.theme(theme, \.tertiaryText)
+                for (from, to) in layout.edges {
+                    guard let a = points[from], let b = points[to] else { continue }
+                    let start = CGPoint(x: a.x + Self.boxWidth / 2, y: a.y), end = CGPoint(x: b.x - Self.boxWidth / 2, y: b.y)
+                    var path = Path()
+                    path.move(to: start)
+                    let middle = (start.x + end.x) / 2
+                    path.addCurve(to: end, control1: CGPoint(x: middle, y: start.y), control2: CGPoint(x: middle, y: end.y))
+                    context.stroke(path, with: .color(color.opacity(0.6)), lineWidth: 1)
+                    var arrow = Path()
+                    arrow.move(to: CGPoint(x: end.x - 5, y: end.y - 3)); arrow.addLine(to: end); arrow.addLine(to: CGPoint(x: end.x - 5, y: end.y + 3))
+                    context.stroke(arrow, with: .color(color.opacity(0.8)), lineWidth: 1)
                 }
             }
+            .allowsHitTesting(false)
+            ForEach(layout.nodes) { node in
+                box(node).position(points[node.id] ?? .zero)
+            }
+            ForEach(layout.hidden.sorted(by: { $0.key < $1.key }), id: \.key) { column, count in
+                Text("还有 \(count) 个，在「上下游」里看全").themedFont(.caption2, points: 9).foregroundStyle(.tertiary)
+                    .position(x: columnX(column), y: content.height - 14).allowsHitTesting(false)
+            }
+            if layout.nodes.count == 1 {
+                Text("没找到它的上下游。").themedFont(.caption, points: 10).foregroundStyle(.tertiary)
+                    .position(x: content.width / 2, y: content.height / 2 + 40).allowsHitTesting(false)
+            }
         }
-        .padding(.vertical, 12)
+    }
+
+    private func controls(content: CGSize, view: CGSize) -> some View {
+        HStack(spacing: 2) {
+            Button { viewport.zoom(by: 1 / 1.25) } label: { Image(systemName: "minus") }.help("缩小（⌘ 加滚轮也可以）")
+            Text("\(Int((viewport.scale * 100).rounded()))%").themedFont(.caption2.monospacedDigit(), points: 9)
+                .foregroundStyle(.secondary).frame(width: 38)
+            Button { viewport.zoom(by: 1.25) } label: { Image(systemName: "plus") }.help("放大（⌘ 加滚轮也可以）")
+            Button { viewport.reset(fitting: content, in: view) } label: { Image(systemName: "scope") }.help("回到中心")
+        }
+        .buttonStyle(.borderless).controlSize(.small)
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 6).fill(ThemeColor(token: .canvas)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(ThemeColor(token: .border), lineWidth: 1))
+        .padding(10)
     }
 
     private static func detail(_ symbol: CodeSymbol) -> String {
         (symbol.container.map { $0 + " · " } ?? "") + "\(symbol.fileName):\(symbol.line)"
     }
 
-    private func boxWidth(_ size: CGSize) -> CGFloat { min(200, max(110, size.width / 5 - 24)) }
-    private func columnX(_ column: Int, _ size: CGSize) -> CGFloat { size.width * (CGFloat(column) + 0.5) / 5 }
+    private func columnX(_ column: Int) -> CGFloat { Self.columnStep * (CGFloat(column) + 0.5) }
 
-    private func position(_ node: Node, count: Int, hidden: Int, size: CGSize) -> CGPoint {
-        let usable = size.height - (hidden > 0 ? 28 : 0)
-        let step = usable / CGFloat(max(count, 1))
-        return CGPoint(x: columnX(node.column, size), y: step * (CGFloat(node.row) + 0.5))
+    /// Rows centered on the middle of the graph, so the center box sits level with its neighbours.
+    private func position(_ node: Node, count: Int, tallest: CGFloat) -> CGPoint {
+        let top = (tallest - CGFloat(count)) * Self.rowStep / 2
+        return CGPoint(x: columnX(node.column), y: 12 + top + Self.rowStep * (CGFloat(node.row) + 0.5))
     }
 
-    private func box(_ node: Node, width: CGFloat) -> some View {
+    private func box(_ node: Node) -> some View {
         let center = node.id == focus.id
         return Button { if let symbol = node.symbol, !center { model.focusCall(symbol) } } label: {
             VStack(spacing: 1) {
@@ -754,7 +873,7 @@ private struct CallGraphView: View {
                     .foregroundStyle(node.certain && node.symbol != nil ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                 Text(node.certain ? node.detail : node.detail + " · 可能").themedFont(.caption2, points: 9).foregroundStyle(.tertiary).lineLimit(1)
             }
-            .padding(.horizontal, 8).padding(.vertical, 5).frame(width: width)
+            .padding(.horizontal, 8).padding(.vertical, 5).frame(width: Self.boxWidth)
             .background(RoundedRectangle(cornerRadius: 6).fill(center ? ThemeColor(token: .selectedFill) : ThemeColor(token: .canvas)))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(center ? ThemeColor(token: .accent) : ThemeColor(token: .border), lineWidth: 1))
         }

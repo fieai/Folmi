@@ -2,7 +2,8 @@ import Foundation
 
 /// `folmi-hook mcp`: an MCP server on stdio (one JSON-RPC message per line) that lets Claude Code, the Claude app
 /// or Codex read what the user decided in Folmi. It can read review notes and status, mark a note as dealt with,
-/// and ask the app to show a place. It cannot stage, discard, commit or push: the review stays the user's.
+/// ask the app to show a place, and read the call map (who calls a function, what a change breaks). It cannot
+/// stage, discard, commit or push: the review stays the user's.
 public final class MCPServer {
     public static let name = "folmi"
     static let protocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
@@ -13,6 +14,9 @@ public final class MCPServer {
     /// Opens a `folmi://` link in the app; returns an error message or nil.
     let openLink: (URL, SharedAppState?) -> String?
     let now: () -> Date
+    /// Outlines of the files read for the call map, so a later tool call rereads only what changed.
+    var callCache = CallGraphCache()
+    var callCacheRoot: String?
 
     public init(settingsDirectory: URL?, workingDirectory: URL, now: @escaping () -> Date = Date.init,
                 openLink: @escaping (URL, SharedAppState?) -> String? = MCPServer.openWithSystem) {
@@ -48,7 +52,7 @@ public final class MCPServer {
                 "protocolVersion": version,
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": Self.name, "version": "1"],
-                "instructions": "Folmi is where the user reviews your changes. Read their review comments with list_review_comments, fix them, then call mark_comment_addressed for each. You cannot stage, commit or push from here: the user decides in the app.",
+                "instructions": "Folmi is where the user reviews your changes. Read their review comments with list_review_comments, fix them, then call mark_comment_addressed for each. Before renaming, deleting or changing the parameters of a JavaScript, TypeScript or Python function, see who calls it with callers; when you are done, run change_impact to find calls your changes left broken. You cannot stage, commit or push from here: the user decides in the app.",
             ])
         case "ping":
             return result(id, [:])
@@ -81,11 +85,18 @@ public final class MCPServer {
 
     static var tools: [[String: Any]] {
         let repo: [String: Any] = ["type": "string", "description": "Repository path. Optional: defaults to the current directory, else the project open in Folmi."]
+        // Only reading tools say so: clients such as Codex run those without asking, and ask before the others.
+        let writes: Set<String> = ["mark_comment_addressed", "show_in_folmi"]
         func tool(_ name: String, _ description: String, _ properties: [String: Any] = [:], required: [String] = []) -> [String: Any] {
             var props = properties; props["repo"] = repo
             return ["name": name, "description": description,
-                    "inputSchema": ["type": "object", "properties": props, "required": required]]
+                    "inputSchema": ["type": "object", "properties": props, "required": required],
+                    "annotations": ["readOnlyHint": !writes.contains(name), "destructiveHint": false, "openWorldHint": false]]
         }
+        let callArguments: [String: Any] = [
+            "function": ["type": "string", "description": "Function name, or Class.method."],
+            "file": ["type": "string", "description": "File that defines it, relative to the repository root. Needed only when several functions share the name."],
+        ]
         return [
             tool("list_review_comments",
                  "The user's review comments on the current changes: file, lines, the diff lines they refer to, and what to change. Fix them, then call mark_comment_addressed for each.",
@@ -103,6 +114,15 @@ public final class MCPServer {
                  "Open a file's change in Folmi at a line, so the user can look at it.",
                  ["path": ["type": "string", "description": "File path relative to the repository root."],
                   "line": ["type": "integer", "description": "Line number (optional)."]], required: ["path"]),
+            tool("callers",
+                 "Who calls a JavaScript, TypeScript or Python function in this repository: each calling function with file and lines. Names are followed through imports, re-exports, aliases and `this` / `self` members. `certain: false` means matched by method name only.",
+                 callArguments, required: ["function"]),
+            tool("callees",
+                 "What a JavaScript, TypeScript or Python function calls: functions in this repository (with where they are defined) and outside packages.",
+                 callArguments, required: ["function"]),
+            tool("change_impact",
+                 "What the uncommitted changes (staged and not, against HEAD) do to calls in JavaScript, TypeScript and Python: removed or renamed functions still called by the old name, functions whose new parameters some calls do not fit, and who calls each changed function. Run it before you finish.",
+                 ["paths": ["type": "array", "items": ["type": "string"], "description": "Only these files (relative to the repository root). Optional: all changed files."]]),
         ]
     }
 
@@ -113,6 +133,9 @@ public final class MCPServer {
         case "review_status": return try reviewStatus(arguments)
         case "recent_decisions": return try recentDecisions(arguments)
         case "show_in_folmi": return try show(arguments)
+        case "callers": return try callers(arguments)
+        case "callees": return try callees(arguments)
+        case "change_impact": return try changeImpact(arguments)
         default: throw Failure(message: "Unknown tool: \(name)")
         }
     }
@@ -213,7 +236,7 @@ public final class MCPServer {
         return "Opened \(path)\(line.map { ":\($0)" } ?? "") in Folmi."
     }
 
-    private func json(_ object: Any) throws -> String {
+    func json(_ object: Any) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         return String(decoding: data, as: UTF8.self)
     }
