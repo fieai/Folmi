@@ -637,7 +637,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
         <div>
           <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M7.3 10.9 16.7 6.1M7.3 13.1l9.4 4.8"/></svg></div>
           <h3>这处改动牵连到哪</h3>
-          <p>AI 改了一个函数，改动上方就写出它被几处调用；删掉或改了名，旧名字还有谁在用；参数改了，哪几处调用没跟着改。AI 一轮改完准备结束时，Folmi 先查一遍，有落下的调用就把清单交回给它，改好再结束；AI 也能通过 MCP 自己查谁在调用。按 <code>⌃⌥H</code> 看一个函数谁调用它、它又调用了谁，能顺着 import 别名、路径别名找过去。支持 JS、TS 和 Python。</p>
+          <p>AI 改了一个函数，改动上方就写出它被几处调用；删掉或改了名，旧名字还有谁在用；参数改了，哪几处调用没跟着改。AI 一轮改完准备结束时，Folmi 先查一遍，有落下的调用就把清单交回给它，改好再结束；AI 也能通过 MCP 自己查谁在调用。按 <code>⌃⌥H</code> 看一个函数谁调用它、它又调用了谁，能顺着 import 别名、路径别名找过去。支持 JS、TS 和 Python；其他语言装了 CodeGraph 也能查。</p>
         </div>
         <div class="mini-list">
           <div>影响 <code>loadInvoice 被 3 处调用</code></div>
@@ -653,6 +653,19 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
         <h3>意见直接发回给 AI</h3>
         <p>在改动上写一句「这里别这么做」，一键送回给 agent 去改，带着文件和行号，不用复制粘贴。</p>
       </div>
+      <div class="feat wide reveal">
+        <div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h11M11 3l4 4-4 4M20 17H9M13 13l-4 4 4 4"/></svg></div>
+          <h3>这个接口前端谁在调</h3>
+          <p>后端的路由（Express、NestJS、Next.js、FastAPI、Flask、Django）和前端的 fetch、axios 请求按路径配起来。AI 改了一个接口，改动上方就写出前端哪几处在调；前后端在两个仓库也能关联起来看。</p>
+        </div>
+        <div class="mini-list">
+          <div>接口 <code>GET /api/orders/:id 前端 3 处在调</code></div>
+          <div>↳ <code>OrderPage · orders.ts:12</code></div>
+          <div>⚠ <code>前端调了、后端没对上 2 处</code></div>
+          <div>⇄ <code>关联项目 web-admin</code></div>
+        </div>
+      </div>
       <div class="feat reveal">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg></div>
         <h3>终端就在旁边</h3>
@@ -663,10 +676,17 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
         <h3>打开和切换都很快</h3>
         <p>原生 macOS 应用，不用 Electron。打开就是上次的样子，十万行的改动也顺着滚。变慢的改动不合入。</p>
       </div>
-      <div class="feat reveal">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 15l2 2 4-4"/></svg></div>
-        <h3>待办按日期排好</h3>
-        <p>按 <code>⌘⇧T</code> 打开待办页：所有项目随手记里的 <code>- [ ]</code> 按过期、今天、这周分组，旁边是月历。日期照 Obsidian Tasks 的写法写在那一行里，比如 <code>📅 2026-10-30</code>。</p>
+      <div class="feat wide reveal">
+        <div>
+          <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 15l2 2 4-4"/></svg></div>
+          <h3>待办按日期排好</h3>
+          <p>按 <code>⌘⇧T</code> 打开待办页：所有项目随手记里的 <code>- [ ]</code> 按过期、今天、这周分组，旁边是月历。日期照 Obsidian Tasks 的写法写在那一行里，比如 <code>📅 2026-10-30</code>。</p>
+        </div>
+        <div class="mini-list">
+          <div>过期 <code>- [ ] 补登录页的测试 📅 2026-10-25</code></div>
+          <div>今天 <code>- [ ] 看完 AI 改的支付模块</code></div>
+          <div>这周 <code>- [ ] 发 0.12 版 📅 2026-10-30</code></div>
+        </div>
       </div>
       <div class="feat wide reveal" style="grid-column: 1 / -1">
         <div>
@@ -745,7 +765,7 @@ footer .right { margin-left: auto; display: flex; gap: 18px } footer a { text-de
           <tr><th>它是什么</th><td class="us">看改动、收改动的 macOS 原生应用</td><td>带 AI 的代码编辑器，基于 VS Code</td><td>通用代码编辑器，靠扩展接 AI</td></tr>
           <tr><th>谁来写代码</th><td class="us">终端里的 Claude Code、Codex，或任何别的 AI</td><td>主要是 Cursor 自带的 agent</td><td>Copilot 或其他扩展</td></tr>
           <tr><th>看 AI 的改动</th><td class="us">一处一处过，空格 / ⏎ / ⌫ 全用键盘；依赖、配置、大段删除排在前面，并写明原因</td><td>在编辑器里逐块接受或拒绝自带 agent 的改动</td><td>在差异编辑器里保留或撤销 Copilot 的改动</td></tr>
-          <tr><th>改动牵连到哪</th><td class="us">写在改动上方：改了的函数被几处调用、改名后旧名字还有谁在用、参数改了调用方有没有跟着改；AI 结束一轮前先自查一遍</td><td colspan="2">用「查找所有引用」一个个查</td></tr>
+          <tr><th>改动牵连到哪</th><td class="us">写在改动上方：改了的函数被几处调用、改名后旧名字还有谁在用、参数改了调用方有没有跟着改；改了接口，前端哪几处在调；AI 结束一轮前先自查一遍</td><td colspan="2">用「查找所有引用」一个个查</td></tr>
           <tr><th>终端里 Claude Code / Codex 改的文件</th><td class="us">按轮次接入：整批退回、按轮次看、拦危险命令</td><td colspan="2">当作普通文件改动，在源代码管理面板里看</td></tr>
           <tr><th>反馈给 AI</th><td class="us">评论带文件和行号一键发回终端；反复丢弃的改动归纳成规则写进 CLAUDE.md / AGENTS.md</td><td>在自带的对话里说</td><td>在 Copilot 对话里说</td></tr>
           <tr><th>AI 写的 Markdown</th><td class="us">默认阅读视图：公式、Mermaid、渲染后的差异、大纲、文档历史</td><td colspan="2">Markdown 预览；公式和 Mermaid 通常要装扩展</td></tr>
