@@ -26,6 +26,8 @@ public enum UndoStep: Sendable, Equatable {
     case trash(path: String, trashed: String?)
     /// A stash action to take back (see `StashUndo`).
     case stash(StashUndo)
+    /// Undo removes the remote `current` (nil: none) and adds back `restore` (nil: none) with its tracking branches.
+    case remote(restore: RemoteRecord?, current: RemoteRecord?)
     /// Several steps that undo together, newest last.
     case group([UndoStep])
 
@@ -35,7 +37,7 @@ public enum UndoStep: Sendable, Equatable {
         case .index(let entries): return entries.map(\.path)
         case .move(let restore, let current): return [restore, current]
         case .trash(let path, _): return [path]
-        case .head, .reset, .stash, .ref, .renameBranch: return []
+        case .head, .reset, .stash, .ref, .renameBranch, .remote: return []
         case .group(let steps): return steps.flatMap(\.paths)
         }
     }
@@ -105,7 +107,7 @@ extension GitRepository {
         switch step {
         case .worktree(let files): return try await captureWorktree(files.map(\.path))
         case .index(let entries): return try await captureIndex(entries.map(\.path))
-        case .head, .reset, .stash, .ref, .renameBranch, .move, .trash: return step
+        case .head, .reset, .stash, .ref, .renameBranch, .move, .trash, .remote: return step
         case .group(let steps):
             var result: [UndoStep] = []
             for step in steps { result.append(try await recapture(step)) }
@@ -207,6 +209,8 @@ extension GitRepository {
             return .trash(path: path, trashed: nil)
         case .stash(let change):
             return try undoStash(change)
+        case let .remote(restore, current):
+            return try undoRemote(restore: restore, current: current)
         case .group(let steps):
             var inverses: [UndoStep] = []
             for step in steps.reversed() { inverses.append(try await undo(step)) }

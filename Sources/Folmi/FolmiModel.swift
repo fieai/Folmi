@@ -151,6 +151,11 @@ final class FolmiModel {
     var worktrees: [WorktreeStatus] = []
     @ObservationIgnored var worktreesRead: Date?
     var showWorktrees = false
+    /// The 远端 sheet: the project's remotes with their addresses, read when it opens and after each change.
+    var showRemotes = false
+    var remoteList: [GitRemote] = []
+    /// A remote waiting for the delete confirmation, with what removing it takes away.
+    var remoteRemoval: RemoteRecord?
     @ObservationIgnored var historyRequest = UUID()
     @ObservationIgnored var commitRequest = UUID()
     static let historyLimit = 500
@@ -777,7 +782,7 @@ final class FolmiModel {
 
     /// A click on the window outside an open sheet closes it, like a popover.
     func dismissSheets() {
-        showDelivery = false; showPull = false; showStashes = false; showActivity = false; showAISettings = false; showPalette = false; showHooksSetup = false; showMemory = false; showWorktrees = false
+        showDelivery = false; showPull = false; showStashes = false; showActivity = false; showAISettings = false; showPalette = false; showHooksSetup = false; showMemory = false; showWorktrees = false; showRemotes = false
         showTasks = false; showOverview = false; showDocHistory = false; readerCommentDraft = nil; showQuickOpen = false; showProjectSearch = false; showSettings = false
     }
     /// The file tree's 看改动: the change's diff, in the area that has it.

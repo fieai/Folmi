@@ -71,6 +71,7 @@ struct FolmiView: View {
         .sheet(isPresented: $model.showHooksSetup) { HooksSetupSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showMemory) { MemorySheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showWorktrees) { WorktreesSheet(model: model).sheetEntrance() }
+        .sheet(isPresented: $model.showRemotes) { RemotesSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showTasks) { TasksSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showOverview) { ProjectOverviewSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showDocHistory) { DocHistorySheet(model: model).sheetEntrance() }
@@ -178,6 +179,8 @@ private struct BranchMenu: View {
                     }
                     .disabled(others.isEmpty)
                 }
+                Divider()
+                Button(snapshot.remotes.isEmpty ? "添加远端…" : "远端（\(snapshot.remotes.count)）…") { model.showRemotes = true }
             } label: {
                 // A toolbar menu draws only the label's first text, so the counts are part of it.
                 HStack(spacing: 6) {
@@ -191,7 +194,7 @@ private struct BranchMenu: View {
                 }
             }
             .labelStyle(.titleAndIcon)
-            .disabled(model.busy || (snapshot.branches.isEmpty && unpushed == 0 && snapshot.upstream == nil))
+            .disabled(model.busy)
             .help(unpushed > 0 ? "\(unpushed) 个提交还没推送；点开可推送、拉取或切换分支"
                   : inReview > 0 ? "\(inReview) 个提交已推到 Gerrit 等待评审，合并后会自动消失"
                   : ((snapshot.behind ?? 0) > 0 ? "远端有 \(snapshot.behind ?? 0) 个新提交；点开可拉取" : "切换本地分支；未提交改动由 Git 检查"))

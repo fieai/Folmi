@@ -351,6 +351,50 @@ final class RefTests: XCTestCase {
         XCTAssertEqual(try f.git(["tag"]), "v3\n")
     }
 
+    func testRemotesAddRemoveAndUndoRestoresEverything() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let head = try rev(f, "HEAD")
+        let added = try await f.repo.addRemote(" origin ", url: "https://me:secret@example.com/app.git")
+        try f.git(["remote", "add", "a.b", "git@host:z.git"])
+        try f.git(["config", "remote.origin.pushurl", "ssh://example.com/app.git"])
+        try f.git(["update-ref", "refs/remotes/origin/main", head])
+        try f.git(["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"])
+        try f.git(["branch", "--set-upstream-to=origin/main", "main"])
+        let listed = try await f.repo.remotes()
+        XCTAssertEqual(listed, [GitRemote(name: "origin", fetchURL: "https://me:secret@example.com/app.git", pushURL: "ssh://example.com/app.git"),
+                                GitRemote(name: "a.b", fetchURL: "git@host:z.git", pushURL: nil)])
+        XCTAssertEqual(GitRemote.displayURL(listed[0].fetchURL), "https://me:•••@example.com/app.git")
+        XCTAssertEqual(GitRemote.displayURL("git@host:z.git"), "git@host:z.git")
+        XCTAssertEqual(GitRepository.remoteProblem(name: "origin", url: "x", existing: ["origin"]), "已经有叫 origin 的远端了")
+        XCTAssertNotNil(GitRepository.remoteProblem(name: "bad name", url: "x", existing: []))
+        XCTAssertNotNil(GitRepository.remoteProblem(name: "up", url: "--upload-pack=x", existing: []))
+        XCTAssertNil(GitRepository.remoteProblem(name: "upstream", url: "git@host:z.git", existing: ["origin"]))
+        do { _ = try await f.repo.addRemote("origin", url: "x"); XCTFail("重名") } catch {}
+
+        let record = try await f.repo.remoteRecord("origin")
+        XCTAssertEqual(record.trackingBranches, ["main"])
+        let config = try f.git(["config", "--local", "--list"])
+        let removed = try await f.repo.removeRemote("origin")
+        let afterRemove = try await f.repo.remotes()
+        XCTAssertEqual(afterRemove.map(\.name), ["a.b"])
+        XCTAssertEqual(try f.git(["for-each-ref", "refs/remotes/origin/"]), "")
+        let redo = try await f.repo.undo(removed)
+        XCTAssertEqual(try f.git(["config", "--local", "--list"]).split(separator: "\n").sorted(), config.split(separator: "\n").sorted())
+        XCTAssertEqual(try rev(f, "refs/remotes/origin/main"), head)
+        XCTAssertEqual(try f.git(["symbolic-ref", "refs/remotes/origin/HEAD"]), "refs/remotes/origin/main\n")
+        XCTAssertEqual(try f.git(["rev-parse", "--abbrev-ref", "main@{upstream}"]), "origin/main\n")
+        _ = try await f.repo.undo(redo)
+        let afterRedo = try await f.repo.remotes()
+        XCTAssertEqual(afterRedo.map(\.name), ["a.b"])
+        // The add's undo, with the remote already gone, is refused rather than removing something else.
+        do { _ = try await f.repo.undo(added); XCTFail("已经不在") } catch {}
+        let again = try await f.repo.addRemote("up", url: "git@host:up.git")
+        _ = try await f.repo.undo(again)
+        let finalNames = try await f.repo.remotes()
+        XCTAssertEqual(finalNames.map(\.name), ["a.b"])
+    }
+
     func testIgnorePatternsAndGitignoreAppend() async throws {
         XCTAssertEqual(GitRepository.ignorePattern(for: "build/out.log", folder: false), "/build/out.log")
         XCTAssertEqual(GitRepository.ignorePattern(for: "tmp", folder: true), "/tmp/")
