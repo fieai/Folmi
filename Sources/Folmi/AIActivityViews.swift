@@ -56,6 +56,7 @@ struct HooksSetupSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var status = HooksInstaller.Status(installed: false, guarded: false)
     @State private var guarded = true
+    @State private var checked = true
     @State private var message: String?
 
     var body: some View {
@@ -69,14 +70,16 @@ struct HooksSetupSheet: View {
                 Label("Claude 改文件时，顶部出现「正在修改 / 改完了」", systemImage: "capsule")
                 Label("每一轮改动可以整批撤回（Claude 用 Edit / Write 改的文件）", systemImage: "arrow.uturn.backward")
                 Label("可选：拦截 git push、reset --hard、clean -f、branch -D、checkout . 等危险命令", systemImage: "hand.raised")
+                Label("可选：一轮改完时检查调用，删掉或改名的函数还有地方在调用、改了参数没跟着改的，让 Claude 先改好", systemImage: "point.3.connected.trianglepath.dotted")
             }.themedFont(.callout, points: 12).foregroundStyle(.secondary)
             Toggle("同时拦截危险的 git 命令（guardrails）", isOn: $guarded)
+            Toggle("一轮改完时检查调用关系（JS、TS、Python）", isOn: $checked)
             if let message { Text(message).themedFont(.caption, points: 10).foregroundStyle(.secondary) }
             HStack {
                 Text(status.installed ? (status.guarded ? "已接入（含拦截）" : "已接入") : "尚未接入").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                 Spacer()
                 if status.installed { Button("移除") { run { try HooksInstaller.uninstall($0) } } }
-                Button(status.installed ? "重新安装" : "接入") { run { try HooksInstaller.install($0, guarded: guarded) } }
+                Button(status.installed ? "重新安装" : "接入") { run { try HooksInstaller.install($0, guarded: guarded, checked: checked) } }
                     .buttonStyle(.folmiProminent)
                 Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
             }
@@ -87,7 +90,7 @@ struct HooksSetupSheet: View {
             MCPClientsSection()
         }
         .padding(20).frame(width: 560)
-        .onAppear { refresh(); guarded = status.installed ? status.guarded : true }
+        .onAppear { refresh(); guarded = status.installed ? status.guarded : true; checked = status.installed ? status.checked : true }
     }
     private func refresh() { if let root = model.repositoryURL { status = HooksInstaller.status(root) } }
     private func run(_ action: (URL) throws -> Void) {

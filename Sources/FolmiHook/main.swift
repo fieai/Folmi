@@ -3,7 +3,8 @@ import FolmiCore
 
 // Called by Claude Code or Codex hooks (installed by Folmi): `folmi-hook prompt|pre|post|stop|guard`, hook JSON on
 // stdin. `folmi-hook mcp` is the MCP server instead (see MCPServer). It records what the agent does so the app can show it and take a whole turn back. It never blocks the agent
-// except `guard`, which refuses dangerous git commands (exit 2 tells Claude Code to stop the tool call).
+// except `guard`, which refuses dangerous git commands (exit 2 tells Claude Code to stop the tool call), and `stop --check`,
+// which keeps the turn going once when it left calls broken (see TurnCallCheck).
 
 let mode = CommandLine.arguments.dropFirst().first ?? ""
 if mode == "mcp" {
@@ -121,6 +122,14 @@ case "post":
     for path in paths { append(event(.edit, batch: batch, path: path)) }
 case "stop":
     let batch = turnBatch ?? (try? String(contentsOf: currentFile, encoding: .utf8)) ?? "\(session)-\(Int(now * 1000))"
+    // Once per turn: a turn already continued by a Stop hook ends normally. Codex's Interrupt runs `stop` too, never checked.
+    if CommandLine.arguments.contains("--check"), json["hook_event_name"] as? String == "Stop", json["stop_hook_active"] as? Bool != true,
+       let reason = TurnCallCheck.run(root: repository.root, gitDir: repository.gitDir, batch: batch),
+       let data = try? JSONSerialization.data(withJSONObject: ["decision": "block", "reason": reason]) {
+        // The turn goes on: no end snapshot or stop event yet, and the pointer stays, so the fixes join this turn.
+        FileHandle.standardOutput.write(data)
+        exit(0)
+    }
     let post = AIEventStore.post(batch: batch, gitDir: repository.gitDir)
     let staging = post.deletingLastPathComponent().appendingPathComponent("post-\(ProcessInfo.processInfo.processIdentifier)")
     if manager.fileExists(atPath: post.deletingLastPathComponent().appendingPathComponent("pre").path), !manager.fileExists(atPath: post.path) {

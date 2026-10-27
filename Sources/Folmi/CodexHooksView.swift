@@ -5,6 +5,7 @@ struct CodexHooksSection: View {
     let root: URL?
     @State private var status = HooksInstaller.Status(installed: false, guarded: false)
     @State private var guarded = true
+    @State private var checked = true
     @State private var message: String?
 
     var body: some View {
@@ -17,6 +18,9 @@ struct CodexHooksSection: View {
                     .themedFont(.caption.monospaced(), points: 10).textSelection(.enabled)
             }
             Toggle("同时拦截危险的 git 命令（guardrails）", isOn: $guarded)
+            Toggle("一轮改完时检查调用关系（JS、TS、Python）", isOn: $checked)
+            Text("删掉或改名的函数还有地方在调用、改了参数的函数有调用没跟着改时，让 Codex 先改好再结束。每一轮最多拦一次。")
+                .themedFont(.caption, points: 10).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text("写入后，在这个项目中新开 Codex，运行 /hooks 审核并信任工作台钩子。Codex 只会运行已信任的钩子；这里显示的安装状态不代表已获信任。")
                 .themedFont(.caption, points: 10).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
@@ -27,7 +31,7 @@ struct CodexHooksSection: View {
                     Button("移除 Codex 钩子") { run { try HooksInstaller.uninstall($0, agent: .codex) } }
                 }
                 Button(status.installed ? "更新 Codex 钩子" : "接入 Codex 钩子") {
-                    run { try HooksInstaller.install($0, agent: .codex, guarded: guarded) }
+                    run { try HooksInstaller.install($0, agent: .codex, guarded: guarded, checked: checked) }
                 }.buttonStyle(.folmiProminent).disabled(root == nil)
             }
             if let message { Text(message).themedFont(.caption, points: 10).foregroundStyle(.secondary).textSelection(.enabled) }
@@ -35,6 +39,7 @@ struct CodexHooksSection: View {
         .onAppear {
             refresh()
             guarded = status.installed ? status.guarded : true
+            checked = status.installed ? status.checked : true
         }
     }
 

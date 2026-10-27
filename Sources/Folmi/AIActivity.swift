@@ -61,16 +61,19 @@ enum HooksInstaller {
         root.appendingPathComponent(agent == .codex ? ".codex/hooks.json" : ".claude/settings.local.json")
     }
 
-    struct Status: Equatable { var installed: Bool; var guarded: Bool }
+    /// `checked`: the Stop hook checks the turn's calls (`stop --check`, see TurnCallCheck).
+    struct Status: Equatable { var installed: Bool; var guarded: Bool; var checked = false }
     static func status(_ root: URL, agent: Agent = .claude) -> Status {
         guard let hooks = (try? readSettings(root, agent: agent))?["hooks"] as? [String: Any] else { return Status(installed: false, guarded: false) }
         let commands = hooks.values.compactMap { $0 as? [[String: Any]] }.flatMap { $0 }
             .compactMap { $0["hooks"] as? [[String: Any]] }.flatMap { $0 }
-            .compactMap { $0["command"] as? String }.compactMap(ourMode)
-        return Status(installed: !commands.isEmpty, guarded: commands.contains("guard"))
+            .compactMap { $0["command"] as? String }.compactMap(ourCommand)
+        return Status(installed: !commands.isEmpty, guarded: commands.contains { $0.mode == "guard" },
+                      checked: commands.contains { $0.mode == "stop" && $0.checked })
     }
 
-    static func install(_ root: URL, agent: Agent = .claude, guarded: Bool, helper: URL? = nil, destination: URL? = nil) throws {
+    static func install(_ root: URL, agent: Agent = .claude, guarded: Bool, checked: Bool = false, helper: URL? = nil,
+                        destination: URL? = nil) throws {
         let installedHelper = destination ?? Self.installedHelper
         guard let source = helper ?? bundledHelper else {
             throw FolmiFailure(message: "找不到随 Folmi 提供的 folmi-hook。请用打包后的 App（scripts/build-app.sh）安装。")
@@ -92,7 +95,8 @@ enum HooksInstaller {
         add("PreToolUse", matcher: edits, "pre")
         if guarded { add("PreToolUse", matcher: "Bash", "guard") }
         add("PostToolUse", matcher: edits + "|Bash", "post")
-        add("Stop", matcher: nil, "stop")
+        // The check reads the project and links it once per changed file: more time than the other hooks.
+        add("Stop", matcher: nil, checked ? "stop --check" : "stop", timeout: checked ? 60 : 10)
         if agent == .codex { add("Interrupt", matcher: nil, "stop", timeout: 3) }
         settings["hooks"] = hooks
         try writeSettings(settings, root: root, agent: agent)
@@ -153,8 +157,10 @@ enum HooksInstaller {
         return result
     }
 
+    private static func ourMode(_ command: String) -> String? { ourCommand(command)?.mode }
+
     /// Match the executable and mode, not an incidental mention in another user's hook.
-    private static func ourMode(_ command: String) -> String? {
+    private static func ourCommand(_ command: String) -> (mode: String, checked: Bool)? {
         var executable = "", quote: Character?, escaped = false
         var remainder = command[...].drop(while: { $0.isWhitespace })
         while let character = remainder.first {
@@ -167,11 +173,13 @@ enum HooksInstaller {
             else if character.isWhitespace { break }
             else { executable.append(character) }
         }
-        let arguments = remainder.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        var arguments = remainder.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         guard quote == nil, !escaped, URL(fileURLWithPath: executable).lastPathComponent == marker,
-              let mode = arguments.first, ["prompt", "pre", "post", "stop", "guard"].contains(mode),
-              arguments.count == 1 || arguments == [mode, "--agent", "codex"] else { return nil }
-        return mode
+              let mode = arguments.first, ["prompt", "pre", "post", "stop", "guard"].contains(mode) else { return nil }
+        let checked = mode == "stop" && arguments.dropFirst().first == "--check"
+        if checked { arguments.remove(at: 1) }
+        guard arguments.count == 1 || arguments == [mode, "--agent", "codex"] else { return nil }
+        return (mode, checked)
     }
 
     private static func readSettings(_ root: URL, agent: Agent) throws -> [String: Any]? {

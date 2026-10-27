@@ -79,6 +79,66 @@ final class CodexHookEventsTests: XCTestCase {
         XCTAssertEqual(events.last?.kind, .stop)
         XCTAssertTrue(events.allSatisfy { $0.agent == "codex" && $0.batch == "codex-s-t1" })
     }
+    /// `stop --check`: a turn that renamed a function still called elsewhere is kept going once, in the same turn.
+    func testStopCheckKeepsATurnThatBrokeCallsGoingOnce() throws {
+        let helper = Bundle(for: Self.self).bundleURL.deletingLastPathComponent().appendingPathComponent("folmi-hook")
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: helper.path), "helper not built next to tests")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stop-check-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let initialize = Process()
+        initialize.executableURL = URL(fileURLWithPath: "/usr/bin/git"); initialize.arguments = ["init", "-q"]; initialize.currentDirectoryURL = root
+        try initialize.run(); initialize.waitUntilExit()
+        let lib = root.appendingPathComponent("lib.ts")
+        try Data("export function getOrder(id: string) { return id }\n".utf8).write(to: lib)
+        try Data("import { getOrder } from './lib'\nexport function page() { return getOrder('1') }\n".utf8)
+            .write(to: root.appendingPathComponent("page.ts"))
+        @discardableResult
+        func invoke(_ arguments: [String], _ extra: [String: Any] = [:]) throws -> String {
+            let process = Process(), input = Pipe(), output = Pipe()
+            process.executableURL = helper; process.arguments = arguments
+            process.standardInput = input; process.standardOutput = output
+            var payload: [String: Any] = ["session_id": "s", "cwd": root.path, "prompt": "rename",
+                                          "tool_name": "Edit", "tool_input": ["file_path": lib.path]]
+            payload.merge(extra) { $1 }
+            try process.run()
+            input.fileHandleForWriting.write(try JSONSerialization.data(withJSONObject: payload))
+            try input.fileHandleForWriting.close(); process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+            return String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        }
+        try invoke(["prompt"]); try invoke(["pre"])
+        try Data("export function loadOrder(id: string) { return id }\n".utf8).write(to: lib)
+        try invoke(["post"])
+        let git = root.appendingPathComponent(".git")
+        let events = { AIEventStore.parse((try? Data(contentsOf: AIEventStore.events(gitDir: git))) ?? Data()).events }
+        let batch = try XCTUnwrap(events().last?.batch)
+
+        // Codex's Interrupt runs `stop` too: never checked, the turn just ends.
+        XCTAssertEqual(try invoke(["stop", "--check"], ["hook_event_name": "Interrupt"]), "")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: AIEventStore.post(batch: batch, gitDir: git).path))
+        try Data("export function getOrder(id: string) { return id }\n".utf8).write(to: lib)
+        try invoke(["prompt"], ["prompt": "again"]); try invoke(["pre"])
+        let second = try XCTUnwrap(events().last?.batch)
+        try Data("export function loadOrder(id: string) { return id }\n".utf8).write(to: lib)
+
+        let reply = try invoke(["stop", "--check"], ["hook_event_name": "Stop", "stop_hook_active": false])
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any], reply)
+        XCTAssertEqual(object["decision"] as? String, "block")
+        XCTAssertTrue((object["reason"] as? String ?? "").contains("getOrder 改名为 loadOrder（lib.ts），旧名字还有 1 处在调用"), reply)
+        XCTAssertTrue((object["reason"] as? String ?? "").contains("page.ts:2（page）"), reply)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AIEventStore.post(batch: second, gitDir: git).path), "the turn is not over")
+        XCTAssertNotEqual(events().last?.kind, .stop)
+
+        // The agent carries on: its edits stay in the same turn, and the next stop ends it whatever it did.
+        try invoke(["post"], ["tool_input": ["file_path": root.appendingPathComponent("page.ts").path]])
+        XCTAssertEqual(events().last?.batch, second)
+        XCTAssertEqual(try invoke(["stop", "--check"], ["hook_event_name": "Stop", "stop_hook_active": true]), "")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: AIEventStore.post(batch: second, gitDir: git).path))
+        XCTAssertEqual(events().last?.kind, .stop)
+        XCTAssertEqual(events().last?.batch, second)
+    }
+
     func testAbsentSuffixFilesRoundTripWithoutTouchingTheirNeighbor() throws {
         let helper = Bundle(for: Self.self).bundleURL.deletingLastPathComponent().appendingPathComponent("folmi-hook")
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: helper.path), "helper not built next to tests")

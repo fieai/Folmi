@@ -315,6 +315,46 @@ final class CallGraphTests: XCTestCase {
         XCTAssertNil(params.problem(with: CallArguments(positional: 0, keywords: [], spread: true)))
     }
 
+    /// The end-of-turn check reads the turn's own snapshot: a rename and a new parameter that left calls behind.
+    func testTurnCheckListsCallsTheTurnLeftBroken() throws {
+        let pre = root.appendingPathComponent(".turn/pre", isDirectory: true)
+        try AIEventStore.prepareSnapshot(in: pre)
+        func keep(_ path: String) throws {
+            let target = pre.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: root.appendingPathComponent(path), to: target)
+        }
+        let files = try XCTUnwrap(FileManager.default.subpaths(atPath: root.path)).filter { !$0.hasPrefix(".turn") }
+        let orders = "web/src/api/orders.ts", python = "backend/app/services/orders.py"
+        try keep(orders); try keep(python)
+        // Kept as it was: nothing to report for it.
+        try keep("web/src/lib/http.ts")
+        // Added by the turn: nothing before it to compare with.
+        let added = AIEventStore.snapshotAbsentMarker("web/src/new.ts", in: pre)
+        try FileManager.default.createDirectory(at: added.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: added.path, contents: nil)
+        XCTAssertEqual(TurnCallCheck.problems(root: root, files: files, pre: pre), [], "an unchanged turn breaks nothing")
+
+        _ = try change(orders, "function getOrder", "function loadOrder")
+        _ = try change(python, "def find(self, id):", "def find(self, id, *, deep):")
+        let problems = TurnCallCheck.problems(root: root, files: files, pre: pre)
+        XCTAssertEqual(problems.map(\.summary), [
+            "OrderRepo.find（backend/app/services/orders.py）的参数 (id) → (id, *, deep)，1 处调用没跟着改",
+            "getOrder 改名为 loadOrder（web/src/api/orders.ts），旧名字还有 2 处在调用",
+        ])
+        XCTAssertEqual(problems[0].sites.count, 1)
+        XCTAssertTrue(problems[0].sites[0].hasSuffix("（OrderService.load）：少了参数 deep"), problems[0].sites[0])
+        XCTAssertTrue(problems[1].sites.allSatisfy { $0.hasPrefix("web/src/pages/OrderPage.tsx:") })
+        let message = try XCTUnwrap(TurnCallCheck.message(problems))
+        XCTAssertTrue(message.contains("- getOrder 改名为 loadOrder"))
+        XCTAssertTrue(message.contains("不用改"), "the agent may leave an intended change as it is")
+
+        // Out of time: the rest goes unchecked rather than holding the agent up.
+        var clock = Date()
+        let late = TurnCallCheck.problems(root: root, files: files, pre: pre, now: { clock += 60; return clock })
+        XCTAssertEqual(late, [])
+    }
+
     func testUnchangedFilesComeFromTheCache() throws {
         let files = ["web/src/lib/http.ts", "web/src/api/orders.ts", "web/tsconfig.json"]
         let (first, cache) = CallGraph.build(root: root, files: files, cache: CallGraphCache())

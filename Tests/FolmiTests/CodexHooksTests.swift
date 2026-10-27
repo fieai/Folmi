@@ -32,6 +32,28 @@ final class CodexHooksTests: XCTestCase {
         XCTAssertEqual(after["custom"] as? String, "kept")
         XCTAssertEqual(((after["hooks"] as? [String: Any])?["Stop"] as? [Any])?.count, 1)
     }
+    func testStopCheckOptionIsWrittenReadBackAndRemoved() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("stop-check-hooks-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let helper = root.appendingPathComponent("source")
+        try Data("helper".utf8).write(to: helper)
+        let destination = root.appendingPathComponent("bin/folmi-hook")
+        for agent in HooksInstaller.Agent.allCases {
+            try HooksInstaller.install(root, agent: agent, guarded: false, checked: true, helper: helper, destination: destination)
+            XCTAssertEqual(HooksInstaller.status(root, agent: agent), .init(installed: true, guarded: false, checked: true))
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: HooksInstaller.settingsURL(root, agent: agent))) as? [String: Any])
+            let stop = try XCTUnwrap(((object["hooks"] as? [String: [[String: Any]]])?["Stop"]?.first?["hooks"] as? [[String: Any]])?.first)
+            XCTAssertTrue((stop["command"] as? String ?? "").hasSuffix(agent == .codex ? "stop --check --agent codex" : "stop --check"))
+            XCTAssertEqual(stop["timeout"] as? Int, 60)
+            // Reinstalling without the option replaces the hook instead of adding a second one.
+            try HooksInstaller.install(root, agent: agent, guarded: false, checked: false, helper: helper, destination: destination)
+            XCTAssertEqual(HooksInstaller.status(root, agent: agent), .init(installed: true, guarded: false, checked: false))
+            try HooksInstaller.install(root, agent: agent, guarded: false, checked: true, helper: helper, destination: destination)
+            try HooksInstaller.uninstall(root, agent: agent)
+            XCTAssertFalse(HooksInstaller.status(root, agent: agent).installed)
+        }
+    }
     func testMalformedOrSymlinkedProjectConfigIsNotOverwritten() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("codex-config-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent(".codex"), withIntermediateDirectories: true)
