@@ -88,7 +88,7 @@ extension FolmiModel {
         if case let .working(files, _) = capsule {
             return CompanionStatus(state: .working, text: files > 0 ? "正在改 \(files) 个文件…" : "AI 正在干活…")
         }
-        if agentSession?.isBusy == true { return CompanionStatus(state: .working, text: "AI 正在回答…") }
+        if agentSessions.contains(where: \.isBusy) { return CompanionStatus(state: .working, text: "AI 正在回答…") }
         if commitSuggestion == .generating { return CompanionStatus(state: .thinking, text: "正在写提交说明…") }
         if busy { return CompanionStatus(state: .working, text: "正在执行…") }
         if !hasSnapshot { return CompanionStatus(state: .sleep, text: nil) }

@@ -246,7 +246,7 @@ private struct TerminalColumnView: View {
                                                   split: { model.splitTerminal(toRight: $0, tab: session.id, from: column.id) },
                                                   move: { model.moveTerminalTab(session.id, from: column.id, toRight: $0) })
                             }
-                            if index == 0 { PaneTab(title: "AI", selected: model.aiTabSelected) { model.openAgentTab() } }
+                            if index == 0 { PaneTab(title: "AI", dot: !model.aiTabSelected && model.agentTabNeedsYou, selected: model.aiTabSelected) { model.openAgentTab() } }
                         }
                     }
                     .padding(.leading, 6)

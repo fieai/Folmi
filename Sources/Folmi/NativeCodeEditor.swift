@@ -251,6 +251,12 @@ struct NativeCodeEditor: NSViewRepresentable {
         // configure runs on every document switch, so the path captured here is the open one.
         let path = documentID
         editor.assistSelection = { [weak workspace] mode, text in workspace?.assistSelection?(mode, text, path) }
+        editor.selectionAI = workspace.selectionAI == nil ? nil : { [weak workspace, weak editor] action, range in
+            guard let editor, let document = workspace?.documents.first(where: { $0.id == path }) else { return }
+            workspace?.selectionAI?(action, document.path, editor.string, range)
+        }
+        editor.agentTitle = { [weak workspace] in workspace?.agentTitle?() ?? "agent" }
+        editor.overlays.style = { [weak workspace] in (workspace?.presentation.theme ?? .standard, workspace?.glassSurfaces ?? true) }
         editor.showCalls = FolmiModel.callMapExtensions.contains((documentID as NSString).pathExtension.lowercased())
             ? { [weak workspace, weak editor] location in
                 guard let editor, let document = workspace?.documents.first(where: { $0.id == path }) else { return }
@@ -269,7 +275,6 @@ struct NativeCodeEditor: NSViewRepresentable {
             }
             editor.wikiCompletions = { [weak workspace] partial in workspace?.wikiNames(matching: partial) ?? [] }
             editor.onNotice = { [weak workspace] message in workspace?.showNotice(message) }
-            editor.overlays.style = { [weak workspace] in (workspace?.presentation.theme ?? .standard, workspace?.glassSurfaces ?? true) }
         } else {
             // A non-Markdown editor must pass Option-layout text input through normally.
             editor.toggleMarkdown = nil

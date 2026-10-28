@@ -185,7 +185,8 @@ struct DiffPane: View {
                                comments: model.currentReviewComments,
                                onComment: { model.addReviewComment($0, hunk: $1, in: $2) },
                                onDeleteComment: model.deleteReviewComment,
-                               onExplain: model.explainHunk, unified: model.unifiedDiff)
+                               onExplain: model.explainHunk, onHandToAgent: model.handHunkToAgent, agentTitle: model.agentTitle,
+                               unified: model.unifiedDiff)
     }
     /// One Markdown file, shown rendered unless the user switched this view to source.
     private var renderedMarkdown: FileDiff? {
@@ -273,7 +274,7 @@ struct TerminalCard: View {
                                               canSplit: columns.canSplit,
                                               split: { model.splitTerminal(toRight: $0, tab: session.id) })
                         }
-                        PaneTab(title: "AI", selected: model.aiTabSelected) { model.openAgentTab() }
+                        PaneTab(title: "AI", dot: !model.aiTabSelected && model.agentTabNeedsYou, selected: model.aiTabSelected) { model.openAgentTab() }
                     }
                 }
             } accessory: {

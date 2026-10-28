@@ -169,6 +169,8 @@ struct SideBySideDiff: View {
     var onComment: (String, DiffHunk, FileDiff) -> Void = { _, _, _ in }
     var onDeleteComment: (UUID) -> Void = { _ in }
     var onExplain: ((DiffHunk, FileDiff) -> Void)?
+    var onHandToAgent: ((DiffHunk, FileDiff) -> Void)?
+    var agentTitle = "agent"
     var unified = false
     @Environment(\.folmiTheme) private var theme
 
@@ -193,6 +195,8 @@ struct SideBySideDiff: View {
                             onComment: onComment,
                             onDeleteComment: onDeleteComment,
                             onExplain: onExplain,
+                            onHandToAgent: onHandToAgent,
+                            agentTitle: agentTitle,
                             unified: unified,
                             // One file on the page: a picture or document gets the page's height, not a fixed box.
                             previewHeight: diffs.count == 1 ? max(ChangePreview.defaultHeight, geometry.size.height - 170)
@@ -249,6 +253,9 @@ struct SideBySideFile: View {
     var seenHunkIDs: Set<String> = []
     /// "解释": asks the AI card about this hunk.
     var onExplain: ((DiffHunk, FileDiff) -> Void)?
+    /// "交给 Codex": the hunk, or the lines picked in it, into the agent's composer.
+    var onHandToAgent: ((DiffHunk, FileDiff) -> Void)?
+    var agentTitle = "agent"
     /// The review page: ⏎ stages, so a hunk has no stage buttons, and 解释 / 评论 show only on the current hunk or
     /// under the pointer instead of on every hunk.
     var quietHunkActions = false
@@ -429,6 +436,10 @@ struct SideBySideFile: View {
             let actionsShown = !quietHunkActions || currentHunkID == hunk.id || hoveredHunk == hunk.id || commentingHunk == hunk.id
             if actionsShown, let onExplain {
                 Button("解释") { onExplain(hunk, diff) }.help("让 AI 用几句话说明这处改了什么、有没有风险")
+            }
+            if actionsShown, let onHandToAgent {
+                Button("交给 \(agentTitle)") { onHandToAgent(hunk, diff) }
+                    .help("把这处改动（选了行就是选中的行）放进 \(agentTitle) 会话的输入框，不会直接发送")
             }
             if !readOnly && actionsShown {
             Button(count > 0 ? "评论选中 \(count) 行" : "评论此块") { commentingHunk = hunk.id }

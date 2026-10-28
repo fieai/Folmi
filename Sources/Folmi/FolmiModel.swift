@@ -280,8 +280,16 @@ final class FolmiModel {
     var aiTabSelected = false
     /// The AI tab's conversation with Claude or Codex (AgentSession.swift), its draft and attached context.
     var agentSession: AgentSession?
+    /// Every conversation open in the AI tab, in tab order; `agentSession` is the one shown.
+    var agentSessions: [AgentSession] = []
+    /// One adapter process per agent and command, shared by the conversations above (AgentHost.swift).
+    @ObservationIgnored var agentHosts: [String: AgentHost] = [:]
     var agentDraft = ""
     var agentContext: [AgentContext] = []
+    /// Bumped to move the keyboard into the AI tab's composer, e.g. after ⌘J put a selection there.
+    var agentComposerFocus = 0
+    /// The 待办 picked on the tasks page, for ⌘J.
+    var selectedTask: ProjectTask?
     /// Pre-commit check of what is staged; a blocking finding needs a second ⌘⏎.
     var commitCheck: CommitCheck?
     /// Staged hunks nobody accepted, per file: an agent's or the terminal's `git add`, a merge. Empty until the staged
@@ -607,6 +615,11 @@ final class FolmiModel {
             editor.sendSelectionToTerminal = { [weak self] range in self?.sendEditorSelectionToTerminal(selection: range) }
             editor.sendTextToTerminal = { [weak self] text, reference in self?.sendTextToTerminal(text, reference: reference) }
             editor.assistSelection = { [weak self] mode, text, source in self?.assist(mode, text: text, source: source) }
+            editor.selectionAI = { [weak self] action, path, text, range in self?.editorSelectionAI(action, path: path, text: text, range: range) }
+            editor.agentTitle = { [weak self] in self?.agentTitle ?? "agent" }
+            editor.readerSelectionAI = { [weak self] action, path, first, last, text in
+                self?.readerSelectionAI(action, path: path, first: first, last: last, text: text)
+            }
             editor.commentSelection = { [weak self] path, first, last, quote in
                 self?.readerCommentDraft = ReaderCommentDraft(path: path, firstLine: first, lastLine: last, quote: quote)
             }

@@ -152,6 +152,8 @@ struct AllChangesView: View {
                                     currentHunkID: current?.fileKey == key ? current?.hunkID : nil,
                                     seenHunkIDs: seenHunks(diff),
                                     onExplain: model.explainHunk,
+                                    onHandToAgent: model.handHunkToAgent,
+                                    agentTitle: model.agentTitle,
                                     quietHunkActions: true,
                                     anchorPrefix: key + "#",
                                     commenting: commentBinding(key),

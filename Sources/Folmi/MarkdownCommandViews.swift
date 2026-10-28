@@ -8,40 +8,88 @@ enum MarkdownFormatAction: Equatable {
     case bold, italic, strike, code, link, heading(Int)
 }
 
+/// What the AI buttons over a selection do with it.
+enum EditorSelectionAction: Equatable {
+    /// The small card; a preset question is asked right away.
+    case ask(String?)
+    /// Into the agent's composer as an attachment, not sent.
+    case handToAgent
+}
+
+/// 问 / 交给 Codex over a selection, alone in a code editor or after the format buttons in Markdown.
+struct SelectionAIButtons: View {
+    let agentTitle: String
+    /// Code gets 解释; Markdown has 说人话 and 翻译 in its menu already.
+    var explains = false
+    let perform: (EditorSelectionAction) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            button("问", help: "就选中的内容问 AI（⌘L）") { perform(.ask(nil)) }
+            button("交给 \(agentTitle)", help: "作为附件放进 \(agentTitle) 会话的输入框，不会直接发送（⌘J）") { perform(.handToAgent) }
+            if explains {
+                button("解释", help: "让 AI 用几句话说明这段代码") { perform(.ask(Self.explainQuestion)) }
+            }
+        }
+    }
+
+    static let explainQuestion = "这段代码在做什么？有没有明显的问题？"
+
+    /// A few characters or more: a stray click-drag over one letter is not a question.
+    static func worthShowing(_ text: String) -> Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3 }
+
+    private func button(_ title: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).themedFont(.system(size: 12, weight: .medium), points: 12).padding(.horizontal, 6).frame(height: 24)
+        }
+        .buttonStyle(.plain).help(help)
+    }
+}
+
 /// The bar over a text selection. It never holds text; each button runs the same command as its shortcut.
 struct MarkdownFormatBar: View {
-    let state: MarkdownCommands.FormatState
+    /// nil in a code editor or a code block: only the AI buttons show.
+    let state: MarkdownCommands.FormatState?
+    var ai: SelectionAIButtons?
     let perform: (MarkdownFormatAction) -> Void
 
     var body: some View {
         HStack(spacing: 2) {
-            Menu {
-                Button("正文 ⌥⌘0") { perform(.heading(0)) }
-                ForEach(1...6, id: \.self) { level in
-                    Button("标题 \(level)  ⌥⌘\(level)") { perform(.heading(level)) }
-                }
-            } label: {
-                Text(state.heading == 0 ? "正文" : "标题 \(state.heading)").themedFont(.system(size: 12, weight: .medium), points: 12)
+            if let state { formatButtons(state) }
+            if let ai {
+                if state != nil { Divider().frame(height: 16) }
+                ai
             }
-            .menuStyle(.borderlessButton).menuIndicator(.visible).fixedSize()
-            .padding(.horizontal, 6)
-            .help("段落样式（⌥⌘0–6），对选中的每一行生效")
-            Divider().frame(height: 16)
-            button("bold", "粗体（⌘B）", on: state.bold, action: .bold)
-            button("italic", "斜体（⌘I）", on: state.italic, action: .italic)
-            button("strikethrough", "删除线（⌘⇧X）", on: state.strike, action: .strike)
-            button("chevron.left.forwardslash.chevron.right", "行内代码（⌘E）", on: state.code, action: .code)
-            button("link", "链接（⇧⌘K）", on: false, action: .link)
         }
         .padding(.horizontal, 4).padding(.vertical, 3)
         .folmiSurface(.popover, cornerRadius: 9)
         .focusEffectDisabled()
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("文字格式")
+        .accessibilityLabel(state == nil ? "选中内容" : "文字格式")
     }
 
-    private func button(_ symbol: String, _ help: String, on: Bool, action: MarkdownFormatAction) -> some View {
-        MarkdownBarButton(symbol: symbol, help: help, on: on, enabled: !state.multiline) { perform(action) }
+    @ViewBuilder private func formatButtons(_ state: MarkdownCommands.FormatState) -> some View {
+        Menu {
+            Button("正文 ⌥⌘0") { perform(.heading(0)) }
+            ForEach(1...6, id: \.self) { level in
+                Button("标题 \(level)  ⌥⌘\(level)") { perform(.heading(level)) }
+            }
+        } label: {
+            Text(state.heading == 0 ? "正文" : "标题 \(state.heading)").themedFont(.system(size: 12, weight: .medium), points: 12)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.visible).fixedSize()
+        .padding(.horizontal, 6)
+        .help("段落样式（⌥⌘0–6），对选中的每一行生效")
+        Divider().frame(height: 16)
+        button("bold", "粗体（⌘B）", on: state.bold, enabled: !state.multiline, action: .bold)
+        button("italic", "斜体（⌘I）", on: state.italic, enabled: !state.multiline, action: .italic)
+        button("strikethrough", "删除线（⌘⇧X）", on: state.strike, enabled: !state.multiline, action: .strike)
+        button("chevron.left.forwardslash.chevron.right", "行内代码（⌘E）", on: state.code, enabled: !state.multiline, action: .code)
+        button("link", "链接（⇧⌘K）", on: false, enabled: !state.multiline, action: .link)
+    }
+
+    private func button(_ symbol: String, _ help: String, on: Bool, enabled: Bool, action: MarkdownFormatAction) -> some View {
+        MarkdownBarButton(symbol: symbol, help: help, on: on, enabled: enabled) { perform(action) }
     }
 }
 
@@ -194,15 +242,18 @@ final class MarkdownOverlays {
     func textChanged() {
         revision &+= 1
         hideFormatBar()
+        guard editor?.markdownEditing == true else { return }
         refreshSlash()
         refreshCodeTools()
     }
 
     func selectionChanged(stillSelecting: Bool) {
-        refreshSlash()
-        refreshCodeTools()
         formatWork?.cancel()
         hideFormatBar()
+        // A code editor has only the AI buttons, and they follow the mouse alone (mouseUp), not Shift-arrows.
+        guard editor?.markdownEditing == true else { return }
+        refreshSlash()
+        refreshCodeTools()
         guard !stillSelecting, let editor, editor.selectedRange().length > 0 else { return }
         // Wait for a mouse drag or a run of Shift-arrow presses to settle before showing the bar.
         let work = DispatchWorkItem { [weak self] in self?.showFormatBarIfNeeded() }
@@ -212,7 +263,7 @@ final class MarkdownOverlays {
 
     func mouseUp() {
         formatWork?.cancel()
-        showFormatBarIfNeeded()
+        showFormatBarIfNeeded(byMouse: true)
     }
 
     func hideAll() {
@@ -222,16 +273,23 @@ final class MarkdownOverlays {
 
     // MARK: Format bar
 
-    private func showFormatBarIfNeeded() {
-        guard let editor, editor.markdownEditing, editor.isEditable, !editor.hasMarkedText(), editor.window != nil,
+    /// Selected by the mouse: only then do the AI buttons show, so selecting with the keyboard stays quiet.
+    private func showFormatBarIfNeeded(byMouse: Bool = false) {
+        guard let editor, editor.isEditable, !editor.hasMarkedText(), editor.window != nil,
               editor.selectedRanges.count == 1, NSEvent.pressedMouseButtons == 0 else { return }
         let selection = editor.selectedRange()
-        guard selection.length > 0, NSMaxRange(selection) <= (editor.string as NSString).length,
-              !MarkdownEditing.inFence(editor.string, at: selection.location) else { return }
+        guard selection.length > 0, NSMaxRange(selection) <= (editor.string as NSString).length else { return }
         let text = editor.string
-        formatTarget = (selection, (text as NSString).substring(with: selection), revision)
-        let state = MarkdownCommands.formatState(text: text, selection: selection)
-        let view = MarkdownFormatBar(state: state) { [weak self] action in self?.perform(action) }
+        let selected = (text as NSString).substring(with: selection)
+        let formats = editor.markdownEditing && !MarkdownEditing.inFence(text, at: selection.location)
+        let asks = byMouse && editor.selectionAI != nil && SelectionAIButtons.worthShowing(selected)
+        guard formats || asks else { return }
+        formatTarget = (selection, selected, revision)
+        let state = formats ? MarkdownCommands.formatState(text: text, selection: selection) : nil
+        let ai = asks ? SelectionAIButtons(agentTitle: editor.agentTitle(), explains: !editor.markdownEditing) { [weak self] action in
+            self?.performAI(action)
+        } : nil
+        let view = MarkdownFormatBar(state: state, ai: ai) { [weak self] action in self?.perform(action) }
         let host = host(&formatHost, view)
         guard let rect = editor.rect(for: selection) else { return }
         let size = host.fittingSize
@@ -244,6 +302,13 @@ final class MarkdownOverlays {
     }
 
     private func hideFormatBar() { formatHost?.isHidden = true; formatTarget = nil }
+
+    private func performAI(_ action: EditorSelectionAction) {
+        guard let editor, let target = formatTarget, target.revision == revision, editor.selectedRange() == target.selection,
+              let selectionAI = editor.selectionAI else { hideFormatBar(); return }
+        hideFormatBar()
+        selectionAI(action, target.selection)
+    }
 
     private func perform(_ action: MarkdownFormatAction) {
         guard let editor, let target = formatTarget, target.revision == revision,

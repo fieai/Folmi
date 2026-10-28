@@ -59,8 +59,9 @@ extension FolmiModel {
         if mode != .ask { runAssist(question: nil) }
     }
 
-    /// ⌘L / "问 AI": the open file or the selected diff is the context.
+    /// ⌘L / "问 AI": what is selected, else the open file or the selected diff is the context.
     func openAsk() {
+        if askAboutSelection() { return }
         if content == .editor, let document = editorWorkspace?.selectedDocument {
             aiAssist = AIAssistState(mode: .ask, source: document.path, input: String(document.text.prefix(40_000)))
         } else if let diff = fileDiff {

@@ -169,6 +169,10 @@ struct MarkdownReaderView: NSViewRepresentable {
             PerfLog.readerStep("reader.renderAt")
             lineStarts = rendered.starts
             let scroll = line.map(String.init) ?? "null"
+            // The selection bar is in the page template; it names the agent the AI tab would use now.
+            if let title = parent?.workspace.agentTitle?() {
+                js("(()=>{const b=document.querySelector('#pop [data-act=agent]');if(b)b.textContent=\(Self.json("交给 " + title))})()")
+            }
             if PerfLog.enabled {
                 let swiftDone = ContinuousClock.now
                 PerfLog.interval("reader.swift", since: renderStart, detail: path)
@@ -287,6 +291,9 @@ struct MarkdownReaderView: NSViewRepresentable {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(quoted + "\n\n— " + reference, forType: .string)
                 workspace.showNotice("已复制为引用（\(reference)）")
+            case "ask", "agent":
+                guard let text = body["text"] as? String, let first = body["line"] as? Int, let last = body["end"] as? Int else { return }
+                workspace.readerSelectionAI?(type == "ask" ? .ask(nil) : .handToAgent, id, first + 1, last + 1, text)
             case "plain", "deai", "translate":
                 guard let text = body["text"] as? String, let first = body["line"] as? Int, let last = body["end"] as? Int else { return }
                 let mode: AIAssistState.Mode = type == "plain" ? .plain : type == "deai" ? .deAI : .translate
@@ -546,7 +553,7 @@ enum MarkdownReaderPage {
     </style></head><body><main id="doc"></main>
     <div id="find"><input id="find-q" placeholder="在文档中查找" spellcheck="false"><span class="n" id="find-n"></span>
     <button data-dir="-1" title="上一个（⇧↩）">↑</button><button data-dir="1" title="下一个（↩）">↓</button><button data-dir="0" title="关闭（Esc）">✕</button></div>
-    <div id="pop"><button class="primary" data-act="send">发到终端</button><button data-act="comment">评论</button><button data-act="quote">复制为引用</button><button data-act="plain">说人话</button><button data-act="deai">去 AI 腔</button><button data-act="translate">翻译</button><button data-act="edit">编辑这里</button></div>
+    <div id="pop"><button data-act="ask">问</button><button data-act="agent">交给 agent</button><button class="primary" data-act="send">发到终端</button><button data-act="comment">评论</button><button data-act="quote">复制为引用</button><button data-act="plain">说人话</button><button data-act="deai">去 AI 腔</button><button data-act="translate">翻译</button><button data-act="edit">编辑这里</button></div>
     <script>
     (function(){
     const post=(m)=>window.webkit.messageHandlers.wb.postMessage(m);
@@ -679,6 +686,7 @@ enum MarkdownReaderPage {
       const act=b.dataset.act;if(act==='send')post({type:'send',line:info.line,end:info.end,text:info.text});
       else if(act==='comment')post({type:'comment',text:info.text.trim(),line:info.line,end:info.end});
       else if(act==='quote')post({type:'quote',text:info.text.trim(),line:info.line,end:info.end});
+      else if(act==='ask'||act==='agent')post({type:act,text:info.text.trim(),line:info.line,end:info.end});
       else if(act==='plain'||act==='deai'||act==='translate')post({type:act,text:info.text.trim(),line:info.line,end:info.end});
       else if(act==='edit')post({type:'edit',line:info.line,end:info.end,text:info.text});hide();window.getSelection().removeAllRanges()});
     document.addEventListener('keydown',(e)=>{if(e.key==='Escape')hide()});

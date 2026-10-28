@@ -76,6 +76,11 @@ final class EditorWorkspace: ObservableObject {
     var commentSelection: ((String, Int, Int, String) -> Void)?
     /// 说人话 / 去 AI 腔 on selected text, with where it came from.
     var assistSelection: ((AIAssistState.Mode, String, String) -> Void)?
+    /// 问 / 交给 Codex on a selection: the action, the document's path, its text and the selected range.
+    var selectionAI: ((EditorSelectionAction, String, String, NSRange) -> Void)?
+    var agentTitle: (() -> String)?
+    /// 问 / 交给 agent in the Markdown reader: document path, 1-based first and last source line, and the text as read.
+    var readerSelectionAI: ((EditorSelectionAction, String, Int, Int, String) -> Void)?
     /// Headings of each column's Markdown document and the section at its caret, for the outline beside it.
     private var outlines: [UUID: MarkdownOutlineModel] = [:]
     func outline(for column: UUID?) -> MarkdownOutlineModel {

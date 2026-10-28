@@ -319,7 +319,10 @@ struct TasksPage: View {
                 }
                 .padding(.bottom, 10)
             }
-            .onChange(of: selectedID) { _, id in if let id { proxy.scrollTo(id) } }
+            .onChange(of: selectedID) { _, id in
+                if let id { proxy.scrollTo(id) }
+                model.selectedTask = sections.lazy.flatMap(\.tasks).first { $0.id == id }
+            }
         }
     }
 
@@ -352,6 +355,10 @@ struct TasksPage: View {
         }
         .buttonStyle(.pressableRow)
         .padding(.horizontal, 4)
+        .contextMenu {
+            Button("打开") { model.openNote(note) }
+            Button("交给 \(model.agentTitle)") { model.handNoteToAgent(note) }
+        }
         .help("打开这条随手记（阅读视图）" + (note.root == model.repositoryURL?.path ? "" : "，会切换到 \(note.project)"))
     }
 
@@ -391,6 +398,10 @@ struct TasksPage: View {
         }
         .onTapGesture(count: 2) { model.openTask(task) }
         .onTapGesture { selectedID = task.id; focused = true }
+        .contextMenu {
+            Button("打开到这一行") { model.openTask(task) }
+            Button("交给 \(model.agentTitle)") { model.handTaskToAgent(task) }
+        }
         .help("双击或按 ⏎ 打开到这一行" + (task.root == model.repositoryURL?.path ? "" : "（会切换到 \(task.project)）"))
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(selected ? .isSelected : [])

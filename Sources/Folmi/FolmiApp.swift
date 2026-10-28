@@ -107,6 +107,9 @@ struct FolmiCommands: Commands {
         CommandMenu("查找") {
             Button("万能搜索…", action: model.openPalette).keyboardShortcut("k")
             Button("问 AI…", action: model.openAsk).keyboardShortcut("l").disabled(!model.hasSnapshot)
+            Button("交给 \(model.agentTitle)", action: model.handFocusedToAgent).keyboardShortcut("j").disabled(!model.hasSnapshot)
+            Button("打开 \(model.agentTitle) 会话", action: model.focusAgentComposer).keyboardShortcut("j", modifiers: [.command, .shift])
+                .disabled(!model.hasSnapshot)
             Button("说人话（终端选中内容）") {
                 if let text = model.terminalSelection, !text.isEmpty { model.assist(.plain, text: text, source: "终端选中内容") }
             }

@@ -22,6 +22,10 @@ class EditorTextView: NSTextView {
     /// Set for JavaScript, TypeScript and Python files: 查看调用关系 for the name at a position.
     var showCalls: ((Int) -> Void)?
     var assistSelection: ((AIAssistState.Mode, String) -> Void)?
+    /// 问 / 交给 Codex on the selection (or the whole file when nothing is selected), from the bar, the menu, ⌘L and ⌘J.
+    var selectionAI: ((EditorSelectionAction, NSRange) -> Void)?
+    /// The agent named on those buttons.
+    var agentTitle: () -> String = { "agent" }
     /// Pasted or dropped image files, or a pasted picture, turned into Markdown to insert.
     var importImages: ((_ files: [URL], _ png: Data?) -> String?)?
     /// The project file an image address names, for 查看原图 / 在 Finder 中显示; nil when there is none.
@@ -41,11 +45,11 @@ class EditorTextView: NSTextView {
 
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
-        if markdownEditing { overlays.selectionChanged(stillSelecting: stillSelecting) }
+        if markdownEditing || selectionAI != nil { overlays.selectionChanged(stillSelecting: stillSelecting) }
     }
     override func didChangeText() {
         super.didChangeText()
-        if markdownEditing { overlays.textChanged() }
+        if markdownEditing || selectionAI != nil { overlays.textChanged() }
     }
 
     // MARK: Note after the caret's line (who last changed it)
@@ -162,7 +166,7 @@ class EditorTextView: NSTextView {
     }
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
-        if markdownEditing { overlays.textChanged() }
+        if markdownEditing || selectionAI != nil { overlays.textChanged() }
     }
     override func moveUp(_ sender: Any?) {
         if markdownEditing, overlays.isSlashOpen, !hasMarkedText() { overlays.moveSlashSelection(-1); return }
@@ -174,7 +178,7 @@ class EditorTextView: NSTextView {
     }
     override func cancelOperation(_ sender: Any?) {
         if markdownEditing, overlays.isSlashOpen { overlays.dismissSlash(); return }
-        if markdownEditing, overlays.isFormatBarShown { overlays.hideAll(); return }
+        if markdownEditing || selectionAI != nil, overlays.isFormatBarShown { overlays.hideAll(); return }
         super.cancelOperation(sender)
     }
     override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -198,6 +202,16 @@ class EditorTextView: NSTextView {
             entry.keyEquivalent = "l"; entry.keyEquivalentModifierMask = [.command, .option]
             menu.insertItem(.separator(), at: 0)
             menu.insertItem(entry, at: 0)
+        }
+        if let selectionAI, selectedRange().length > 0 {
+            let range = selectedRange()
+            let hand = MarkdownMenuItem(title: "交给 \(agentTitle())") { selectionAI(.handToAgent, range) }
+            hand.keyEquivalent = "j"; hand.keyEquivalentModifierMask = .command
+            let ask = MarkdownMenuItem(title: "就选中的内容问 AI") { selectionAI(.ask(nil), range) }
+            ask.keyEquivalent = "l"; ask.keyEquivalentModifierMask = .command
+            menu.insertItem(.separator(), at: 0)
+            menu.insertItem(hand, at: 0)
+            menu.insertItem(ask, at: 0)
         }
         if let assistSelection, selectedRange().length > 0 {
             let text = (string as NSString).substring(with: selectedRange())
@@ -311,7 +325,7 @@ class EditorTextView: NSTextView {
         }
         super.mouseDown(with: event)
         // NSTextView tracks the drag until the button is released, so the selection is final here.
-        if markdownEditing { overlays.mouseUp() }
+        if markdownEditing || selectionAI != nil { overlays.mouseUp() }
     }
     /// The character under a point in view coordinates, or nil past the end of its line.
     private func characterIndex(at point: NSPoint) -> Int? {

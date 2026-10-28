@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import FolmiCore
 
@@ -155,6 +156,25 @@ extension FolmiModel {
                 model.content = .editor
                 model.focusPane(.editor)
             } catch { model.report(error, title: "打开随手记失败") }
+        }
+    }
+
+    /// 交给 Codex on a 待办: the line, with the note it is in for context, into the agent's composer of its project.
+    func handTaskToAgent(_ task: ProjectTask) {
+        let entry = task.entry
+        let note = (try? String(contentsOf: URL(fileURLWithPath: task.root).appendingPathComponent(entry.path), encoding: .utf8)) ?? ""
+        let text = "待办（\(entry.path) 第 \(entry.line + 1) 行）：\(entry.text)"
+            + (note.isEmpty ? "" : "\n\n它所在的笔记：\n" + String(note.prefix(8_000)))
+        let uri = URL(fileURLWithPath: task.root).appendingPathComponent(entry.path).absoluteString + "#L\(entry.line + 1)"
+        openInProject(task.root) { $0.attachToAgent([AgentContext(title: "待办：\(entry.text.prefix(30))", text: text, uri: uri)]) }
+    }
+
+    /// 交给 Codex on a 随手记: the whole note.
+    func handNoteToAgent(_ note: IdeaNote) {
+        let file = URL(fileURLWithPath: note.root).appendingPathComponent(note.path)
+        guard let text = try? String(contentsOf: file, encoding: .utf8), TerminalSnippet.plain(text) != nil else { NSSound.beep(); return }
+        openInProject(note.root) {
+            $0.attachToAgent([AgentContext(title: "随手记 \(note.path)", text: String(text.prefix(40_000)), uri: file.absoluteString)])
         }
     }
 

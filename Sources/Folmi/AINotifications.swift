@@ -30,7 +30,8 @@ final class AINotifier: NSObject, UNUserNotificationCenterDelegate {
         return ("\(batch.agentTitle) 改完了 · \(project)", prompt + what)
     }
 
-    func post(title: String, body: String, project: String) {
+    /// `opensAgent`: a click opens the AI tab at the conversation waiting, not 逐个验收.
+    func post(title: String, body: String, project: String, opensAgent: Bool = false) {
         guard Self.available else { return }
         let center = UNUserNotificationCenter.current()
         let send: @Sendable () -> Void = {
@@ -38,8 +39,9 @@ final class AINotifier: NSObject, UNUserNotificationCenterDelegate {
             content.title = title
             content.body = body
             content.sound = .default
-            content.userInfo = ["project": project]
-            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "ai-finished-\(project)", content: content, trigger: nil))
+            content.userInfo = ["project": project, "agent": opensAgent]
+            let identifier = (opensAgent ? "agent-permission-" : "ai-finished-") + project
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
         }
         if asked { send(); return }
         asked = true
@@ -49,10 +51,16 @@ final class AINotifier: NSObject, UNUserNotificationCenterDelegate {
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let project = response.notification.request.content.userInfo["project"] as? String
+        let opensAgent = response.notification.request.content.userInfo["agent"] as? Bool ?? false
         await MainActor.run {
             NSApp.activate(ignoringOtherApps: true)
             if let model = self.model, project == nil || model.repositoryURL?.path == project {
-                model.showContent(.allChanges); model.focusPane(.editor)
+                if opensAgent {
+                    if let waiting = model.agentSessions.first(where: \.needsPermission) { model.selectAgentSession(waiting) }
+                    model.openAgentTab()
+                } else {
+                    model.showContent(.allChanges); model.focusPane(.editor)
+                }
             }
         }
     }
