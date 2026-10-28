@@ -41,6 +41,7 @@ struct FolmiView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button(action: model.openProjectSearch) { Label("全文搜索", systemImage: "magnifyingglass") }
                     .help("搜索项目文本（⌘⇧F）；快速打开文件用 ⌘P").disabled(!model.hasSnapshot || model.busy)
+                ServicesToolbarButton(model: model)
                 Button(action: model.toggleTerminal) { Label("终端", systemImage: "terminal") }
                     .keyboardShortcut("`", modifiers: .control)
                     .disabled(!model.hasSnapshot).help("显示或隐藏内嵌终端（Control+`）")

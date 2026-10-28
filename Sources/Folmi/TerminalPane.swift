@@ -169,6 +169,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, @preconcu
         }
         return nil
     }
+    var shellPID: Int32 { isRunning ? terminalView.process.shellPid : 0 }
+    /// A program is running in the tab (a dev server, Claude Code) rather than the shell waiting at its prompt.
+    var runsProgram: Bool {
+        guard isRunning else { return false }
+        let foreground = tcgetpgrp(terminalView.process.childfd)
+        return foreground > 0 && foreground != terminalView.process.shellPid
+    }
     func refreshFolder(force: Bool = false) {
         let now = ProcessInfo.processInfo.systemUptime
         guard force || now - folderCheckedAt > 0.5 else { return }

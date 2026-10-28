@@ -1,5 +1,6 @@
 import XCTest
 @testable import Folmi
+import FolmiCore
 
 final class WorkspaceStoreTests: XCTestCase {
     private var temporary: URL!
@@ -200,5 +201,25 @@ final class WorkspaceStoreTests: XCTestCase {
         let old = try JSONDecoder().decode(WorkspacePreferences.self, from: Data(#"{"version":1}"#.utf8))
         XCTAssertTrue(old.markdownDiffRendered, "files from before this setting show Markdown rendered")
         XCTAssertFalse(old.unifiedDiff)
+    }
+
+    func testStartCommandsAndTheirCountsRoundTripAndOldFilesReadEmpty() throws {
+        var project = ProjectPreferences(rootPath: temporary.appendingPathComponent("web").path, name: "web")
+        let command = LaunchCommand(directory: "api", name: "dev", command: "pnpm dev", source: LaunchCommand.customSource, port: 3000)
+        project.launchCommands = [command]
+        project.launchCounts = [command.id: 3]
+        try WorkspaceStore(url: configuration).save(WorkspacePreferences(projects: [project]))
+        let restored = try WorkspaceStore(url: configuration).load().projects[0]
+        XCTAssertEqual(restored.launchCommands, [command])
+        XCTAssertEqual(restored.launchCounts, [command.id: 3])
+        let old = try JSONDecoder().decode(ProjectPreferences.self, from: Data(#"{"rootPath":"/tmp/x"}"#.utf8))
+        XCTAssertEqual(old.launchCommands, [])
+        XCTAssertEqual(old.launchCounts, [:])
+    }
+
+    @MainActor func testStartCommandsUsedMostComeFirstAndTiesKeepTheirOrder() {
+        let commands = ["dev", "start", "serve", "preview"].map { LaunchCommand(directory: "", name: $0, command: "npm run \($0)", source: "package.json") }
+        let counts = [commands[2].id: 5, commands[3].id: 1]
+        XCTAssertEqual(FolmiModel.byUse(commands, counts: counts).map(\.name), ["serve", "preview", "dev", "start"])
     }
 }

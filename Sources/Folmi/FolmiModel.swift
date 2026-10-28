@@ -103,6 +103,8 @@ final class FolmiModel {
     var terminalSession: TerminalSession?
     /// This project's terminal tabs, in order.
     var terminalTabs: [TerminalSession] = []
+    /// What runs in this project and how to start it (ProjectServicesView.swift).
+    let projectServices = ProjectServicesState()
     var showTerminal = false { didSet { syncTerminalPane(); scheduleSave() } }
     var paneLayout = PaneLayoutState() { didSet { if paneLayout != oldValue { scheduleSave() } } }
     var paneFocusRequest: PaneFocusRequest?

@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import FolmiCore
 
 struct DeliveryProfile: Codable, Identifiable, Equatable {
     var id: UUID
@@ -71,6 +72,10 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     /// 关联项目: other projects (paths) whose routes and requests pair with this one's in 接口, for a front end and
     /// back end kept in separate repositories.
     var linkedProjects: [String] = []
+    /// Start commands the user added in 服务, beside the ones found in the project's files.
+    var launchCommands: [LaunchCommand] = []
+    /// How many times each start command was run from 服务, by `LaunchCommand.id`; the most used comes first.
+    var launchCounts: [String: Int] = [:]
 
     init(rootPath: String, name: String, isDemo: Bool = false, environment: [String: String] = [:],
          draftMessage: String = "", amendLast: Bool = false, deliveryProfiles: [DeliveryProfile] = [],
@@ -92,7 +97,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case rootPath, name, isDemo, environment, draftMessage, amendLast, deliveryProfiles, selectedProfileID, lastArea, editorTabs, selectedEditorPath, reviewComments, terminalTabs
         case terminalDirectories, reviewedLines, lastContent, selectedChangePath, largeRepository, largeRepositoryDeclined, reviewWatches
-        case editorColumns, terminalColumns, linkedProjects, lastDeliveryKind
+        case editorColumns, terminalColumns, linkedProjects, launchCommands, launchCounts, lastDeliveryKind
     }
 
     init(from decoder: Decoder) throws {
@@ -121,6 +126,8 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
         editorColumns = try? values.decodeIfPresent(PaneColumns.self, forKey: .editorColumns)
         terminalColumns = try? values.decodeIfPresent(PaneColumns.self, forKey: .terminalColumns)
         linkedProjects = (try? values.decodeIfPresent([String].self, forKey: .linkedProjects)) ?? []
+        launchCommands = (try? values.decodeIfPresent([LaunchCommand].self, forKey: .launchCommands)) ?? []
+        launchCounts = (try? values.decodeIfPresent([String: Int].self, forKey: .launchCounts)) ?? [:]
         lastDeliveryKind = try? values.decodeIfPresent(DeliveryKind.self, forKey: .lastDeliveryKind)
     }
 }
