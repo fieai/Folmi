@@ -90,7 +90,6 @@ final class AgentSession: Identifiable {
 
     private(set) var sessionID: String?
     private(set) var isReadOnly = false
-    private(set) var loadedFromFolmi = false
     /// The adapter's name for the conversation (`session_info_update`).
     private(set) var title: String?
     /// Something happened here while it was not on screen: a finished turn or a question waiting.
@@ -103,7 +102,6 @@ final class AgentSession: Identifiable {
     @ObservationIgnored private let ownsHost: Bool
     /// Which launch of the host this conversation's id belongs to; -1 when it is not open there.
     @ObservationIgnored private var hostGeneration = -1
-    @ObservationIgnored private var loadedSessionID: String?
     @ObservationIgnored private var modelConfigID: String?
     @ObservationIgnored private var permissions: [String: CheckedContinuation<String?, Never>] = [:]
     /// Called when a turn ends, so the change list catches up with what the agent wrote.
@@ -239,7 +237,7 @@ final class AgentSession: Identifiable {
         do {
             if !isConnected {
                 state = .starting
-                try await connect(command, pending: transcript.entries.last { $0.kind == .user })
+                try await connect(command)
             }
             guard let connection, let sessionID else { return }
             state = .running
@@ -262,21 +260,15 @@ final class AgentSession: Identifiable {
     }
 
     /// Opens a session in the project on the shared adapter (with the Folmi MCP server attached).
-    /// `pending` is the message being sent: reloading a loaded session replays its history, which would drop it.
-    private func connect(_ command: String, pending: ACPTranscript.Entry? = nil) async throws {
+    private func connect(_ command: String) async throws {
         let connection = try await host.connect(command)
-        if let loadedSessionID {
-            try await loadHistory(loadedSessionID, connection: connection)
-            if let pending { transcript.append(pending) }
-        } else {
-            let created = try await connection.request("session/new", .object([
-                "cwd": .string(root.path), "mcpServers": .array(mcpServers),
-            ]))
-            guard let id = created["sessionId"]?.string else { throw ACPError(code: -1, message: "agent 没有返回会话。") }
-            sessionID = id
-            attach(id)
-            applyModelConfiguration(created)
-        }
+        let created = try await connection.request("session/new", .object([
+            "cwd": .string(root.path), "mcpServers": .array(mcpServers),
+        ]))
+        guard let id = created["sessionId"]?.string else { throw ACPError(code: -1, message: "agent 没有返回会话。") }
+        sessionID = id
+        attach(id)
+        applyModelConfiguration(created)
         restored = false
         state = .ready
         save()
@@ -301,47 +293,46 @@ final class AgentSession: Identifiable {
                          "args": .array([.string("mcp")]), "env": .array([])])]
     }
 
-    /// Keep a loaded conversation distinct from a disk transcript whose next message starts over.
-    func load(sessionID: String, fromFolmi: Bool, command: String) async throws {
-        guard !isBusy else { throw ACPError(code: -1, message: "当前会话正在工作，等它做完再切换") }
-        state = .starting
-        isReadOnly = true
-        loadedFromFolmi = fromFolmi
-        loadedSessionID = sessionID
-        restored = false
-        do {
-            let connection = try await host.connect(command)
-            try await loadHistory(sessionID, connection: connection)
-            state = .ready
-        } catch {
-            if let id = self.sessionID { host.unregister(id: id) }
-            hostGeneration = -1
-            let message = Self.describe(error, agent: agent)
-            note(message); state = .failed(message)
-            throw error
-        }
-    }
-
-    private func loadHistory(_ id: String, connection: ACPConnection) async throws {
-        guard supportsSessionLoad == true else { throw ACPError(code: -1, message: "这个 agent 不支持打开已有会话") }
-        // Set the id before requesting load so streamed history is accepted, and clear stale history on reconnect.
+    /// A Codex conversation shown from its record file, read-only: going on with it here would mean a second client
+    /// writing to it (the adapter refuses while the Codex app, CLI or an editor has it open).
+    func showRecord(id: String, title: String) async {
         sessionID = id
-        transcript = ACPTranscript()
-        attach(id)
-        let response = try await connection.request("session/load", .object([
-            "sessionId": .string(id), "cwd": .string(root.path), "mcpServers": .array(mcpServers),
-        ]))
-        // Notifications are queued FIFO on the main queue; finish replay before enabling the composer.
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async { continuation.resume() }
+        self.title = title
+        isReadOnly = true
+        restored = false
+        state = .starting
+        let root = self.root.path
+        let result: Result<ACPTranscript, ACPError> = await Task.detached(priority: .userInitiated) {
+            guard let file = CodexRollout.locate(id: id, home: CodexRollout.home()) else {
+                return .failure(ACPError(code: -1, message: "没有找到这个会话的记录文件（~/.codex/sessions）。"))
+            }
+            guard let data = Self.readRecord(file) else {
+                return .failure(ACPError(code: -1, message: "这个会话的记录是压缩过的，装上 zstd（brew install zstd）后才能在这里看。"))
+            }
+            return .success(CodexRollout.transcript(data, id: id, root: root))
+        }.value
+        switch result {
+        case .success(let transcript):
+            self.transcript = transcript
+            if transcript.entries.isEmpty { note("这个会话还没有内容。") }
+            state = .ready
+        case .failure(let error):
+            note(error.message); state = .failed(error.message)
         }
-        applyModelConfiguration(response)
     }
 
-    func continueHere() {
-        guard isReadOnly, isConnected, state == .ready else { return }
-        isReadOnly = false
-        save()
+    /// Plain JSONL as is; older records are zstd-compressed and need the `zstd` command.
+    nonisolated static func readRecord(_ file: URL) -> Data? {
+        guard file.pathExtension == "zst" else { return try? Data(contentsOf: file) }
+        guard let zstd = LocalCLI.locateTool("zstd") else { return nil }
+        let process = Process(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: zstd)
+        process.arguments = ["-dc", "--", file.path]
+        process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return process.terminationStatus == 0 ? data : nil
     }
 
     /// Requests from the agent. Permissions wait for the user; file access is not offered (the agent edits the
@@ -845,10 +836,14 @@ struct AgentPane: View {
             Divider()
             if let session = model.agentSession, session.isReadOnly {
                 HStack(spacing: 8) {
-                    Text(session.loadedFromFolmi ? "上次在 Folmi 里的会话" : "这个会话是在别处开的。如果那边还开着，两边同时发消息会乱。")
+                    Text("只读：这是 Codex 里的会话记录，在这里不能接着发消息。要接着聊，在终端里用 Codex 打开它。")
                         .themedFont(.caption, points: 11).fixedSize(horizontal: false, vertical: true)
-                    Button("在这里接着聊") { session.continueHere(); composing = true }
-                        .controlSize(.small).disabled(session.isBusy || !session.isConnected || session.state != .ready)
+                    Spacer(minLength: 0)
+                    if session.agent == .codex, let id = session.sessionID {
+                        Button("在终端里接着聊") { model.resumeInTerminal(id) }
+                            .controlSize(.small)
+                            .help("把 codex resume 命令放进终端，不会按回车；如果它还在 Codex App 里开着，先关掉那边")
+                    }
                 }
                 .padding(10)
             } else {
@@ -892,7 +887,8 @@ struct AgentPane: View {
                 Button("停止") { model.agentSession?.cancel() }.controlSize(.small).keyboardShortcut(".", modifiers: .command)
             }
             if model.agentSession?.isConnected != true {
-                Button("连接", action: model.connectAgent)
+                let starting = model.agentSession?.state == .starting && model.agentSession?.transcript.entries.isEmpty == true
+                Button(action: model.connectAgent) { WaitingLabel(title: starting ? "正在连接…" : "连接", waiting: starting) }
                     .controlSize(.small).disabled(!canSend || model.agentSession?.isBusy == true)
                     .help("先连接并查看模型，再发送第一条消息")
             }

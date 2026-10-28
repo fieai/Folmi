@@ -149,6 +149,10 @@ class EditorTextView: NSTextView {
     }
     override func mouseMoved(with event: NSEvent) {
         super.mouseMoved(with: event)
+        // Over the floating bars the text view would show its I-beam; they are buttons, not text.
+        if overlays.covers(convert(event.locationInWindow, from: nil)) {
+            NSCursor.arrow.set(); hoverWork?.cancel(); hoverWork = nil; return
+        }
         guard let rect = blameNoteRect, blameNote?.opens == true, openBlameNote != nil, rect.contains(convert(event.locationInWindow, from: nil)) else {
             hoverWork?.cancel(); hoverWork = nil; return
         }

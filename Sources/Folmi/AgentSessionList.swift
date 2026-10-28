@@ -116,19 +116,23 @@ final class AgentSessionList {
 }
 
 extension FolmiModel {
-    func openAgentSession(_ item: AgentSessionList.Item, fromFolmi: Bool) {
+    /// Already in a tab: show it. Otherwise a read-only tab with the conversation's record.
+    func openAgentSession(_ item: AgentSessionList.Item) {
         guard let current = agentSession else { return }
-        // Already in a tab: show it. A transcript restored from disk has the id but nothing live behind it.
         if let open = agentSessions.first(where: { $0.sessionID == item.id && !$0.restored }) {
             selectAgentSession(open); return
         }
-        let session = makeAgentSession(current.agent, root: current.root)
-        wire(session)
+        let session = AgentSession(agent: current.agent, root: current.root, gitDir: current.gitDir)
         show(session, replacingSpare: true)
-        Task {
-            do { try await session.load(sessionID: item.id, fromFolmi: fromFolmi, command: agentCommand(session.agent)) }
-            catch { /* The session displays the adapter's error alongside its transcript. */ }
-        }
+        Task { await session.showRecord(id: item.id, title: item.title) }
+    }
+
+    /// `codex resume <id>` at the terminal prompt, not run.
+    func resumeInTerminal(_ id: String) {
+        if !showTerminal || terminalSession == nil { focusPane(.terminal) }
+        aiTabSelected = false
+        let quoted = "'" + id.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        sendTextToTerminal("codex resume " + quoted)
     }
 }
 
@@ -145,10 +149,11 @@ struct AgentSessionListView: View {
             HStack {
                 Text("会话").themedFont(.caption.weight(.medium), points: 11)
                 Spacer()
-                Button("刷新") { refresh() }.controlSize(.small).disabled(list.isLoading)
+                Button { refresh() } label: { WaitingLabel(title: list.isLoading ? "正在读取…" : "刷新", waiting: list.isLoading) }
+                    .controlSize(.small).disabled(list.isLoading)
             }
             if list.isLoading {
-                HStack { ProgressView().controlSize(.small); Text("正在加载会话…") }
+                Text("正在读取会话列表，会话多时要几秒。").foregroundStyle(.secondary)
                 Spacer()
             } else if let error = list.error {
                 Text(error).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -177,10 +182,9 @@ struct AgentSessionListView: View {
     }
 
     private func row(_ item: AgentSessionList.Item, session: AgentSession) -> some View {
-        let reason: String? = list.supportsLoad != true ? "这个 agent 不支持打开已有会话" : nil
+        let reason: String? = session.agent != .codex ? "只能查看 Codex 的会话记录" : nil
         return Button {
-            let local = AgentSession.savedSessionIDs(gitDir: session.gitDir, agent: session.agent)
-            model.openAgentSession(item, fromFolmi: local.contains(item.id))
+            model.openAgentSession(item)
             onOpen()
         } label: {
             VStack(alignment: .leading, spacing: 3) {
@@ -196,18 +200,13 @@ struct AgentSessionListView: View {
         }
         .buttonStyle(.plain)
         .disabled(reason != nil)
-        .help(reason ?? (model.agentSessions.contains { $0.sessionID == item.id && !$0.restored } ? "已经开着，切到它" : "在新标签里打开，先只读查看"))
+        .help(reason ?? (model.agentSessions.contains { $0.sessionID == item.id && !$0.restored } ? "已经开着，切到它" : "在新标签里只读查看"))
         .contextMenu {
             Button("复制会话 id") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(item.id, forType: .string)
             }
-            Button("在终端里用 Codex 接着聊") {
-                if !model.showTerminal || model.terminalSession == nil { model.focusPane(.terminal) }
-                model.aiTabSelected = false
-                let quoted = "'" + item.id.replacingOccurrences(of: "'", with: "'\\''") + "'"
-                model.sendTextToTerminal("codex resume " + quoted)
-            }
+            Button("在终端里用 Codex 接着聊") { model.resumeInTerminal(item.id) }
             .disabled(session.agent != .codex)
         }
     }

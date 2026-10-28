@@ -214,3 +214,4 @@
 1. 「交给 Codex」放进输入框，不自动发送。
 2. 第一版不做独立窗口，第 4 步只做拆栏。
 3. 随手记、待办也能交给 Codex：待办页和随手记里的一条，右键或 ⌘J 作为附件进会话。[direction.md](../direction.md) 已跟着改。
+4. 别处开的会话只读，不做「在这里接着聊」（2026-10-28 改）：codex-acp 的 `session/load` 在 Codex App、CLI 或编辑器开着这个会话时直接报错，两个客户端写同一个会话也会乱。改成直接读 Codex 的会话记录（`~/.codex/sessions/…/rollout-…-<id>.jsonl`，旧的是 `.zst`，要 zstd 才能读），要接着聊就把 `codex resume <id>` 放进终端。下面「打开一个在 Codex 里开的会话」一节以这条为准。

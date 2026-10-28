@@ -178,13 +178,12 @@ struct StashSheet: View {
                         .themedFont(.caption, points: 10).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                if model.busy { ProgressView().controlSize(.small) }
             }
             if changed > 0 {
                 HStack {
                     Text("现在有 \(changed) 个文件的改动").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                     Spacer()
-                    Button("暂放全部改动", action: model.stashAllChanges).disabled(model.busy)
+                    BusyButton("暂放全部改动", busy: model.busy, action: model.stashAllChanges).disabled(model.busy)
                         .help("包括没跟踪的新文件；暂存过的部分恢复时仍是暂存的")
                 }
                 .padding(10)
@@ -270,7 +269,7 @@ private struct StashRow: View {
                 .disabled(model.busy)
                 .help("从列表里删掉（⌥⌘Z 可以撤销删除）")
             let clashes = !(conflicts ?? []).isEmpty
-            Button(clashes ? "仍然拿回" : "拿回") { model.popStash(entry) }
+            BusyButton(clashes ? "仍然拿回" : "拿回", busy: model.busy) { model.popStash(entry) }
                 .buttonStyle(.folmiProminent).controlSize(.small)
                 .disabled(model.busy || !canRestore)
                 .help(canRestore ? "把这些改动拿回工作区（暂存过的仍是暂存的），并从列表里拿掉" : "先提交或暂放现有改动")
@@ -305,7 +304,7 @@ struct RestoreConflictNotice: View {
                     Button("撤销拿回") { confirming = true }.buttonStyle(.folmiProminent).controlSize(.small).disabled(model.busy)
                         .help("已跟踪的文件回到当前提交，拿回带出来的新文件删掉；暂放的改动不受影响")
                 } else {
-                    Button("删掉那份暂放的改动", action: model.finishConflictedRestore).buttonStyle(.folmiProminent).controlSize(.small).disabled(model.busy)
+                    BusyButton("删掉那份暂放的改动", busy: model.busy, action: model.finishConflictedRestore).buttonStyle(.folmiProminent).controlSize(.small).disabled(model.busy)
                     Button("留着") { if let root = model.repositoryURL { model.conflictedRestores.removeValue(forKey: root.path) } }.controlSize(.small)
                 }
             }

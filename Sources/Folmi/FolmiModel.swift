@@ -587,7 +587,7 @@ final class FolmiModel {
         draftMessage = settings.draftMessage; amendLast = settings.amendLast
         if let profile = settings.deliveryProfiles.first(where: { $0.id == settings.selectedProfileID }) { applyProfile(profile) }
         else {
-            selectedProfileID = nil; profileName = ""; deliveryKind = .push
+            selectedProfileID = nil; profileName = ""; deliveryKind = Self.startingDeliveryKind(settings, root: state.root)
             deliveryRemote = state.remotes.contains("origin") ? "origin" : (state.remotes.first ?? "")
             deliveryBranch = ""; scriptPath = ""; scriptArguments = ""
         }

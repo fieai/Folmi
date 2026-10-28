@@ -543,7 +543,7 @@ enum MarkdownReaderPage {
     #find .n{min-width:44px;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
     #find button{font:inherit;color:var(--fg);background:none;border:0;width:24px;height:24px;border-radius:6px;cursor:pointer}
     #find button:hover{background:var(--code-bg)}
-    #pop{position:absolute;z-index:10;display:none;gap:2px;padding:4px;border-radius:10px;background:var(--pop);
+    #pop{position:absolute;z-index:10;display:none;cursor:default;-webkit-user-select:none;user-select:none;gap:2px;padding:4px;border-radius:10px;background:var(--pop);
       -webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);
       box-shadow:inset 0 1px 0 var(--edge),0 0 0 1px var(--border),0 8px 24px rgba(0,0,0,.22);font:12.5px -apple-system,"PingFang SC",sans-serif;white-space:nowrap}
     .flash{animation:wbflash 3s ease-out}@keyframes wbflash{0%,25%{background:var(--accent-bg);box-shadow:0 0 0 6px var(--accent-bg)}100%{background:transparent;box-shadow:0 0 0 6px transparent}}

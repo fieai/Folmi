@@ -524,3 +524,50 @@ struct PaneTabGroup<Content: View>: View {
 extension View {
     func segmentTrack() -> some View { modifier(SegmentTrack()) }
 }
+
+/// A button that shows the wait in its own title: a small spinner beside the words while the work it started runs,
+/// so the eye stays where it clicked instead of looking for a spinner elsewhere on the sheet. `busy` is the shared
+/// busy flag; only the button that was clicked spins, and a click that started nothing stops spinning on its own.
+struct BusyButton: View {
+    let title: String
+    let busy: Bool
+    let action: () -> Void
+    @State private var clicked = false
+
+    init(_ title: String, busy: Bool, action: @escaping () -> Void) {
+        self.title = title; self.busy = busy; self.action = action
+    }
+
+    var body: some View {
+        Button {
+            clicked = true
+            action()
+        } label: {
+            HStack(spacing: 5) {
+                if clicked && busy {
+                    ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12)
+                }
+                Text(title)
+            }
+        }
+        .onChange(of: busy) { _, now in if !now { clicked = false } }
+        // A click whose work never set `busy` (it was refused, or finished at once) must not spin later for another.
+        .task(id: clicked) {
+            guard clicked else { return }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if !busy { clicked = false }
+        }
+    }
+}
+
+/// A button title with a spinner for work the button did not start but waits on (loading what it will act on).
+struct WaitingLabel: View {
+    let title: String
+    let waiting: Bool
+    var body: some View {
+        HStack(spacing: 5) {
+            if waiting { ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12) }
+            Text(title)
+        }
+    }
+}

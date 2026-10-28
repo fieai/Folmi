@@ -104,50 +104,6 @@ final class AgentSessionListTests: XCTestCase {
     }
 
     @MainActor
-    func testLoadReplaysHistoryAndRequiresContinueBeforePromptingLoadedID() async throws {
-        let fixture = try makeFixture()
-        defer { fixture.session.close(); try? FileManager.default.removeItem(at: fixture.root) }
-        try await fixture.session.load(sessionID: "external-id", fromFolmi: false, command: fixture.command)
-
-        XCTAssertEqual(fixture.session.sessionID, "external-id")
-        XCTAssertTrue(fixture.session.isReadOnly)
-        XCTAssertFalse(fixture.session.restored)
-        XCTAssertEqual(fixture.session.transcript.entries.map(\.kind), [.user, .agent, .tool])
-        XCTAssertEqual(fixture.session.transcript.entries.map(\.text), ["历史问题", "历史回答", "读取 README.md"])
-        XCTAssertEqual(fixture.session.transcript.entries.last?.paths, ["README.md"])
-        let history = fixture.session.transcript
-        fixture.session.send("还没接管", context: [], command: fixture.command)
-        XCTAssertEqual(fixture.session.transcript, history)
-        XCTAssertFalse(fixture.session.isBusy)
-        XCTAssertFalse(try readRequests(fixture.log).contains { $0["method"]?.string == "session/prompt" })
-
-        fixture.session.continueHere()
-        XCTAssertFalse(fixture.session.isReadOnly)
-        fixture.session.send("接着做", context: [], command: fixture.command)
-        try await waitUntilIdle(fixture.session)
-        XCTAssertEqual(fixture.session.transcript.entries.last?.text, "继续回答")
-        let requests = try readRequests(fixture.log)
-        XCTAssertFalse(requests.contains { $0["method"]?.string == "session/new" })
-        let loaded = try XCTUnwrap(requests.first { $0["method"]?.string == "session/load" })
-        XCTAssertEqual(loaded["params"]?["cwd"]?.string, fixture.root.path)
-        XCTAssertNotNil(loaded["params"]?["mcpServers"]?.array)
-        let prompts = requests.filter { $0["method"]?.string == "session/prompt" }
-        XCTAssertEqual(prompts.count, 1)
-        XCTAssertEqual(prompts.first?["params"]?["sessionId"]?.string, "external-id")
-        XCTAssertEqual(AgentSession.savedSessionIDs(gitDir: fixture.gitDir, agent: .codex), ["external-id"])
-    }
-
-    @MainActor
-    func testLoadingFolmiSessionAlsoStartsReadOnly() async throws {
-        let fixture = try makeFixture()
-        defer { fixture.session.close(); try? FileManager.default.removeItem(at: fixture.root) }
-        try await fixture.session.load(sessionID: "folmi-id", fromFolmi: true, command: fixture.command)
-        XCTAssertTrue(fixture.session.isReadOnly)
-        fixture.session.send("先别发", context: [], command: fixture.command)
-        XCTAssertFalse(try readRequests(fixture.log).contains { $0["method"]?.string == "session/prompt" })
-    }
-
-    @MainActor
     func testOldSavedFileWithoutSessionIDStillLoads() throws {
         let fixture = try makeFixture()
         defer { fixture.session.close(); try? FileManager.default.removeItem(at: fixture.root) }

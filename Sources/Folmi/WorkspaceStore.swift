@@ -61,6 +61,8 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     /// 大仓库模式 (Git's file system monitor + untracked cache for status) and whether its offer was turned down.
     var largeRepository = false
     var largeRepositoryDeclined = false
+    /// How the last push from here went out (a branch push or a Gerrit review), so the push sheet starts there.
+    var lastDeliveryKind: DeliveryKind?
     /// Gerrit reviews pushed from here, checked against their target after each fetch (see `ReviewWatch`).
     var reviewWatches: [ReviewWatch] = []
     /// The editor's columns (tabs are project paths) and the terminal's (tabs are places in `terminalTabs`); nil: not split.
@@ -90,7 +92,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case rootPath, name, isDemo, environment, draftMessage, amendLast, deliveryProfiles, selectedProfileID, lastArea, editorTabs, selectedEditorPath, reviewComments, terminalTabs
         case terminalDirectories, reviewedLines, lastContent, selectedChangePath, largeRepository, largeRepositoryDeclined, reviewWatches
-        case editorColumns, terminalColumns, linkedProjects
+        case editorColumns, terminalColumns, linkedProjects, lastDeliveryKind
     }
 
     init(from decoder: Decoder) throws {
@@ -119,6 +121,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
         editorColumns = try? values.decodeIfPresent(PaneColumns.self, forKey: .editorColumns)
         terminalColumns = try? values.decodeIfPresent(PaneColumns.self, forKey: .terminalColumns)
         linkedProjects = (try? values.decodeIfPresent([String].self, forKey: .linkedProjects)) ?? []
+        lastDeliveryKind = try? values.decodeIfPresent(DeliveryKind.self, forKey: .lastDeliveryKind)
     }
 }
 

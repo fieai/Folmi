@@ -42,7 +42,6 @@ struct DeliverySheet: View {
                         .themedFont(.caption, points: 10).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                if model.busy { ProgressView().controlSize(.small) }
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -201,10 +200,10 @@ struct DeliverySheet: View {
                 Spacer()
                 Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction).disabled(model.busy)
                 if model.deliveryKind == .script {
-                    Button("预览命令", action: model.preflightDelivery).disabled(model.busy)
+                    BusyButton("预览命令", busy: model.busy, action: model.preflightDelivery).disabled(model.busy)
                         .help("锁定当前提交并列出命令，不执行")
                 }
-                Button(buttonTitle, action: model.deliver)
+                BusyButton(model.busy ? (model.deliveryKind == .script ? "正在运行…" : "正在推送…") : buttonTitle, busy: model.busy, action: model.deliver)
                     .buttonStyle(.folmiProminent)
                     .disabled(model.busy || (model.deliveryKind == .script && !model.canDeliver))
                     .help(model.deliveryKind != .script ? "锁定当前提交，取回远端后推送" : model.canDeliver ? "执行上面列出的命令" : "先点「预览命令」")

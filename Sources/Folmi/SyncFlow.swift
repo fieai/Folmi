@@ -165,7 +165,6 @@ struct PullSheet: View {
                         .themedFont(.caption, points: 10).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                if model.pullLoading || model.busy { ProgressView().controlSize(.small) }
             }
 
             if let plan = model.pullPlan {
@@ -222,9 +221,10 @@ struct PullSheet: View {
             HStack {
                 Spacer()
                 Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction).disabled(model.busy)
-                Button("重新取回", action: model.preparePull).disabled(model.busy || model.pullLoading)
+                Button(action: model.preparePull) { WaitingLabel(title: model.pullLoading ? "正在取回…" : "重新取回", waiting: model.pullLoading) }
+                    .disabled(model.busy || model.pullLoading)
                     .help("再从远端取回一次，更新上面的数字")
-                Button(model.pullPlan?.upToDate == true ? "已是最新" : "拉取", action: model.runPull)
+                BusyButton(model.busy ? "正在拉取…" : model.pullPlan?.upToDate == true ? "已是最新" : "拉取", busy: model.busy, action: model.runPull)
                     .buttonStyle(.folmiProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!model.canPull)
@@ -272,11 +272,11 @@ struct OperationNotice: View {
                 .themedFont(.caption, points: 10).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 if operation == .rebase {
-                    Button("继续变基", action: model.continueRebase)
+                    BusyButton("继续变基", busy: model.busy, action: model.continueRebase)
                         .buttonStyle(.folmiProminent).controlSize(.small)
                         .disabled(model.busy || conflicts > 0)
                 }
-                Button("放弃\(operation.title)", action: model.abortOperation)
+                BusyButton("放弃\(operation.title)", busy: model.busy, action: model.abortOperation)
                     .controlSize(.small).disabled(model.busy)
                     .help("分支和文件回到\(operation.title)开始之前")
             }

@@ -48,6 +48,26 @@ extension FolmiModel {
         }
     }
 
+    /// The push sheet starts where the last push from this project went: a branch or a Gerrit review. Never pushed
+    /// from here: a review when the repository has Gerrit's commit-msg hook (it adds the Change-Id), else a branch.
+    nonisolated static func startingDeliveryKind(_ settings: ProjectPreferences, root: URL) -> DeliveryKind {
+        if let kind = settings.lastDeliveryKind, kind != .script { return kind }
+        return usesGerrit(root: root) ? .gerrit : .push
+    }
+
+    nonisolated static func usesGerrit(root: URL) -> Bool {
+        guard let gitDir = AIEventStore.locate(from: root)?.gitDir else { return false }
+        var folders = [gitDir]
+        // A linked worktree keeps its hooks in the main repository's .git.
+        if let common = try? String(contentsOf: gitDir.appendingPathComponent("commondir"), encoding: .utf8) {
+            let path = common.trimmingCharacters(in: .whitespacesAndNewlines)
+            folders.append(path.hasPrefix("/") ? URL(fileURLWithPath: path) : gitDir.appendingPathComponent(path).standardized)
+        }
+        return folders.contains { folder in
+            (try? String(contentsOf: folder.appendingPathComponent("hooks/commit-msg"), encoding: .utf8))?.contains("Change-Id") == true
+        }
+    }
+
     func chooseScript() {
         guard !busy else { return }
         let panel = NSOpenPanel(); panel.title = "选择可执行的交付脚本"; panel.canChooseFiles = true; panel.canChooseDirectories = false
@@ -234,6 +254,11 @@ extension FolmiModel {
                        + "\(command.display)\n\n锁定提交：\(head)\n退出码：\(result.exitCode)\n\(result.combined)", isError: result.exitCode != 0)
                 if result.exitCode != 0 { errorMessage = "交付命令退出码 \(result.exitCode)。本地提交仍然保留，详情见操作记录。" }
                 delivered = result.exitCode == 0
+                if delivered, plan.kind != .script, let index = projects.firstIndex(where: { $0.rootPath == plan.root.path }),
+                   projects[index].lastDeliveryKind != plan.kind {
+                    projects[index].lastDeliveryKind = plan.kind
+                    scheduleSave()
+                }
                 if delivered, plan.kind == .gerrit { await watchReview(commit: head, remote: deliveryRemote, branch: deliveryBranch.trimmingCharacters(in: .whitespacesAndNewlines), root: plan.root) }
             } catch { if !deliveryAfterRebase.contains(plan.root.path) { report(error, title: "交付失败") } else { record("交付暂停", error.localizedDescription, isError: true) } }
             if delivered { showDelivery = false }

@@ -239,6 +239,14 @@ final class MarkdownOverlays {
     var isSlashOpen: Bool { slashTrigger != nil }
     var isFormatBarShown: Bool { formatHost?.isHidden == false }
 
+    /// Whether a point (in the editor's coordinates) is over one of the floating controls on screen.
+    func covers(_ point: NSPoint) -> Bool {
+        [formatHost, slashHost, codeHost].contains { host in
+            guard let host, !host.isHidden, host.superview != nil else { return false }
+            return host.frame.contains(point)
+        }
+    }
+
     func textChanged() {
         revision &+= 1
         hideFormatBar()
@@ -511,12 +519,18 @@ final class MarkdownOverlays {
             if existing.superview !== editor, let editor { editor.addSubview(existing) }
             return existing
         }
-        let created = NSHostingView(rootView: root)
+        let created = OverlayHostingView(rootView: root)
         created.isHidden = true
         editor?.addSubview(created)
         slot = created
         return created
     }
+}
+
+/// The floating controls inside a text view: an arrow over them, not the text view's I-beam.
+final class OverlayHostingView: NSHostingView<AnyView> {
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
 }
 
 extension EditorTextView {
