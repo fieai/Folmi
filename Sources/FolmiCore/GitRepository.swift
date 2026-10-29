@@ -448,7 +448,8 @@ public actor GitRepository {
     public func stagedPatch(limit: Int = 60_000) async throws -> (stat: String, patch: String, subjects: [String]) {
         let git = try runner()
         let stat = try git.run(["diff", "--cached", "--no-color", "--stat=120"]).text
-        var patch = try git.run(["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "--unified=2"]).text
+        // Non-ASCII paths stay readable in `+++ b/…` rather than a quoted octal string.
+        var patch = try git.run(["-c", "core.quotePath=false", "diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "--unified=2"]).text
         if patch.utf8.count > limit { patch = String(decoding: patch.utf8.prefix(limit), as: UTF8.self) + "\n…（diff 已截断）" }
         let subjects = try git.run(["log", "-20", "--format=%s"], allowFailure: true).text.components(separatedBy: "\n").filter { !$0.isEmpty }
         return (stat, patch, subjects)

@@ -64,6 +64,12 @@ final class ReviewFlowTests: XCTestCase {
         XCTAssertFalse(SecretScan.findings(in: "-----BEGIN OPENSSH PRIVATE KEY-----").isEmpty)
         XCTAssertFalse(SecretScan.findings(in: "API_KEY = 'abcdefghijklmnopqrstuvwxyz'").isEmpty)
         XCTAssertTrue(SecretScan.findings(in: "+let skip = true\n+// token count").isEmpty)
+        // Words and code that only look like keys.
+        XCTAssertTrue(SecretScan.findings(in: "+劳动与非劳动 risk-assessment-workflow-coverage-review 续签").isEmpty)
+        XCTAssertTrue(SecretScan.findings(in: "+    token = make_card_download_token(card.id)").isEmpty)
+        XCTAssertTrue(SecretScan.findings(in: "+    password = settings.compliance_download_password").isEmpty)
+        XCTAssertTrue(SecretScan.findings(in: "+secret: get_secret_from_environment").isEmpty)
+        XCTAssertFalse(SecretScan.findings(in: "+token = \"a8F3kLq9ZxP2mN7vR4tY\"").isEmpty)
         XCTAssertTrue(SecretScan.isSensitivePath("config/.env")); XCTAssertTrue(SecretScan.isSensitivePath(".env.local"))
         XCTAssertFalse(SecretScan.isSensitivePath(".env.example")); XCTAssertFalse(SecretScan.isSensitivePath("env.swift"))
     }

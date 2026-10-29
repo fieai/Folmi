@@ -267,10 +267,27 @@ enum AIKeychain {
 /// Text that looks like a credential. Nothing that matches is sent to a model.
 enum SecretScan {
     private static let patterns: [NSRegularExpression] = [
-        #"AKIA[0-9A-Z]{16}"#, #"-----BEGIN [A-Z ]*PRIVATE KEY"#, #"gh[pousr]_[A-Za-z0-9]{36}"#, #"sk-[A-Za-z0-9_\-]{20,}"#,
+        // `sk-` only at the start of a token, not inside words like "risk-assessment-…".
+        #"AKIA[0-9A-Z]{16}"#, #"-----BEGIN [A-Z ]*PRIVATE KEY"#, #"gh[pousr]_[A-Za-z0-9]{36}"#, #"(?<![A-Za-z0-9_\-])sk-[A-Za-z0-9_\-]{20,}"#,
         #"xox[abpr]-[A-Za-z0-9-]{10,}"#, #"AIza[0-9A-Za-z_\-]{35}"#,
-        #"(?i)(api[_-]?key|secret|token|password)["']?\s*[:=]\s*["']?[A-Za-z0-9_\-/+]{20,}"#,
     ].compactMap { try? NSRegularExpression(pattern: $0) }
+    /// `token = <value>`; the value is checked by `looksLikeSecret` so code such as `token = make_download_token(card)` passes.
+    private static let assignment = try! NSRegularExpression(
+        pattern: #"(?i)(api[_-]?key|secret|token|password)["']?\s*[:=]\s*(["']?)([A-Za-z0-9_\-/+]{20,})(.?)"#)
+    private static let wordsIdentifier = try! NSRegularExpression(pattern: #"^[A-Za-z][a-z]*([_\-][A-Za-z][a-z]*)+$|^[a-z]+([A-Z][a-z]+)+$"#)
+    private static func looksLikeSecret(_ line: String) -> Bool {
+        let ns = line as NSString
+        for match in assignment.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
+            let quoted = match.range(at: 2).length > 0
+            let value = ns.substring(with: match.range(at: 3)), next = ns.substring(with: match.range(at: 4))
+            // A call or attribute access is code, not a literal.
+            if !quoted, ["(", ".", "["].contains(next) { continue }
+            // Words joined by _ - or camelCase read as a name (`get_password_from_env`), not a key.
+            if wordsIdentifier.firstMatch(in: value, range: NSRange(location: 0, length: (value as NSString).length)) != nil { continue }
+            return true
+        }
+        return false
+    }
     /// File names that should not be sent or committed without a second look.
     static func isSensitivePath(_ path: String) -> Bool {
         let name = (path as NSString).lastPathComponent.lowercased()
@@ -283,7 +300,7 @@ enum SecretScan {
         let lines = text.components(separatedBy: "\n")
         for (index, line) in lines.enumerated() where line.count < 4_000 {
             let range = NSRange(line.startIndex..., in: line)
-            if patterns.contains(where: { $0.firstMatch(in: line, range: range) != nil }) {
+            if patterns.contains(where: { $0.firstMatch(in: line, range: range) != nil }) || looksLikeSecret(line) {
                 found.append("第 \(index + 1) 行：" + String(line.trimmingCharacters(in: .whitespaces).prefix(60)) + "…")
                 if found.count >= limit { break }
             }

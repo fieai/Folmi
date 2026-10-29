@@ -301,7 +301,8 @@ final class FolmiModel {
         return check.unreviewed(reviewLedger)
     }
     @ObservationIgnored var commitCheckTask: Task<Void, Never>?
-    @ObservationIgnored var commitCheckOverride: String?
+    /// Fingerprint of the staged state whose findings the user confirmed; that state commits without asking again.
+    var commitCheckOverride: String?
     /// Commit was pressed and waits for the pre-commit check of what is staged.
     var commitCheckWaiting = false
     @ObservationIgnored var assistTask: Task<Void, Never>?
@@ -1017,6 +1018,12 @@ final class FolmiModel {
             }
             return head
         }
+    }
+    /// The user read the pre-commit findings and says they are fine: the next commit of this exact staged state goes
+    /// through. Staging anything else runs the check again.
+    func confirmCommitCheck() {
+        guard let fingerprint = snapshot?.fingerprint, commitCheck?.fingerprint == fingerprint else { return }
+        commitCheckOverride = fingerprint
     }
     func setAmend(_ value: Bool) {
         guard !busy else { return }

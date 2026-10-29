@@ -334,8 +334,10 @@ struct CommitCheckView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else if let check = model.commitCheck, !check.findings.isEmpty || !model.unreviewedStaged.isEmpty {
             let unreviewed = model.unreviewedStaged
+            let needsConfirm = check.blocking || !unreviewed.isEmpty
+            let confirmed = model.commitCheckOverride == check.fingerprint
             VStack(alignment: .leading, spacing: 4) {
-                Label(check.blocking || !unreviewed.isEmpty ? "提交前检查：需要确认" : "提交前检查：提醒",
+                Label(needsConfirm ? (confirmed ? "提交前检查：已确认" : "提交前检查：需要确认") : "提交前检查：提醒",
                       systemImage: check.blocking ? "exclamationmark.octagon" : "exclamationmark.triangle")
                     .themedFont(.caption.weight(.semibold), points: 10).foregroundStyle(check.blocking ? .red : .orange)
                 ForEach(unreviewed.keys.sorted().prefix(3), id: \.self) { path in
@@ -347,6 +349,16 @@ struct CommitCheckView: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
                 if check.findings.count > 5 { Text("还有 \(check.findings.count - 5) 项…").themedFont(.caption2, points: 10).foregroundStyle(.secondary) }
+                if needsConfirm {
+                    if confirmed {
+                        Text("提交时不再拦这几项；暂存的内容再变会重新检查。").themedFont(.caption2, points: 10).foregroundStyle(.secondary)
+                    } else {
+                        Button("看过了，没问题", action: model.confirmCommitCheck)
+                            .controlSize(.small).disabled(model.busy)
+                            .help("确认这些提醒是误报或可以提交；之后按提交就直接提交。")
+                            .accessibilityIdentifier("commit-check-confirm")
+                    }
+                }
             }
             .padding(8).frame(maxWidth: .infinity, alignment: .leading)
             .background((check.blocking ? ThemeColor(token: .removed) : ThemeColor(token: .modified)).opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
