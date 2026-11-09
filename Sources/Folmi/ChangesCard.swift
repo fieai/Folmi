@@ -8,6 +8,7 @@ struct SideCard: View {
     let tracker: PaneFocusTracker
     @Binding var treeQuery: String
     let treeExpansion: ProjectTreeExpansion
+    @State private var groupChangesByFolder = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -29,7 +30,9 @@ struct SideCard: View {
             ZStack {
                 if tab == .files {
                     TreePane(model: model, query: $treeQuery, expansion: treeExpansion).transition(.opacity)
-                } else { ChangesPane(model: model).transition(.opacity) }
+                } else {
+                    ChangesPane(model: model, groupByFolder: $groupChangesByFolder).transition(.opacity)
+                }
             }
             .animation(reduceMotion ? nil : Motion.state, value: tab)
             .onChange(of: model.repositoryURL?.path) { _, _ in treeExpansion.reset(); treeQuery = "" }
@@ -187,6 +190,9 @@ struct TreePane: View {
 
 struct ChangesPane: View {
     @Bindable var model: FolmiModel
+    @Binding var groupByFolder: Bool
+    @State private var collapsedFolders: [ChangeArea: Set<String>] = [:]
+    @State private var searchCollapsedFolders: [ChangeArea: Set<String>] = [:]
 
     var body: some View {
         let _ = PerfLog.body("ChangesPane")
@@ -194,8 +200,13 @@ struct ChangesPane: View {
         let unreviewed = model.unreviewedStaged
         let unreviewedWarning: String? = unreviewed.isEmpty ? nil : "\(unreviewed.values.reduce(0, +)) 处没验收"
         VStack(spacing: 0) {
-            TextField("搜索改动…", text: $model.fileSearch).themedTextField()
-                .padding(10)
+            HStack(spacing: 4) {
+                TextField("搜索改动…", text: $model.fileSearch).themedTextField()
+                PaneIconButton(symbol: groupByFolder ? "list.bullet" : "folder",
+                               help: groupByFolder ? "切换为平铺展示" : "切换为按文件夹展示") {
+                    groupByFolder.toggle()
+                }
+            }.padding(10)
             if let operation = model.snapshot?.operation {
                 OperationNotice(model: model, operation: operation).padding(.horizontal, 10).padding(.bottom, 8)
             } else if model.snapshot?.files.contains(where: \.isConflict) == true
@@ -241,7 +252,7 @@ struct ChangesPane: View {
                                 .themedFont(.caption, points: 10).foregroundStyle(.secondary).padding(.vertical, 2)
                                 .selectionDisabled()
                         }
-                        ForEach(staged) { file in row(file, .staged, unreviewed: unreviewed[file.path] != nil) }
+                        fileRows(staged, in: .staged, unreviewed: unreviewed)
                     } header: {
                         stagedHeader(staged, warning: unreviewedWarning)
                     }
@@ -251,7 +262,7 @@ struct ChangesPane: View {
                                 .themedFont(.caption, points: 10).foregroundStyle(.secondary).padding(.vertical, 2)
                                 .selectionDisabled()
                         }
-                        ForEach(working) { file in row(file, .working) }
+                        fileRows(working, in: .working)
                     } header: {
                         GroupHeader(title: "工作区", detail: "未暂存", count: working.count, token: .modified,
                                     onSelectAll: { model.selectFiles(Set(working.map(\.id)), in: .working) },
@@ -274,6 +285,11 @@ struct ChangesPane: View {
             Divider()
             CommitSection(model: model)
         }
+        .onChange(of: model.fileSearch) { _, _ in searchCollapsedFolders.removeAll() }
+        .onChange(of: model.repositoryURL) { _, _ in
+            collapsedFolders.removeAll()
+            searchCollapsedFolders.removeAll()
+        }
     }
 
     private func stagedHeader(_ staged: [FileChange], warning: String?) -> GroupHeader {
@@ -282,14 +298,56 @@ struct ChangesPane: View {
                     moveAll: ("全部取消", { model.unstageFiles(staged) }), warning: warning, busy: model.busy)
     }
 
-    private func row(_ file: FileChange, _ group: ChangeArea, unreviewed: Bool = false) -> some View {
+    private func fileRows(_ files: [FileChange], in group: ChangeArea, unreviewed: [String: Int] = [:]) -> some View {
+        let collapsed = model.fileSearch.isEmpty ? $collapsedFolders : $searchCollapsedFolders
+        let rows = ChangeListRow.rows(files, grouped: groupByFolder, collapsed: collapsed.wrappedValue[group, default: []])
+        return ForEach(rows) { item in
+            Group {
+                switch item {
+                case let .file(file, depth):
+                    row(file, group, depth: depth, unreviewed: unreviewed[file.path] != nil)
+                case let .folder(path, depth, expanded):
+                    folderRow(path, depth: depth, expanded: expanded) {
+                        if expanded { collapsed.wrappedValue[group, default: []].insert(path) }
+                        else { collapsed.wrappedValue[group, default: []].remove(path) }
+                    }
+                }
+            }
+            .tag(item.fileID.map { group.rawValue + ":" + $0 } ?? item.id)
+            .selectionDisabled(item.fileID == nil)
+        }
+    }
+
+    private func folderRow(_ path: String, depth: Int, expanded: Bool, action: @escaping () -> Void) -> some View {
+        let name = (path as NSString).lastPathComponent
+        return Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary).frame(width: 10)
+                Image(systemName: expanded ? "folder.fill" : "folder")
+                    .foregroundStyle(ThemeColor(token: .accent)).frame(width: 15)
+                Text(name).lineLimit(1).truncationMode(.middle)
+            }
+            .padding(.leading, CGFloat(depth) * 16)
+            .padding(.vertical, model.theme.style.rowPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.pressableRow)
+        .accessibilityLabel("\(name)，文件夹")
+        .accessibilityValue(expanded ? "已展开" : "已折叠")
+    }
+
+    private func row(_ file: FileChange, _ group: ChangeArea, depth: Int, unreviewed: Bool) -> some View {
         let key = group.rawValue + ":" + file.id
         let selected = model.area == group && model.selectedFileIDs.contains(file.id)
         let focused = model.paneLayout.focused == .changes
+        let indent = groupByFolder ? CGFloat(depth) * 16 + 15 : 0
         return FileChangeRow(file: file, area: group, counts: model.theme.style.instrument ? model.lineCounts[key] : nil,
                              onAccent: selected && focused && model.theme.style.selection == .solid,
-                             unreviewed: unreviewed)
-            .tag(key).padding(.vertical, model.theme.style.rowPadding)
+                             unreviewed: unreviewed, showsDirectory: !groupByFolder)
+            .padding(.leading, indent)
+            .padding(.vertical, model.theme.style.rowPadding)
             .background(ListHighlightSuppressor())
             .listRowBackground(SelectedRowBackground(selected: selected, focused: focused))
     }
@@ -660,6 +718,7 @@ struct FileChangeRow: View {
     var onAccent = false
     /// Staged without being accepted (see `FolmiModel.unreviewedStaged`).
     var unreviewed = false
+    var showsDirectory = true
 
     private var filename: String { (file.path as NSString).lastPathComponent }
     private var directory: String { (file.path as NSString).deletingLastPathComponent }
@@ -680,7 +739,7 @@ struct FileChangeRow: View {
 
     @Environment(\.folmiTheme) private var theme
     private var inline: Bool { theme.style.instrument }
-    private var hasDirectory: Bool { !directory.isEmpty && directory != "." }
+    private var hasDirectory: Bool { showsDirectory && !directory.isEmpty && directory != "." }
 
     var body: some View {
         let _ = PerfLog.body("FileChangeRow")
