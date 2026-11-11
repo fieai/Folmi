@@ -26,19 +26,20 @@ struct ListHighlightSuppressor: NSViewRepresentable {
 }
 
 /// A selected row: the palette's fill (琥珀, 像素), a fill with a 2 pt accent bar (锌莓), or the accent itself while the
-/// list's card has focus and a neutral fill when it does not (石墨, like Finder).
+/// list's card has focus in dark 石墨. Light 石墨 uses the same neutral fill across panes.
 struct SelectedRowBackground: View {
     let selected: Bool
     let focused: Bool
     /// Inside a `List` row background the selection keeps clear of the list's edges; elsewhere it fills the row.
     var inset = true
     @Environment(\.folmiTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         let style = theme.style
         let shape = RoundedRectangle(cornerRadius: style.rowRadius, style: .continuous)
         Group {
             if selected {
-                switch style.selection {
+                switch theme.selection(dark: colorScheme == .dark) {
                 case .tint:
                     shape.fill(.themed(.selectedFill))
                 case .bar:

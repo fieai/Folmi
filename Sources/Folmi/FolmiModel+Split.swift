@@ -70,6 +70,36 @@ extension FolmiModel {
 
     // MARK: Editor
 
+    func markdownSideBySideBlockedReason(column: UUID) -> String? {
+        guard let editor = editorWorkspace,
+              let pane = editor.columns.columns.first(where: { $0.id == column && !$0.isDiff }),
+              let path = pane.selected, NativeCodeEditor.isMarkdownPath(path) else { return "先打开一个 Markdown 文件" }
+        if editor.columns.columns.contains(where: { $0.id != column && !$0.isDiff && $0.selected == path }) { return nil }
+        return splitBlockedReason(.editor)
+    }
+
+    func showMarkdownSideBySide(column: UUID) {
+        guard markdownSideBySideBlockedReason(column: column) == nil, let editor = editorWorkspace,
+              let sourceIndex = editor.columns.index(of: column),
+              let path = editor.columns.columns[sourceIndex].selected else { return }
+        var other = editor.columns.columns.first { $0.id != column && !$0.isDiff && $0.selected == path }?.id
+        if other == nil {
+            splitEditor(toRight: true, tab: path, from: column)
+            other = editor.columns.activeID == column ? nil : editor.columns.activeID
+        }
+        guard let other, let otherIndex = editor.columns.index(of: other) else { return }
+        let left = sourceIndex < otherIndex ? column : other
+        let right = left == column ? other : column
+        editor.setReading(false, column: left)
+        editor.setReading(true, column: right)
+        editor.columns.activate(left)
+        if let line = editor.editorTopLineByColumn[left]?() {
+            editor.followEditorScroll(from: left, documentID: path, line: line)
+        }
+        content = .editor
+        focusPane(.editor)
+    }
+
     /// Splits the editor card. On the 编辑 page the file shows in a new column too; on the 差异 page the diff becomes a
     /// column of its own with the file it shows open beside it.
     func splitEditor(toRight: Bool, tab: String? = nil, from column: UUID? = nil) {
@@ -126,6 +156,76 @@ extension FolmiModel {
         }
         guard let target = besideDiff(editor.columns) else { return }
         open(diff.file.path, line: Self.firstChangedLine(diff), in: target)
+    }
+
+    func editDiffPoint(_ point: DiffEditPoint, in diff: FileDiff, renderedText: String? = nil) async {
+        guard diff.canEditPoint, !busy, let editor = editorWorkspace, let repository, let root = repositoryURL else { return }
+        let startPage = content
+        let reviewPage = startPage == .allChanges
+        let request = UUID()
+        diffEditRequest = request
+        let path = diff.file.path
+        do {
+            // A staged diff uses index line numbers, while the editor always edits the working copy.
+            let version: FileVersion = diff.area == .staged ? .object(":" + path) : .worktree(path)
+            guard let bytes = try await repository.bytes(of: version, limit: 2 * 1_024 * 1_024),
+                  let reference = EditorWorkspace.readerText(bytes) else { throw FolmiError.staleSnapshot }
+            guard diffEditRequest == request, repositoryURL == root, content == startPage, !busy else { return }
+            guard renderedText.map({ $0 == reference }) ?? point.matches(reference),
+                  !diff.file.isUntracked || MarkdownDiffPage.normalized(diff.rawPatch) == reference else {
+                throw FolmiError.staleSnapshot
+            }
+            let target = besideDiff(editor.columns) ?? editor.columns.activeID
+            try editor.open(path: path, asText: true, in: target)
+            if diff.area == .working, let document = editor.selectedDocument, !document.isDirty, document.text != reference {
+                editor.reloadCleanDocuments()
+            }
+            guard let document = editor.selectedDocument, document.preview == nil else {
+                throw FolmiError.unsupported("这个文件不能作为文本编辑。")
+            }
+            let line = DiffEditPoint.translatedLine(point.line, from: reference, into: document.text)
+            if reviewPage { followReview(diff) }
+            if !editor.columns.hasDiff, editor.columns.canSplit, splitRoom[.editor] != false {
+                editor.columns.addDiff(atRight: false)
+            }
+            if EditorWorkspace.isMarkdownPath(path), editor.isReading(column: target) {
+                editor.setReading(false, column: target)
+                editor.editorScrollRequests[target] = (path, line - 1)
+            }
+            try editor.reveal(path: path, line: line)
+            diffEditReveal = nil
+            diffEditReturn = DiffEditReturn(path: path, area: diff.area, content: reviewPage ? .allChanges : .diff,
+                                           fingerprint: diff.fingerprint, hunkID: point.hunk?.id, hunkHeader: point.hunk?.header,
+                                           line: point.line, lineID: point.lineID)
+            content = .editor
+            focusPane(.editor)
+        } catch {
+            guard diffEditRequest == request, repositoryURL == root, content == startPage else { return }
+            report(error, title: "无法编辑这一处")
+        }
+    }
+
+    func returnToDiffEdit() {
+        guard !busy, let origin = diffEditReturn, let root = repositoryURL else { return }
+        diffEditReturn = nil
+        diffEditReveal = origin
+        if origin.content == .allChanges {
+            content = .allChanges
+            Task {
+                await loadAllChanges()
+                guard repositoryURL == root, content == .allChanges, diffEditReveal == origin,
+                      let diff = allChanges.first(where: { $0.allChangesKey == origin.key }) else { return }
+                reviewFileJump = ReviewFileJump(key: origin.key, hunkID: origin.hunk(in: diff)?.id, lineID: origin.rowID(in: diff))
+            }
+        } else {
+            if fileDiffs.contains(where: { $0.allChangesKey == origin.key }) {
+                content = .diff
+            } else if let file = snapshot?.files.first(where: { $0.path == origin.path }),
+                      origin.area == .working ? file.hasWorking : file.hasStaged {
+                selectFiles([file.id], in: origin.area)
+            } else { showChanges(of: origin.path) }
+        }
+        focusPane(.editor)
     }
 
     private func besideDiff(_ columns: PaneColumns) -> UUID? {

@@ -12,21 +12,30 @@ extension FolmiModel {
 
     func clearOutdatedReviewComments() { reviewComments.removeAll { $0.projectPath == repositoryURL?.path && $0.outdated } }
 
-    /// Finds each note's lines in the working tree again: moved lines carry the note along, changed or removed lines
-    /// mark it outdated.
+    /// Finds each note's lines on the new side of its original comparison.
     func relocateReviewComments() async {
         guard let root = repositoryURL else { return }
         let pending = currentReviewComments.filter { !$0.anchor.isEmpty }
         guard !pending.isEmpty else { return }
+        let repository = self.repository
         let located = await Task.detached(priority: .utility) { () -> [ReviewComment] in
             var files: [String: [String]] = [:], missing: Set<String> = []
-            return pending.map { comment in
-                if files[comment.path] == nil, !missing.contains(comment.path) {
-                    if let lines = ReviewComment.fileLines(root.appendingPathComponent(comment.path)) { files[comment.path] = lines }
-                    else { missing.insert(comment.path) }
+            var result: [ReviewComment] = []
+            for comment in pending {
+                let key = comment.area.rawValue + ":" + comment.path
+                if files[key] == nil, !missing.contains(key) {
+                    let lines: [String]?
+                    if comment.area == .staged {
+                        let data = try? await repository?.bytes(of: .object(":" + comment.path), limit: ReviewComment.maximumAnchorFileBytes)
+                        lines = data.flatMap(ReviewComment.fileLines)
+                    } else {
+                        lines = ReviewComment.fileLines(root.appendingPathComponent(comment.path))
+                    }
+                    if let lines { files[key] = lines } else { missing.insert(key) }
                 }
-                return comment.located(in: files[comment.path])
+                result.append(comment.located(in: files[key]))
             }
+            return result
         }.value
         guard repositoryURL == root else { return }
         let byID = Dictionary(located.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -39,6 +48,44 @@ extension FolmiModel {
             return updated
         }
         if next != reviewComments { reviewComments = next }
+    }
+
+    var visibleReviewCommentID: UUID? { content == .diff ? reviewCommentReveal?.comment.id : nil }
+
+    @discardableResult
+    func revealReviewComment(_ id: UUID, recordingJump: Bool = true) -> Bool {
+        guard !busy, let comment = sendableReviewComments.first(where: { $0.id == id }) else { return false }
+        let previousComment = visibleReviewCommentID
+        if comment.isReaderComment, let editor = editorWorkspace {
+            do {
+                try editor.reveal(path: comment.path, line: comment.firstLine, fromComment: previousComment)
+                editor.markdownReading = true
+                editor.readerTopLine[comment.path] = max(0, comment.firstLine - 1)
+                reviewCommentReveal = nil
+                content = .editor
+                focusPane(.editor)
+                return true
+            } catch { report(error, title: "打开评论位置失败"); return false }
+        }
+
+        let change = snapshot?.files.first { file in
+            file.path == comment.path && (comment.area == .staged ? file.hasStaged : file.hasWorking)
+        }
+        guard let change else {
+            let group = comment.area == .staged ? "暂存区" : "工作区"
+            report(FolmiFailure(message: "\(group)已没有这条评论对应的改动。"), title: "打开评论位置失败")
+            return false
+        }
+        if recordingJump { editorWorkspace?.recordReviewCommentJump(to: id, from: previousComment) }
+        selectFiles([change.id], in: comment.area)
+        reviewCommentReveal = ReviewCommentReveal(comment: comment)
+        focusPane(.editor)
+        return true
+    }
+
+    /// A comment on Markdown diff lines goes to the source without changing the user's default.
+    func showsRenderedMarkdownDiff(_ diff: FileDiff) -> Bool {
+        markdownDiffRendered && reviewCommentReveal?.matches(diff) != true
     }
 
     func addReviewComment(_ body: String, hunk: DiffHunk, in diff: FileDiff) {

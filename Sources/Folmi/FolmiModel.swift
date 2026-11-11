@@ -24,7 +24,8 @@ final class FolmiModel {
             if snapshot?.fingerprint != oldValue?.fingerprint { editorWorkspace?.indexRevision &+= 1 }
             if hasSnapshot != (snapshot != nil) { hasSnapshot = snapshot != nil }
             if snapshot?.fingerprint != oldValue?.fingerprint || snapshot?.branch != oldValue?.branch { schedulePublishShared() }
-            if snapshot?.head != oldValue?.head || snapshot?.ahead != oldValue?.ahead || snapshot?.upstream != oldValue?.upstream { refreshInReview() }
+            if snapshot?.head != oldValue?.head || snapshot?.ahead != oldValue?.ahead ||
+                snapshot?.upstream != oldValue?.upstream || snapshot?.unpushed != oldValue?.unpushed { refreshInReview() }
             if let snapshot, let path = repositoryURL?.path, RailEntry.canonical(snapshot.root.path) == RailEntry.canonical(path) {
                 board.patch(path: path, snapshot: snapshot, inReview: inReviewCount)
             }
@@ -110,6 +111,10 @@ final class FolmiModel {
     var paneFocusRequest: PaneFocusRequest?
     /// Review notes for every open project; they live for this app session only.
     var reviewComments: [ReviewComment] = [] { didSet { if reviewComments != oldValue { scheduleSave(); schedulePublishShared() } } }
+    var reviewCommentReveal: ReviewCommentReveal?
+    var diffEditReturn: DiffEditReturn?
+    var diffEditReveal: DiffEditReturn?
+    @ObservationIgnored var diffEditRequest = UUID()
     /// Debounced write of the state `folmi-hook mcp` reads (AgentBridge.swift).
     /// Rules worth proposing from what the user keeps turning down (Learning.swift).
     var ruleProposals: [RuleProposal] = []
@@ -139,6 +144,8 @@ final class FolmiModel {
     /// Line selections on the all-changes page, keyed by `FileDiff.allChangesKey`: a file can be listed as both staged
     /// and unstaged, and their line IDs are unrelated.
     var allChangesSelection: [String: Set<Int>] = [:]
+    var reviewFileJump: ReviewFileJump?
+    var reviewBrowsingFileKey: String?
 
     // History page
     var history: [CommitNode] = []
@@ -194,7 +201,7 @@ final class FolmiModel {
     /// Line authors per open file, valid while HEAD stays the commit they were read at.
     @ObservationIgnored var blameCache: [String: FileBlame] = [:]
     var markdownDiffRendered = true { didSet { scheduleSave() } }
-    var unifiedDiff = false { didSet { scheduleSave() } }
+    var diffLayout: DiffLayout = .sideBySide { didSet { scheduleSave() } }
     var foldWhitespace = false { didSet { scheduleSave() } }
     var companionMotion = true { didSet { scheduleSave() } }
     /// Taken by `InboxPanel` at launch and when changed in settings, never here: test models must not grab it.
@@ -384,7 +391,7 @@ final class FolmiModel {
             glassSurfaces = preferences.glassSurfaces
             editorLineBlame = preferences.editorLineBlame
             markdownDiffRendered = preferences.markdownDiffRendered
-            unifiedDiff = preferences.unifiedDiff
+            diffLayout = preferences.diffLayout ?? (preferences.unifiedDiff ? .unified : .sideBySide)
             foldWhitespace = preferences.foldWhitespace
             companionMotion = preferences.companionMotion
             ideaHotKey = preferences.ideaHotKey
@@ -587,6 +594,8 @@ final class FolmiModel {
         largeRepositoryOffer = false; slowStatusCount = 0
         area = ChangeArea(rawValue: settings.lastArea) ?? .working
         selectedFileID = nil; selectedFileIDs = []; fileDiff = nil; fileDiffs = []; selectedLines = [:]; fileSearch = ""
+        reviewCommentReveal = nil
+        diffEditReturn = nil; diffEditReveal = nil; diffEditRequest = UUID()
         draftMessage = settings.draftMessage; amendLast = settings.amendLast
         if let profile = settings.deliveryProfiles.first(where: { $0.id == settings.selectedProfileID }) { applyProfile(profile) }
         else {
@@ -596,11 +605,10 @@ final class FolmiModel {
         }
         deliveryPlan = nil
         if editors[state.root.path] == nil {
-            let editor = EditorWorkspace(root: state.root)
+            let editor = EditorWorkspace(root: state.root, markdownReading: preferences.markdownReading)
             editor.presentation = editorPresentation
             editor.glassSurfaces = glassSurfaces
             editor.showsLineBlame = editorLineBlame
-            editor.markdownReading = preferences.markdownReading
             editor.showsOutline = preferences.markdownOutline
             editor.outlineWidth = preferences.markdownOutlineWidth
             editor.restoreSession(tabs: settings.editorTabs, selectedPath: settings.selectedEditorPath, columns: settings.editorColumns)
@@ -660,6 +668,7 @@ final class FolmiModel {
         projectTree = nil
         treeError = nil
         allChangesRequest = UUID(); allChanges = []; allChangesNotice = nil; allChangesSelection = [:]
+        reviewFileJump = nil; reviewBrowsingFileKey = nil
         historyRequest = UUID(); commitRequest = UUID(); history = []; historyRows = []
         historyRequestedLimit = Self.historyLimit; historyHasMore = false
         showCommitComposer = false
@@ -743,7 +752,7 @@ final class FolmiModel {
             if loaded != nil, repositoryURL == root { noteStatusDuration(await repository.lastStatusDuration) }
             guard let next = loaded, repositoryURL == root, !busy, let current = snapshot else { return }
             guard next.fingerprint != current.fingerprint || next.branch != current.branch || next.head != current.head ||
-                  next.branches != current.branches || next.remotes != current.remotes else { return }
+                  next.branches != current.branches || next.remotes != current.remotes || next.unpushed != current.unpushed else { return }
             let pathsChanged = Set(next.files.map(\.path)) != Set(current.files.map(\.path))
             if next.head != current.head || next.fingerprint != current.fingerprint { deliveryPlan = nil }
             noteExternalChanges(from: current, to: next)
@@ -881,6 +890,7 @@ final class FolmiModel {
         editorWorkspace?.dismissExternalChange(path)
     }
     func targetDiff(path: String) {
+        reviewCommentReveal = nil
         if let change = snapshot?.files.first(where: { $0.path == path }) {
             area = change.hasWorking ? .working : .staged
             selectedFileIDs = [change.id]

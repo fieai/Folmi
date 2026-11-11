@@ -85,7 +85,7 @@ struct DocHistorySheet: View {
     }
 }
 
-/// The reader page showing fixed HTML (no editing, no links out of the sheet).
+/// The reader page showing fixed HTML. The working diff can link a marked block back to the editable file.
 struct StaticReaderView: NSViewRepresentable {
     let html: String
     let marks: [[Any]]
@@ -94,11 +94,14 @@ struct StaticReaderView: NSViewRepresentable {
     let theme: FolmiTheme
     let presentation: EditorPresentation
     let root: URL?
+    var onEditPoint: ((Int) -> Void)?
+    var editReveal: DiffEditReturn?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> WKWebView {
         let prepared = ReaderWebViewPool.make()
         prepared.files.root = root
+        prepared.messages.target = context.coordinator
         prepared.webView.navigationDelegate = context.coordinator
         context.coordinator.webView = prepared.webView
         return prepared.webView
@@ -109,17 +112,73 @@ struct StaticReaderView: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
         var pending: StaticReaderView?
         private var loaded = false
+        private var lastPage: String?
+        private var lastStyle: String?
+        private var lastReveal: UUID?
         func apply() {
             guard loaded, let view = pending, let webView else { return }
             let style = MarkdownReaderPage.style(theme: view.theme, presentation: view.presentation)
             let marks = (try? JSONSerialization.data(withJSONObject: view.marks)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
             let olds = view.olds.flatMap { (try? JSONSerialization.data(withJSONObject: $0)).flatMap { String(data: $0, encoding: .utf8) } } ?? "null"
-            webView.evaluateJavaScript("wb.style(\(MarkdownReaderView.Coordinator.json(style)));wb.render(\(MarkdownReaderView.Coordinator.json(view.html)),null,true);wb.marks(\(marks));wb.olds(\(olds))")
+            var scripts: [String] = []
+            if lastStyle != style {
+                lastStyle = style
+                scripts.append("wb.style(\(MarkdownReaderView.Coordinator.json(style)))")
+            }
+            let editable = view.onEditPoint != nil
+            let key = view.html + "\0" + marks + "\0" + olds + "\0" + String(editable)
+            if lastPage != key {
+                lastPage = key
+                scripts.append("wb.render(\(MarkdownReaderView.Coordinator.json(view.html)),null,true);wb.marks(\(marks));wb.olds(\(olds))")
+                if editable { scripts.append(Self.editControls(marks: marks, olds: olds)) }
+                lastReveal = nil
+            }
+            if let reveal = view.editReveal, lastReveal != reveal.id {
+                lastReveal = reveal.id
+                scripts.append("wb.scrollToLine(\(reveal.line - 1),false)")
+            }
+            if !scripts.isEmpty { webView.evaluateJavaScript(scripts.joined(separator: ";"), completionHandler: nil) }
         }
+
+        private static func editControls(marks: String, olds: String) -> String {
+            """
+            (()=>{
+              const marks=\(marks), olds=\(olds)||[];
+              const style=document.getElementById('diff-edit-style')||document.createElement('style');
+              style.id='diff-edit-style';
+              style.textContent='.diff-edit{display:block;margin:.35em 0 .8em;font:12px system-ui;color:var(--fg);background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer}.diff-edit:hover,.diff-edit:focus-visible{border-color:var(--accent)}';
+              if(!style.isConnected)document.head.append(style);
+              function add(block,line){
+                const button=document.createElement('button');
+                button.type='button';button.className='diff-edit';button.textContent='编辑这一处';
+                button.addEventListener('click',e=>{e.stopPropagation();window.webkit.messageHandlers.wb.postMessage({type:'editDiffPoint',line:line})});
+                if(block.matches('li'))block.append(button);else block.after(button);
+              }
+              document.querySelectorAll('#doc [data-mark="add"],#doc [data-mark="mod"]').forEach(block=>{
+                const mapped=block.matches('[data-line]')?block:block.querySelector(':scope>[data-line]');
+                if(!mapped)return;
+                const first=+mapped.dataset.line,end=+mapped.dataset.end;
+                const change=marks.find(([start,last])=>start<=end&&last>=first);
+                if(change)add(block,Math.max(first,change[0]));
+              });
+              document.querySelectorAll('#doc .diff-old').forEach((block,index)=>{
+                const old=olds[index];
+                if(old&&!marks.some(([start])=>start===old[0]))add(block,old[0]);
+              });
+            })()
+            """
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any],
+                  body["type"] as? String == "editDiffPoint", let line = body["line"] as? Int, line >= 0 else { return }
+            pending?.onEditPoint?(line + 1)
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loaded = true; apply() }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {

@@ -61,9 +61,14 @@ extension FolmiModel {
         guard let link = MCPServer.parse(url) else { return }
         guard !gitStartupState.blocksGit else { pendingFolmiLink = url; return }
         NSApp?.activate(ignoringOtherApps: true)
+        if busy {
+            // A URL can arrive while the app restores its last project or runs a Git operation.
+            afterLinkLoad { $0.handleFolmiLink(url) }
+            return
+        }
         let target = URL(fileURLWithPath: link.repository).resolvingSymlinksInPath().path
         if repositoryURL?.resolvingSymlinksInPath().path == target {
-            if let path = link.path { revealLinked(path: path, line: link.line) }
+            if let path = link.path { revealLinked(path: path, line: link.line, column: link.column, openInEditor: link.openInEditor) }
             return
         }
         guard AIEventStore.locate(from: URL(fileURLWithPath: link.repository)) != nil else {
@@ -75,22 +80,27 @@ extension FolmiModel {
             open(URL(fileURLWithPath: link.repository))
         }
         guard let path = link.path else { return }
-        Task { [weak self] in
-            // The project loads in the background; the place is shown once it is in front.
-            for _ in 0..<150 {
-                guard let self else { return }
-                if !self.busy, self.repositoryURL?.resolvingSymlinksInPath().path == target, self.snapshot != nil {
-                    self.revealLinked(path: path, line: link.line); return
-                }
-                try? await Task.sleep(for: .milliseconds(100))
-            }
+        afterLinkLoad { model in
+            guard model.repositoryURL?.resolvingSymlinksInPath().path == target, model.snapshot != nil else { return }
+            model.revealLinked(path: path, line: link.line, column: link.column, openInEditor: link.openInEditor)
         }
     }
 
-    /// A changed file opens its diff (that is what to check); any other file opens in the editor at the line.
-    func revealLinked(path: String, line: Int?) {
+    private func afterLinkLoad(_ action: @escaping (FolmiModel) -> Void) {
+        Task { [weak self] in
+            for _ in 0..<150 {
+                guard let self else { return }
+                if !self.busy { action(self); return }
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            }
+            self?.report(FolmiFailure(message: "项目还在忙，请稍后再打开。"), title: "打开链接失败")
+        }
+    }
+
+    /// Links normally open the diff for review. A terminal command with a line number asks for the source there.
+    func revealLinked(path: String, line: Int?, column: Int? = nil, openInEditor: Bool = false) {
         guard !busy else { NSSound.beep(); return }
-        if let change = snapshot?.files.first(where: { $0.path == path }) {
+        if !openInEditor, let change = snapshot?.files.first(where: { $0.path == path }) {
             area = change.hasWorking ? .working : .staged
             selectFile(change)
             focusPane(.editor)
@@ -98,7 +108,7 @@ extension FolmiModel {
         }
         guard let editor = editorWorkspace else { return }
         do {
-            try editor.reveal(path: path, line: line)
+            try editor.reveal(path: path, line: line, column: column)
             content = .editor
             focusPane(.editor)
         } catch { report(error, title: "打开文件失败") }

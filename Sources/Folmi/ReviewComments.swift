@@ -6,6 +6,7 @@ import SwiftUI
 /// Notes are saved with the project; each keeps a few lines of the file around it so a refresh can tell whether
 /// those lines only moved or were changed.
 struct ReviewComment: Identifiable, Equatable, Codable {
+    static let maximumAnchorFileBytes = 8 << 20
     var id = UUID()
     let projectPath: String
     let path: String
@@ -27,6 +28,30 @@ struct ReviewComment: Identifiable, Equatable, Codable {
 
     /// "12" or "12-15".
     var lines: String { firstLine == lastLine ? "\(firstLine)" : "\(firstLine)-\(lastLine)" }
+
+    /// Reader excerpts contain only source lines. Diff comments always include a changed line.
+    var isReaderComment: Bool {
+        area == .working && EditorWorkspace.isMarkdownPath(path) && excerpt.first?.hasPrefix(" ") == true &&
+            !excerpt.contains { $0.hasPrefix("+") || $0.hasPrefix("-") }
+    }
+
+    /// Line numbers alone can land on an unrelated hunk after an edit. Require the original changed text as well.
+    func hunkID(in diff: FileDiff) -> String? {
+        guard diff.file.path == path, diff.area == area else { return nil }
+        let changed = excerpt.filter { $0.hasPrefix("+") || $0.hasPrefix("-") }
+        guard !changed.isEmpty else { return nil }
+        return diff.hunks.first { hunk in
+            guard let numbers = Self.newLineNumbers(hunk) else { return false }
+            var remaining = changed[...]
+            for line in hunk.lines {
+                guard let number = numbers[line.id], number >= firstLine, number <= lastLine else { continue }
+                let prefix = line.kind == .addition ? "+" : line.kind == .deletion ? "-" : " "
+                if remaining.first == prefix + line.text { remaining = remaining.dropFirst() }
+                if remaining.isEmpty { return true }
+            }
+            return false
+        }?.id
+    }
 
     /// Builds a comment from the selected lines of a hunk, or the whole hunk when nothing in it is selected.
     static func make(projectPath: String, diff: FileDiff, hunk: DiffHunk, selected: Set<Int>, body: String) -> ReviewComment? {
@@ -88,8 +113,13 @@ struct ReviewComment: Identifiable, Equatable, Codable {
 
     /// The file's lines for anchoring, or nil when it is missing, too large to scan, or not text.
     static func fileLines(_ url: URL) -> [String]? {
-        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size <= 8 << 20,
-              let data = try? Data(contentsOf: url), !data.contains(0) else { return nil }
+        guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size <= maximumAnchorFileBytes,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return fileLines(data)
+    }
+
+    static func fileLines(_ data: Data) -> [String]? {
+        guard data.count <= maximumAnchorFileBytes, !data.contains(0) else { return nil }
         // "\r\n" is a single Character, so it has to be named as a separator of its own.
         return String(decoding: data, as: UTF8.self)
             .split(omittingEmptySubsequences: false, whereSeparator: { $0 == "\n" || $0 == "\r\n" })
@@ -147,6 +177,14 @@ struct ReviewComment: Identifiable, Equatable, Codable {
     }
 }
 
+/// A fresh identifier lets clicking the same comment again scroll back to it.
+struct ReviewCommentReveal: Equatable {
+    let id = UUID()
+    let comment: ReviewComment
+
+    func matches(_ diff: FileDiff) -> Bool { comment.path == diff.file.path && comment.area == diff.area }
+}
+
 /// Text selected in the Markdown reader, waiting for its note.
 struct ReaderCommentDraft: Identifiable, Equatable {
     let id = UUID()
@@ -173,7 +211,7 @@ struct ReviewCommentComposer: View {
                 .themedEditorFrame()
                 .focused($editing)
             HStack {
-                Text("评论先攒着，之后一次发送到终端").themedFont(.caption2, points: 10).foregroundStyle(.secondary)
+                Text("评论先攒着，之后可以一起交给 agent").themedFont(.caption2, points: 10).foregroundStyle(.secondary)
                 Spacer()
                 Button("取消", action: onCancel).keyboardShortcut(.cancelAction)
                 Button("添加评论") { onAdd(text) }

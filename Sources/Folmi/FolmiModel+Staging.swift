@@ -9,6 +9,7 @@ extension FolmiModel {
 
     func selectFiles(_ ids: Set<String>) {
         guard !busy else { return }
+        reviewCommentReveal = nil
         diffSwitchStart = .now; PerfLog.resetBodies()
         selectedFileIDs = ids; selectedFileID = filesInArea.first { ids.contains($0.id) }?.id; content = .diff
         scheduleSave()
@@ -50,6 +51,7 @@ extension FolmiModel {
 
     func setArea(_ newArea: ChangeArea) {
         guard !busy else { return }
+        reviewCommentReveal = nil
         area = newArea; selectedFileID = nil; selectedFileIDs = []
         Task { await updateDiff() }; scheduleSave()
     }

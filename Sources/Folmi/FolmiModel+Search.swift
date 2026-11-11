@@ -38,17 +38,25 @@ extension FolmiModel {
         guard !busy, let editorWorkspace else { return }
         do {
             // Disk ranges include original BOM/CRLF; line/column target the normalized editor buffer.
-            try editorWorkspace.reveal(path: hit.path, line: hit.line, column: hit.column)
-            if let state = editorWorkspace.tabStates[hit.path] {
-                try editorWorkspace.reveal(path: hit.path,
-                    range: NSRange(location: state.selectionLocation, length: hit.range.length))
-            }
+            try editorWorkspace.reveal(path: hit.path, line: hit.line, column: hit.column, selectionLength: hit.range.length)
             targetDiff(path: hit.path)
             content = .editor
             showProjectSearch = false
             cancelProjectSearch()
             scheduleSave()
         } catch { report(error, title: "打开搜索命中失败") }
+    }
+
+    func navigateEditor(back: Bool) {
+        guard !busy, let editorWorkspace else { return }
+        var restoredComment = false
+        let restored = editorWorkspace.navigate(back: back, fromComment: visibleReviewCommentID) { id in
+            restoredComment = self.revealReviewComment(id, recordingJump: false)
+            return restoredComment
+        }
+        guard restored, !restoredComment else { return }
+        content = .editor
+        focusPane(.editor)
     }
 
     func scheduleSearch() {

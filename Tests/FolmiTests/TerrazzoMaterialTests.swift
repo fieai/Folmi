@@ -30,11 +30,7 @@ final class TerrazzoMaterialTests: XCTestCase {
                 }
             }
             XCTAssertGreaterThanOrEqual(colors.foreground.contrast(with: colors.selection), 4.5)
-            if dark {
-                XCTAssertNil(colors.backdropGlow, "dark matte stone keeps its existing floor")
-            } else {
-                XCTAssertEqual(colors.backdropGlow?.hex, 0xFFFFFF, "light stone restores its original soft top light")
-            }
+            XCTAssertNil(colors.backdropGlow, "the solid floor makes the gaps between panels consistent")
         }
     }
 

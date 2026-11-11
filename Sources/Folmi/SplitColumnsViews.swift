@@ -174,6 +174,11 @@ private struct EditorColumnView: View {
                     EditorTabStrip(workspace: workspace, onSave: model.fileDidSave, column: column.id,
                                    onSplit: { tab, right in model.splitEditor(toRight: right, tab: tab, from: column.id) },
                                    onMove: { tab, right in model.moveEditorTab(tab, from: column.id, toRight: right) })
+                    if model.content == .editor, let origin = model.diffEditReturn, origin.path == column.selected {
+                        Button("回到改动", action: model.returnToDiffEdit)
+                            .controlSize(.small).disabled(model.busy)
+                            .help("回到开始编辑前正在查看的改动")
+                    }
                 }
                 if split {
                     PaneIconButton(symbol: "xmark",
@@ -188,7 +193,10 @@ private struct EditorColumnView: View {
             if column.isDiff {
                 DiffPane(model: model)
             } else {
-                FileEditorPane(workspace: workspace, onSave: model.fileDidSave, column: column.id)
+                FileEditorPane(workspace: workspace, onSave: model.fileDidSave, column: column.id,
+                               onMarkdownSideBySide: { model.showMarkdownSideBySide(column: column.id) },
+                               markdownSideBySideBlockedReason: model.markdownSideBySideBlockedReason(column: column.id),
+                               onNavigate: model.navigateEditor(back:))
             }
         }
         .modifier(ActiveColumnMark(active: active))

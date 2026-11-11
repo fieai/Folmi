@@ -58,7 +58,7 @@ extension FolmiModel {
     }
 
     func selectCommitFile(_ file: CommitFileChange) {
-        guard let detail = commitDetail else { return }
+        guard let detail = commitDetail, detail.id == selectedCommitID else { return }
         let request = UUID()
         commitRequest = request
         selectedCommitFile = file.path
@@ -68,9 +68,7 @@ extension FolmiModel {
     func loadCommitFile(_ file: CommitFileChange, request: UUID, commit: String? = nil) async {
         guard let repository, let id = commit ?? commitDetail?.id else { return }
         do {
-            let diff: FileDiff
-            if let base = compareBaseID, base != id { diff = try await repository.compareDiff(base: base, target: id, file: file) }
-            else { diff = try await repository.commitDiff(id, file: file) }
+            let diff = try await HistoryDiffScope(commit: id, base: compareBaseID).diff(file, in: repository)
             guard commitRequest == request else { return }
             commitFileDiff = diff
         } catch { if commitRequest == request { report(error, title: "读取提交差异失败") } }
@@ -78,7 +76,12 @@ extension FolmiModel {
 
     /// Compares every later selection against this commit, or ends comparing with nil.
     func setCompareBase(_ id: String?) {
+        guard compareBaseID != id else { return }
         compareBaseID = id
+        // Until the new comparison loads, the old list still describes the previous pair.
+        commitRequest = UUID()
+        commitDetail = nil
+        commitFileDiff = nil
         if let selected = selectedCommitID { Task { await selectCommit(selected) } }
     }
 

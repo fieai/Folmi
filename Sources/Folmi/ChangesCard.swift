@@ -191,8 +191,10 @@ struct TreePane: View {
 struct ChangesPane: View {
     @Bindable var model: FolmiModel
     @Binding var groupByFolder: Bool
+    var filePasteboard: NSPasteboard = .general
     @State private var collapsedFolders: [ChangeArea: Set<String>] = [:]
     @State private var searchCollapsedFolders: [ChangeArea: Set<String>] = [:]
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let _ = PerfLog.body("ChangesPane")
@@ -244,6 +246,7 @@ struct ChangesPane: View {
                 // Both groups at once: what the next commit takes (暂存区) above what is still only on disk (工作区).
                 // A file changed in both shows in both. Rows are tagged "area:path"; picking rows in the other group
                 // moves the selection (and the diff) there.
+                ScrollViewReader { proxy in
                 List(selection: Binding(get: { Set(model.selectedFileIDs.map { model.area.rawValue + ":" + $0 }) },
                                         set: { select($0) })) {
                     Section {
@@ -274,10 +277,21 @@ struct ChangesPane: View {
                 .contextMenu(forSelectionType: String.self, menu: rowMenu) { tags in
                     if let (_, files) = files(for: tags), files.count == 1 { model.editPath(files[0].path) }
                 }
+                .onKeyPress("c", phases: .down) { press in
+                    guard press.modifiers == .command else { return .ignored }
+                    let files = (model.area == .staged ? staged : working).filter { model.selectedFileIDs.contains($0.id) }
+                    guard !files.isEmpty else { return .ignored }
+                    if !FileActionsMenu.copyFiles(fileURLs(files), to: filePasteboard) { NSSound.beep() }
+                    return .handled
+                }
                 .listStyle(.sidebar).scrollContentBackground(.hidden).disabled(model.busy)
+                .onChange(of: model.reviewBrowsingFileKey) { _, key in
+                    if let key { proxy.scrollTo(key) }
+                }
                 .task(id: model.theme.style.instrument ? model.snapshot?.fingerprint : nil) { await model.loadLineCounts() }
                 // Staging, unstaging or committing slides rows from one group to the other instead of a jump.
                 .motion(Motion.reveal, value: staged.map(\.id) + ["|"] + working.map(\.id))
+                }
             }
             if let count = model.snapshot?.stashCount, count > 0 {
                 StashEntryRow(model: model, count: count).padding(.horizontal, 10).padding(.bottom, 8)
@@ -314,6 +328,7 @@ struct ChangesPane: View {
                 }
             }
             .tag(item.fileID.map { group.rawValue + ":" + $0 } ?? item.id)
+            .id(item.fileID.map { group.rawValue + ":" + $0 } ?? group.rawValue + ":" + item.id)
             .selectionDisabled(item.fileID == nil)
         }
     }
@@ -341,15 +356,23 @@ struct ChangesPane: View {
     private func row(_ file: FileChange, _ group: ChangeArea, depth: Int, unreviewed: Bool) -> some View {
         let key = group.rawValue + ":" + file.id
         let selected = model.area == group && model.selectedFileIDs.contains(file.id)
+        let browsing = model.content == .allChanges && model.reviewBrowsingFileKey == key
         let focused = model.paneLayout.focused == .changes
         let indent = groupByFolder ? CGFloat(depth) * 16 + 15 : 0
         return FileChangeRow(file: file, area: group, counts: model.theme.style.instrument ? model.lineCounts[key] : nil,
-                             onAccent: selected && focused && model.theme.style.selection == .solid,
+                             onAccent: selected && focused && model.theme.selection(dark: colorScheme == .dark) == .solid,
                              unreviewed: unreviewed, showsDirectory: !groupByFolder)
             .padding(.leading, indent)
             .padding(.vertical, model.theme.style.rowPadding)
             .background(ListHighlightSuppressor())
             .listRowBackground(SelectedRowBackground(selected: selected, focused: focused))
+            .overlay(alignment: .trailing) {
+                if browsing {
+                    Circle().fill(ThemeColor(token: .accent)).frame(width: 5, height: 5)
+                        .offset(x: 7).allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+            .accessibilityValue(browsing ? "正在浏览" : "")
     }
 
     private func files(for tags: Set<String>) -> (group: ChangeArea, files: [FileChange])? {
@@ -374,14 +397,33 @@ struct ChangesPane: View {
                 // Several rows in the menu are always the selection.
                 if files.count == 1 { model.editPath(files[0].path) } else { model.editSelectedFiles() }
             }
+            let urls = fileURLs(files)
+            Button("复制文件") {
+                if !FileActionsMenu.copyFiles(urls, to: filePasteboard) { NSSound.beep() }
+            }
+            .disabled(urls.isEmpty || urls.contains { !FileManager.default.fileExists(atPath: $0.path) })
+            if files.count == 1, model.content == .allChanges,
+               model.visibleAllChanges.contains(where: { $0.area == group && $0.file.id == files[0].id }) {
+                Button("在全部改动中定位") { model.reviewFileJump = ReviewFileJump(key: group.rawValue + ":" + files[0].id) }
+            }
             if files.count == 1, files[0].isUntracked {
                 Button("忽略这个文件（加进 .gitignore）") { model.ignorePath(files[0].path, folder: false) }.disabled(model.busy)
             }
         }
     }
 
+    private func fileURLs(_ files: [FileChange]) -> [URL] {
+        guard let root = model.repositoryURL else { return [] }
+        return files.map { root.appendingPathComponent($0.path) }
+    }
+
     /// The group of the rows just added wins; rows of the other group drop out of the selection.
     private func select(_ tags: Set<String>) {
+        if model.content == .allChanges, tags.count == 1, let key = tags.first,
+           model.visibleAllChanges.contains(where: { $0.allChangesKey == key }) {
+            model.reviewFileJump = ReviewFileJump(key: key)
+            return
+        }
         let current = Set(model.selectedFileIDs.map { model.area.rawValue + ":" + $0 })
         let added = tags.subtracting(current)
         let group: ChangeArea = added.first.flatMap { ChangeArea(rawValue: String($0.prefix { $0 != ":" })) } ?? model.area

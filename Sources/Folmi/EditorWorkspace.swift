@@ -52,13 +52,38 @@ final class EditorWorkspace: ObservableObject {
     let root: URL
     @Published var documents: [EditorDocument] = []
     /// The 编辑 page's columns (向左拆分 / 向右拆分). Each holds some of `documents` as tabs; one file can be in two.
-    @Published var columns = PaneColumns()
+    @Published var columns = PaneColumns() {
+        didSet {
+            let removed = Set(oldValue.columns.map(\.id)).subtracting(columns.columns.map(\.id))
+            for id in removed {
+                readingByColumn[id] = nil
+                editorTopLineByColumn[id] = nil
+                editorScrollRequests[id] = nil
+                openReaderFindByColumn[id] = nil
+                readerTopLineByColumn[id] = nil
+                readerScrollToLineByColumn[id] = nil
+                editorScrollToLineByColumn[id] = nil
+                outlines[id] = nil
+            }
+        }
+    }
     /// The document shown in the active column: what ⌘S, sending to the terminal and the other commands work on.
     var selectedDocumentID: String? {
         get { columns.selected }
         set { if columns.selected != newValue { columns.select(newValue) } }
     }
     @Published var errorMessage: String?
+    @Published private(set) var saveConflictPath: String?
+    private enum Location: Equatable {
+        case file(column: UUID, state: EditorTabState, readerLine: Int?)
+        case reviewComment(UUID)
+    }
+    @Published private var backLocations: [Location] = []
+    @Published private var forwardLocations: [Location] = []
+    var canNavigateBack: Bool { !backLocations.isEmpty }
+    var canNavigateForward: Bool { !forwardLocations.isEmpty }
+    private(set) var navigationRestoresScroll = false
+    private(set) var navigationReaderLine: Int?
     /// Caret and scroll per tab. Deliberately not published: it changes on every caret move and scroll frame, and
     /// publishing it re-rendered the whole window while typing or scrolling. `onSessionChange` reports it instead.
     var tabStates: [String: EditorTabState] = [:]
@@ -106,19 +131,27 @@ final class EditorWorkspace: ObservableObject {
         }
     }
     @Published var presentation = EditorPresentation()
-    /// Markdown files open in the rendered reading view; 编辑 shows the source. Saved with the preferences.
-    @Published var markdownReading = true {
-        didSet {
-            guard oldValue != markdownReading, let id = selectedDocumentID,
-                  ["md", "markdown", "mdown"].contains((id as NSString).pathExtension.lowercased()),
-                  let document = selectedDocument else { return }
-            if markdownReading {
+    private let defaultMarkdownReading: Bool
+    @Published private(set) var readingByColumn: [UUID: Bool] = [:]
+    /// Commands and the saved Bool always describe the column the user is working in.
+    var markdownReading: Bool {
+        get { isReading(column: columns.activeID) }
+        set { setReading(newValue, column: columns.activeID) }
+    }
+    func isReading(column: UUID?) -> Bool { readingByColumn[column ?? columns.activeID] ?? defaultMarkdownReading }
+    func setReading(_ reading: Bool, column: UUID?) {
+        let column = column ?? columns.activeID
+        guard let pane = columns.columns.first(where: { $0.id == column && !$0.isDiff }),
+              isReading(column: column) != reading else { return }
+        if let id = pane.selected, NativeCodeEditor.isMarkdownPath(id),
+           let document = documents.first(where: { $0.id == id }) {
+            if reading {
                 // The reader opens at the editor's top visible line.
-                if let line = editorTopLine?() { readerTopLine[id] = line }
+                if let line = editorTopLineByColumn[column]?() { readerTopLineByColumn[column, default: [:]][id] = line }
             } else {
                 // The editor opens with the reader's top line at its top; a caret far from there moves to it.
-                let line = readerTopLine[id] ?? 0
-                editorScrollRequest = (id, line)
+                let line = readerTopLineByColumn[column]?[id] ?? 0
+                editorScrollRequests[column] = (id, line)
                 let starts = MarkdownReaderView.Coordinator.lineStarts(document.text)
                 let caret = tabStates[id]?.selectionLocation ?? 0
                 let caretLine = starts.lastIndex { $0 <= caret } ?? 0
@@ -129,21 +162,64 @@ final class EditorWorkspace: ObservableObject {
                 }
             }
         }
+        readingByColumn[column] = reading
     }
     /// The source editor's top visible line (0-based), provided by the editor while it is on screen.
-    var editorTopLine: (() -> Int?)?
+    var editorTopLineByColumn: [UUID: () -> Int?] = [:]
+    var editorTopLine: (() -> Int?)? {
+        get { editorTopLineByColumn[columns.activeID] }
+        set { editorTopLineByColumn[columns.activeID] = newValue }
+    }
     /// The column the last reveal was for, so only that column's editor scrolls and takes focus.
     var navigationColumn: UUID?
     /// Where the source editor should scroll when it next becomes the visible view: this line at its top.
-    var editorScrollRequest: (id: String, line: Int)?
+    var editorScrollRequests: [UUID: (id: String, line: Int)] = [:]
+    var editorScrollRequest: (id: String, line: Int)? {
+        get { editorScrollRequests[columns.activeID] }
+        set { editorScrollRequests[columns.activeID] = newValue }
+    }
     /// Opens the reading view's find bar; set by the reader while it is on screen.
-    var openReaderFind: (() -> Void)?
+    var openReaderFindByColumn: [UUID: () -> Void] = [:]
+    var openReaderFind: (() -> Void)? {
+        get { openReaderFindByColumn[columns.activeID] }
+        set { openReaderFindByColumn[columns.activeID] = newValue }
+    }
     /// "查看改动" on the external-change banner: the model shows this file's diff.
     var showChanges: ((String) -> Void)?
     /// When a clean open document was last replaced by a newer version from disk (another program, an agent).
     @Published private(set) var externalChanges: [String: Date] = [:]
-    /// The source line at the top of the reading view per document, so 编辑 opens where the reader was.
-    var readerTopLine: [String: Int] = [:]
+    /// Two readers of the same file keep their own place; commands use the active column's place.
+    var readerTopLineByColumn: [UUID: [String: Int]] = [:]
+    var readerTopLine: [String: Int] {
+        get { readerTopLineByColumn[columns.activeID] ?? [:] }
+        set { readerTopLineByColumn[columns.activeID] = newValue }
+    }
+    var readerScrollToLineByColumn: [UUID: (Int) -> Void] = [:]
+    var editorScrollToLineByColumn: [UUID: (String, Int) -> Void] = [:]
+
+    func editingColumn(for documentID: String, beside column: UUID?) -> UUID? {
+        let column = column ?? columns.activeID
+        return columns.columns.first {
+            $0.id != column && !$0.isDiff && $0.selected == documentID && !isReading(column: $0.id)
+        }?.id
+    }
+    func followingEditorLine(for documentID: String, column: UUID?) -> Int? {
+        guard let source = editingColumn(for: documentID, beside: column) else { return nil }
+        return editorTopLineByColumn[source]?()
+    }
+    func followEditorScroll(from column: UUID, documentID: String, line: Int) {
+        guard !isReading(column: column), columns.columns.contains(where: { $0.id == column && $0.selected == documentID }) else { return }
+        for target in columns.columns where target.id != column && target.selected == documentID && isReading(column: target.id) {
+            readerTopLineByColumn[target.id, default: [:]][documentID] = line
+            readerScrollToLineByColumn[target.id]?(line)
+        }
+    }
+    func followReaderScroll(from column: UUID, documentID: String, line: Int) {
+        guard isReading(column: column), columns.columns.contains(where: { $0.id == column && $0.selected == documentID }) else { return }
+        for target in columns.columns where target.id != column && target.selected == documentID && !isReading(column: target.id) {
+            editorScrollToLineByColumn[target.id]?(documentID, line)
+        }
+    }
     /// The outline beside Markdown files.
     @Published var showsOutline = true
     /// The outline's width, set by dragging its edge; saved with the preferences.
@@ -177,7 +253,8 @@ final class EditorWorkspace: ObservableObject {
     }
     private var formats: [String: Format] = [:]
 
-    init(root: URL) {
+    init(root: URL, markdownReading: Bool = true) {
+        defaultMarkdownReading = markdownReading
         let candidate = root.standardizedFileURL
         // Foundation keeps the /var spelling while its directory enumerator returns /private/var.
         // A POSIX canonical path keeps containment checks consistent for both spellings.
@@ -202,10 +279,13 @@ final class EditorWorkspace: ObservableObject {
         let reading: Bool
         let outline: Bool
         let outlineWidth: Double
+        let canNavigateBack: Bool
+        let canNavigateForward: Bool
     }
     var chromeSignature: ChromeSignature {
         ChromeSignature(ids: documents.map(\.id), dirty: documents.map(\.isDirty), selected: selectedDocumentID,
-                        reading: markdownReading, outline: showsOutline, outlineWidth: outlineWidth)
+                        reading: markdownReading, outline: showsOutline, outlineWidth: outlineWidth,
+                        canNavigateBack: canNavigateBack, canNavigateForward: canNavigateForward)
     }
 
     /// Opens a tab for the file. Pictures and documents open as a preview; so does a file that is not UTF-8 text or is
@@ -359,17 +439,104 @@ final class EditorWorkspace: ObservableObject {
         if !failures.isEmpty { errorMessage = "部分编辑标签无法恢复，其余标签已保留。\n" + failures.joined(separator: "\n") }
     }
 
-    func reveal(path: String, range: NSRange? = nil, line: Int? = nil, column: Int? = nil) throws {
+    func reveal(path: String, range: NSRange? = nil, line: Int? = nil, column: Int? = nil,
+                selectionLength: Int = 0, heading: String? = nil, fromComment: UUID? = nil) throws {
+        let origin = fromComment.map(Location.reviewComment) ?? currentLocation()
         try open(path: path)
         guard let document = selectedDocument else { return }
+        let headingLine = heading.flatMap { MarkdownLinks.headingLine($0, in: document.text) }
+        let targetLine = headingLine ?? line
         let position: NSRange
         if let range { position = EditorTextPosition.clamp(range, in: document.text) }
-        else if let line { position = EditorTextPosition.range(line: line, column: column ?? 1, in: document.text) }
+        else if let targetLine {
+            let start = EditorTextPosition.range(line: targetLine, column: headingLine == nil ? column ?? 1 : 1, in: document.text)
+            position = EditorTextPosition.clamp(NSRange(location: start.location, length: selectionLength), in: document.text)
+        }
         else { position = EditorTextPosition.clamp(NSRange(location: tabStates[document.id]?.selectionLocation ?? 0, length: 0), in: document.text) }
         var state = tabStates[document.id] ?? EditorTabState(path: document.path)
         state.selectionLocation = position.location; state.selectionLength = position.length
         tabStates[document.id] = state
+        let readerLine = targetLine.map { max(0, $0 - 1) } ?? (range == nil ? nil : Self.sourceLine(at: position.location, in: document.text))
+        if isReading(column: columns.activeID), NativeCodeEditor.isMarkdownPath(document.id), let readerLine {
+            readerTopLineByColumn[columns.activeID, default: [:]][document.id] = readerLine
+        }
+        rememberJump(from: origin, to: currentLocation())
+        navigationRestoresScroll = false
+        navigationReaderLine = readerLine
         navigationColumn = columns.activeID
+        navigationRevision &+= 1
+    }
+
+    private static func sourceLine(at offset: Int, in text: String) -> Int {
+        MarkdownReaderView.Coordinator.lineStarts(text).lastIndex { $0 <= offset } ?? 0
+    }
+
+    private func currentLocation() -> Location? {
+        guard let document = selectedDocument else { return nil }
+        let column = columns.activeID
+        let state = tabStates[document.id] ?? EditorTabState(path: document.path)
+        let readerLine = NativeCodeEditor.isMarkdownPath(document.id) && isReading(column: column)
+            ? readerTopLineByColumn[column]?[document.id] ?? Self.sourceLine(at: state.selectionLocation, in: document.text)
+            : nil
+        return .file(column: column, state: state, readerLine: readerLine)
+    }
+
+    private func rememberJump(from origin: Location?, to destination: Location?) {
+        guard let origin, let destination, origin != destination else { return }
+        backLocations = Array((backLocations + [origin]).suffix(50))
+        forwardLocations = []
+    }
+
+    func recordReviewCommentJump(to id: UUID, from currentComment: UUID?) {
+        rememberJump(from: currentComment.map(Location.reviewComment) ?? currentLocation(), to: .reviewComment(id))
+    }
+
+    func noteReaderLocation(_ line: Int, in id: String, column: UUID) {
+        readerTopLineByColumn[column, default: [:]][id] = line
+    }
+
+    /// In-page links can resolve a rendered anchor more precisely than its source heading slug.
+    func recordReaderAnchor(in id: String, column: UUID, from: Int, to: Int) {
+        noteReaderLocation(from, in: id, column: column)
+        let origin = currentLocation()
+        noteReaderLocation(to, in: id, column: column)
+        if columns.activeID == column, selectedDocumentID == id { rememberJump(from: origin, to: currentLocation()) }
+    }
+
+    @discardableResult
+    func navigate(back: Bool, fromComment: UUID? = nil, showComment: ((UUID) -> Bool)? = nil) -> Bool {
+        let origin = fromComment.map(Location.reviewComment) ?? currentLocation()
+        while let target = back ? backLocations.popLast() : forwardLocations.popLast() {
+            switch target {
+            case .reviewComment(let id):
+                guard showComment?(id) == true else { continue }
+            case .file(let column, let state, let readerLine):
+                do { try restoreLocation(column: column, state: state, readerLine: readerLine) }
+                catch { continue }
+            }
+            if let origin {
+                if back { forwardLocations.append(origin) } else { backLocations.append(origin) }
+            }
+            onSessionChange?()
+            return true
+        }
+        return false
+    }
+
+    private func restoreLocation(column: UUID, state: EditorTabState, readerLine: Int?) throws {
+        let targetColumn = columns.columns.first(where: { $0.id == column && !$0.isDiff })?.id
+        try open(path: state.path, in: targetColumn)
+        guard let document = selectedDocument else { return }
+        let column = columns.activeID
+        if NativeCodeEditor.isMarkdownPath(document.id) { setReading(readerLine != nil, column: column) }
+        editorScrollRequests[column] = nil
+        let selection = EditorTextPosition.clamp(NSRange(location: state.selectionLocation, length: state.selectionLength), in: document.text)
+        tabStates[document.id] = EditorTabState(path: document.path, selectionLocation: selection.location,
+                                               selectionLength: selection.length, scrollOffset: state.scrollOffset)
+        if let readerLine { readerTopLineByColumn[column, default: [:]][document.id] = readerLine }
+        navigationRestoresScroll = true
+        navigationReaderLine = readerLine
+        navigationColumn = column
         navigationRevision &+= 1
     }
 
@@ -403,10 +570,7 @@ final class EditorWorkspace: ObservableObject {
                 NSWorkspace.shared.open(url); return
             }
             do {
-                try reveal(path: path, line: line)
-                if let anchor, let document = selectedDocument, let headingLine = MarkdownLinks.headingLine(anchor, in: document.text) {
-                    try reveal(path: path, line: headingLine)
-                }
+                try reveal(path: path, line: line, heading: anchor)
             } catch { errorMessage = "打开链接失败：\(error.localizedDescription)" }
         case let .wiki(name, anchor):
             followWikiLink(name, anchor: anchor, from: documentPath) { name in
@@ -533,6 +697,7 @@ final class EditorWorkspace: ObservableObject {
     func save(id: String) throws {
         guard let index = documents.firstIndex(where: { $0.id == id }), documents[index].isDirty else { return }
         let document = documents[index]
+        if saveConflictPath == id { saveConflictPath = nil }
         guard let format = formats[id] else { throw FileEditorError.unsupportedText }
         guard !format.mixedNewlines else { throw FileEditorError.mixedLineEndings }
         guard !document.text.contains("\0") else { throw FileEditorError.unsupportedText }
@@ -541,10 +706,29 @@ final class EditorWorkspace: ObservableObject {
             .replacingOccurrences(of: "\n", with: format.newline).utf8)
         if format.hasBOM { data.insert(contentsOf: [0xEF, 0xBB, 0xBF], at: 0) }
         guard data.count <= Self.maximumBytes else { throw FileEditorError.tooLarge }
-        try withFile(path: id) { fd, parentFD in
+        do { try writeSave(document: document, data: data) }
+        catch FileEditorError.changedOnDisk {
+            saveConflictPath = id
+            throw FileEditorError.changedOnDisk
+        }
+        documents[index].originalText = documents[index].text
+        documents[index].fingerprint = fingerprint(data)
+    }
+
+    func saveConflict(for id: String) -> EditorSaveConflict? {
+        guard let document = documents.first(where: { $0.id == id && $0.isDirty }) else { return nil }
+        do {
+            return EditorSaveConflict(path: id, draft: document.text, disk: try readText(id).text, diskError: nil)
+        } catch {
+            return EditorSaveConflict(path: id, draft: document.text, disk: nil, diskError: error.localizedDescription)
+        }
+    }
+
+    private func writeSave(document: EditorDocument, data: Data) throws {
+        try withFile(path: document.id) { fd, parentFD in
             let before = try read(fd: fd)
             guard fingerprint(before.bytes) == document.fingerprint else { throw FileEditorError.changedOnDisk }
-            let filename = try safeComponents(id).last!
+            let filename = try safeComponents(document.id).last!
             let temporaryName = ".folmi-save-\(UUID().uuidString)"
             let temporaryFD = openat(parentFD, temporaryName, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode_t(0o600))
             guard temporaryFD >= 0 else { throw systemError() }
@@ -572,8 +756,6 @@ final class EditorWorkspace: ObservableObject {
                   fingerprint(current.bytes) == document.fingerprint else { throw FileEditorError.changedOnDisk }
             guard renameat(parentFD, temporaryName, parentFD, filename) == 0 else { throw systemError() }
         }
-        documents[index].originalText = documents[index].text
-        documents[index].fingerprint = fingerprint(data)
     }
 
     private func safeComponents(_ path: String) throws -> [String] {

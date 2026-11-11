@@ -1,4 +1,6 @@
+import AppKit
 import Darwin
+import SwiftUI
 import XCTest
 @testable import Folmi
 
@@ -68,6 +70,48 @@ final class QuickOpenMatcherTests: XCTestCase {
                        ["file10.txt", "file11.txt", "file12.txt"])
         XCTAssertEqual(QuickOpenMatcher.matches(paths: Array(paths.reversed()), query: "file"),
                        QuickOpenMatcher.matches(paths: paths, query: "file"))
+    }
+}
+
+final class ProjectSearchPanelTests: XCTestCase {
+    @MainActor
+    func testArrowKeysPreviewContextAndReturnOpensOnlyTheSelectedHit() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("folmi-search-panel-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let result = try ProjectTextSearch.search(root: root, paths: [], query: "needle", openDocuments: [
+            "first.txt": "FirstContext\nneedle one",
+            "second.txt": "SecondContext\nneedle two",
+        ])
+        var opened: [String] = []
+        var searches = 0
+        let host = NSHostingView(rootView: ProjectSearchPanel(result: result, searching: false, query: .constant("needle"),
+            caseSensitive: .constant(false), onSearch: { searches += 1 }, onOpen: { opened.append($0.path) }))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 500), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(450))
+        XCTAssertTrue(window.firstResponder is NSTextView)
+
+        func key(_ characters: String, code: UInt16) throws {
+            window.sendEvent(try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)))
+        }
+        try key("\u{F701}", code: 125)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertTrue(try ScreenText.read(host).contains("FirstContext"))
+        try key("\u{F701}", code: 125)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertTrue(try ScreenText.read(host).contains("SecondContext"))
+        XCTAssertTrue(opened.isEmpty)
+        try key("\r", code: 36)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(opened, ["second.txt"])
+        XCTAssertEqual(searches, 0)
     }
 }
 
@@ -145,6 +189,9 @@ final class ProjectTextSearchTests: XCTestCase {
         XCTAssertEqual(hit.range, NSRange(location: 11, length: 6))
         XCTAssertEqual((current as NSString).substring(with: hit.range), "needle")
         XCTAssertEqual(hit.preview, "needle current")
+        XCTAssertEqual(hit.context.map(\.line), [1, 2])
+        XCTAssertEqual(hit.context.map(\.text), ["🐍 unsaved", "needle current"])
+        XCTAssertEqual(hit.context.last?.match, NSRange(location: 0, length: 6))
         XCTAssertEqual(result.scannedFiles, 1)
         XCTAssertTrue(try XCTUnwrap(result.notice).contains("含打开文档的当前内容"))
         XCTAssertTrue(try ProjectTextSearch.search(root: root, paths: ["script.py"], query: "old",
@@ -317,6 +364,9 @@ final class ProjectTextSearchTests: XCTestCase {
         XCTAssertTrue(hit.preview.hasPrefix("…"))
         XCTAssertTrue(hit.preview.hasSuffix("…"))
         XCTAssertFalse(hit.preview.contains("�"))
+        let context = try XCTUnwrap(hit.context.first)
+        let match = try XCTUnwrap(context.match)
+        XCTAssertEqual((context.text as NSString).substring(with: match), "needle")
     }
 
     func testCancelledSearchThrowsAndChecksDuringWork() throws {

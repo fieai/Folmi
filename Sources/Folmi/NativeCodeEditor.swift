@@ -40,7 +40,7 @@ struct NativeCodeEditor: NSViewRepresentable {
     let documentID: String
     @Binding var text: String
     @Binding var syntaxStatus: String
-    /// The editor column this editor sits in; reveals and the reader hand-off only go to the active column.
+    /// The editor column this editor sits in, so a reader hand-off never reaches its neighbour.
     var column: UUID?
     @Environment(\.colorScheme) private var colorScheme
     private var effectiveDark: Bool { colorScheme == .dark }
@@ -64,7 +64,7 @@ struct NativeCodeEditor: NSViewRepresentable {
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.autoresizingMask = []; editor.delegate = context.coordinator
         // A Markdown file opening in reading mode never shows this view first: no background layout, no first draw.
-        let behindReader = Self.isMarkdownPath(documentID) && workspace.markdownReading
+        let behindReader = Self.isMarkdownPath(documentID) && workspace.isReading(column: column)
         editor.layoutManager?.backgroundLayoutEnabled = !behindReader
         editor.string = text; scroll.documentView = editor
         let ruler = EditorLineRuler(textView: editor, scrollView: scroll)
@@ -95,13 +95,18 @@ struct NativeCodeEditor: NSViewRepresentable {
         scroll.contentView.postsBoundsChangedNotifications = true
         coordinator.scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification,
             object: scroll.contentView, queue: .main) { [weak coordinator] _ in
-            MainActor.assumeIsolated { coordinator?.recordState() }
+            MainActor.assumeIsolated {
+                coordinator?.recordState()
+                coordinator?.scheduleReaderFollow()
+            }
         }
         configure(editor: editor, scroll: scroll)
         coordinator.lastPresentation = workspace.presentation; coordinator.lastDark = effectiveDark
         // A reveal may arrive before the native editor is first created (Cmd+P or search).
         // Do not consume it by initializing the coordinator to the same revision then restoring silently.
-        coordinator.restorePosition(scroll: scroll, reveal: workspace.navigationRevision > 0)
+        let navigating = workspace.navigationRevision > 0 && (workspace.navigationColumn == nil || workspace.navigationColumn == (column ?? workspace.columns.activeID))
+        coordinator.restorePosition(scroll: scroll, reveal: navigating && !workspace.navigationRestoresScroll,
+                                    focus: navigating && workspace.navigationRestoresScroll && !behindReader)
         coordinator.isUpdating = false
         coordinator.style(immediately: true)
         ruler.onClickLine = { [weak coordinator] line, anchor in coordinator?.showPeek(line: line, anchor: anchor) }
@@ -138,7 +143,7 @@ struct NativeCodeEditor: NSViewRepresentable {
         // Behind the reading view the source is invisible: loading the text, laying it out, styling and marking it
         // there is what made opening a Markdown file slow (≈30 ms from a code file). It all waits until the editor
         // comes forward; `deferredLoad` then counts as a switch to this document.
-        let behindReader = Self.isMarkdownPath(documentID) && workspace.markdownReading
+        let behindReader = Self.isMarkdownPath(documentID) && workspace.isReading(column: column)
         if switched {
             coordinator.documentID = documentID
             coordinator.currentUndoManager = coordinator.undoManagers[workspace.root.path + "\0" + documentID] ?? UndoManager()
@@ -181,9 +186,9 @@ struct NativeCodeEditor: NSViewRepresentable {
         if behindReader {
             if switched || navigation { coordinator.deferredRestore = true; coordinator.deferredReveal = coordinator.deferredReveal || navigation }
         } else if switched || navigation || coordinator.deferredRestore {
-            let reveal = navigation || coordinator.deferredReveal
+            let reveal = (navigation || coordinator.deferredReveal) && !workspace.navigationRestoresScroll
             coordinator.deferredRestore = false; coordinator.deferredReveal = false
-            coordinator.restorePosition(scroll: scroll, reveal: reveal)
+            coordinator.restorePosition(scroll: scroll, reveal: reveal, focus: navigation && workspace.navigationRestoresScroll)
         }
         let restyle = changedPresentation || switched || changedText || loadNow
         if behindReader {
@@ -207,7 +212,7 @@ struct NativeCodeEditor: NSViewRepresentable {
         if behindReader && switched { coordinator.indexRevisionSeen = .max }
         editor.layoutManager?.backgroundLayoutEnabled = !behindReader
         coordinator.ruler?.needsDisplay = true
-        coordinator.updateActive(!(Self.isMarkdownPath(documentID) && workspace.markdownReading), container: container, switched: switched)
+        coordinator.updateActive(!(Self.isMarkdownPath(documentID) && workspace.isReading(column: column)), container: container, switched: switched)
     }
     static func isMarkdownPath(_ path: String) -> Bool { ["md", "markdown", "mdown"].contains((path as NSString).pathExtension.lowercased()) }
     static func dismantleNSView(_ container: EditorContainer, coordinator: Coordinator) {
@@ -223,6 +228,8 @@ struct NativeCodeEditor: NSViewRepresentable {
         coordinator.pendingConfiguration = nil
         coordinator.pendingFocus?.cancel()
         coordinator.pendingFocus = nil
+        coordinator.readerFollowTask?.cancel()
+        coordinator.readerFollowTask = nil
         coordinator.highlighter.cancel(); coordinator.cancelOutline()
         coordinator.baseTask?.cancel(); coordinator.marksTask?.cancel(); coordinator.peek?.close()
         coordinator.blameTask?.cancel(); coordinator.noteTask?.cancel(); coordinator.blameCard?.close()
@@ -263,7 +270,10 @@ struct NativeCodeEditor: NSViewRepresentable {
                 workspace?.showCallsAt?(document.path, editor.string, location)
             } : nil
         if ["md", "markdown", "mdown"].contains((documentID as NSString).pathExtension.lowercased()) {
-            editor.toggleMarkdown = { [weak workspace] in workspace?.markdownReading.toggle() }
+            editor.toggleMarkdown = { [weak workspace, column] in
+                guard let workspace else { return }
+                workspace.setReading(!workspace.isReading(column: column), column: column)
+            }
             editor.markdownEditing = true
             editor.openLink = { [weak workspace, documentID] target in workspace?.followLink(target, from: documentID) }
             editor.importImages = { [weak workspace, documentID] files, png in workspace?.imageMarkdown(files: files, png: png, for: documentID) }
@@ -329,6 +339,7 @@ struct NativeCodeEditor: NSViewRepresentable {
         var scrollObserver: NSObjectProtocol?
         var pendingConfiguration: Task<Void, Never>?
         var pendingFocus: Task<Void, Never>?
+        var readerFollowTask: Task<Void, Never>?
         var navigationAwaitingStyle: UInt64?
         var undoManagers: [String: UndoManager] = [:]
         var currentUndoManager = UndoManager()
@@ -347,20 +358,25 @@ struct NativeCodeEditor: NSViewRepresentable {
         }
         var active: Bool?
         private var hideWork: DispatchWorkItem?
+        private var followingReader = false
 
         /// Shown or behind the reading view. Becoming visible applies the reader's place and takes keyboard focus;
         /// going behind hides the view once the fade is over, so focus and clicks never land in it.
         func updateActive(_ active: Bool, container: EditorContainer, switched: Bool) {
-            if active, parent.column == nil || parent.column == parent.workspace.columns.activeID {
-                parent.workspace.editorTopLine = { [weak self] in self?.topVisibleLine() }
+            let column = parent.column ?? parent.workspace.columns.activeID
+            if active {
+                parent.workspace.editorTopLineByColumn[column] = { [weak self] in self?.topVisibleLine() }
+                parent.workspace.editorScrollToLineByColumn[column] = { [weak self] id, line in
+                    self?.followReader(documentID: id, line: line)
+                }
             }
-            guard self.active != active || (active && switched && parent.workspace.editorScrollRequest?.id == documentID) else { return }
+            guard self.active != active || (active && switched && parent.workspace.editorScrollRequests[column]?.id == documentID) else { return }
             let first = self.active == nil
             self.active = active
             hideWork?.cancel()
             if active {
                 container.isHidden = false
-                guard !first || parent.workspace.editorScrollRequest != nil else { return }
+                guard !first || parent.workspace.editorScrollRequests[column] != nil else { return }
                 applyScrollRequest(container: container)
             } else if switched {
                 // Another document (code → Markdown): the text is already the new source, so fading it out would only
@@ -378,27 +394,67 @@ struct NativeCodeEditor: NSViewRepresentable {
 
         private func applyScrollRequest(container: EditorContainer) {
             guard let editor, let documentID else { return }
-            let request = parent.workspace.editorScrollRequest
-            parent.workspace.editorScrollRequest = nil
+            let column = parent.column ?? parent.workspace.columns.activeID
+            let request = parent.workspace.editorScrollRequests.removeValue(forKey: column)
             let state = parent.workspace.tabStates[documentID]
             restoringPosition = true
             if let state { editor.setSelectedRange(EditorTextPosition.clamp(NSRange(location: state.selectionLocation, length: state.selectionLength), in: editor.string)) }
             Task { @MainActor [weak self, weak container] in
                 guard let self, !self.isDismantled, let editor = self.editor, let scroll = editor.enclosingScrollView, self.documentID == documentID else { return }
-                if let request, request.id == documentID, let layout = editor.layoutManager, let textContainer = editor.textContainer {
-                    layout.ensureLayout(for: textContainer)
-                    let height = max(scroll.contentSize.height, layout.usedRect(for: textContainer).maxY + editor.textContainerInset.height * 2)
-                    editor.setFrameSize(NSSize(width: max(editor.frame.width, scroll.contentSize.width), height: height))
-                    let starts = MarkdownReaderView.Coordinator.lineStarts(editor.string)
-                    let location = starts[max(0, min(request.line, starts.count - 1))]
-                    let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: min(location, (editor.string as NSString).length), length: 0), actualCharacterRange: nil)
-                    let rect = layout.lineFragmentRect(forGlyphAt: min(glyphs.location, max(0, layout.numberOfGlyphs - 1)), effectiveRange: nil)
-                    let y = request.line == 0 ? 0 : min(max(0, editor.frame.height - scroll.contentSize.height), max(0, rect.minY + editor.textContainerOrigin.y - 8))
-                    scroll.contentView.scroll(to: NSPoint(x: 0, y: y)); scroll.reflectScrolledClipView(scroll.contentView)
+                if let request, request.id == documentID {
+                    self.scrollSource(toLine: request.line, editor: editor, in: scroll, x: 0)
                 }
                 self.restoringPosition = false
                 self.recordState()
-                if container?.window != nil { editor.window?.makeFirstResponder(editor) }
+                if container?.window != nil, column == self.parent.workspace.columns.activeID,
+                   !self.isMarkdownFile || !self.parent.workspace.isReading(column: column) {
+                    editor.window?.makeFirstResponder(editor)
+                }
+            }
+        }
+
+        private func followReader(documentID: String, line: Int) {
+            guard !isDismantled, active == true, self.documentID == documentID, !restoringPosition,
+                  let editor, let scroll = editor.enclosingScrollView else { return }
+            // A pending source update must not send the position we are about to apply back to the reader.
+            readerFollowTask?.cancel()
+            followingReader = true
+            scrollSource(toLine: line, editor: editor, in: scroll, x: scroll.contentView.bounds.minX)
+            followingReader = false
+        }
+
+        private func scrollSource(toLine line: Int, editor: NSTextView, in scroll: NSScrollView, x: CGFloat) {
+            guard let layout = editor.layoutManager, let container = editor.textContainer else { return }
+            layout.ensureLayout(for: container)
+            let height = max(scroll.contentSize.height, layout.usedRect(for: container).maxY + editor.textContainerInset.height * 2)
+            let size = NSSize(width: max(editor.frame.width, scroll.contentSize.width), height: height)
+            if size != editor.frame.size { editor.setFrameSize(size) }
+            let starts = MarkdownReaderView.Coordinator.lineStarts(editor.string)
+            let location = starts[max(0, min(line, starts.count - 1))]
+            let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: location, length: 0), actualCharacterRange: nil)
+            let y: CGFloat
+            if line == 0 || layout.numberOfGlyphs == 0 {
+                y = 0
+            } else {
+                let rect = layout.lineFragmentRect(forGlyphAt: min(glyphs.location, layout.numberOfGlyphs - 1), effectiveRange: nil)
+                y = min(max(0, height - scroll.contentSize.height), max(0, rect.minY + editor.textContainerOrigin.y - 2))
+            }
+            scroll.contentView.scroll(to: NSPoint(x: x, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+
+        /// Coalescing on the native side avoids a JavaScript roundtrip for every bounds notification.
+        func scheduleReaderFollow() {
+            guard readerFollowTask == nil, !isDismantled, !isUpdating, !followingReader, let documentID, isMarkdownFile else { return }
+            let workspace = parent.workspace, column = parent.column ?? workspace.columns.activeID
+            guard !workspace.isReading(column: column), workspace.columns.columns.contains(where: {
+                $0.id != column && $0.selected == documentID && workspace.isReading(column: $0.id)
+            }) else { return }
+            readerFollowTask = Task { @MainActor [weak self] in
+                defer { self?.readerFollowTask = nil }
+                do { try await Task.sleep(nanoseconds: 16_666_667) } catch { return }
+                guard let self, !self.isDismantled, self.documentID == documentID, let line = self.topVisibleLine() else { return }
+                workspace.followEditorScroll(from: column, documentID: documentID, line: line)
             }
         }
 
@@ -415,11 +471,13 @@ struct NativeCodeEditor: NSViewRepresentable {
 
         func recordState() {
             guard !isDismantled, !isUpdating, !restoringPosition, let editor, let documentID else { return }
+            // The hidden source must not replace the visible editor's state when both show the same document.
+            guard !isMarkdownFile || !parent.workspace.isReading(column: parent.column) else { return }
             let selection = editor.selectedRange()
             let scroll = Double(editor.enclosingScrollView?.contentView.bounds.minY ?? 0)
             parent.workspace.updateEditorState(id: documentID, selection: selection, scrollOffset: scroll)
         }
-        func restorePosition(scroll: NSScrollView, reveal: Bool) {
+        func restorePosition(scroll: NSScrollView, reveal: Bool, focus: Bool = false) {
             guard let editor, let documentID else { return }
             let state = parent.workspace.tabStates[documentID] ?? EditorTabState(path: documentID)
             restoringPosition = true
@@ -444,7 +502,7 @@ struct NativeCodeEditor: NSViewRepresentable {
                 }
                 self.restoringPosition = false
                 self.recordState()
-                if reveal { self.focusAfterPresentation(scroll: scroll, revision: expectedRestoration) }
+                if reveal || focus { self.focusAfterPresentation(scroll: scroll, revision: expectedRestoration, reveal: reveal) }
                 self.style(immediately: true)
             }
         }
@@ -455,17 +513,20 @@ struct NativeCodeEditor: NSViewRepresentable {
             // Markdown can change line heights after the initial plain-text layout.
             focusAfterPresentation(scroll: scroll, revision: revision)
         }
-        func focusAfterPresentation(scroll: NSScrollView, revision: UInt64) {
+        func focusAfterPresentation(scroll: NSScrollView, revision: UInt64, reveal: Bool = true) {
             pendingFocus?.cancel()
             pendingFocus = Task { @MainActor [weak self, weak scroll] in
                 // A quick-open/search sheet may still be dismissing while its destination is built.
                 // Wait for the owning window, then focus once. New navigation/teardown cancels this request.
                 for _ in 0..<40 {
                     guard !Task.isCancelled, let self, !self.isDismantled,
-                          self.restorationRevision == revision, let scroll, let editor = self.editor else { return }
+                          self.restorationRevision == revision,
+                          self.parent.column == nil || self.parent.column == self.parent.workspace.columns.activeID,
+                          !self.isMarkdownFile || !self.parent.workspace.isReading(column: self.parent.column),
+                          let scroll, let editor = self.editor else { return }
                     if let window = editor.window, window.attachedSheet == nil, window.makeFirstResponder(editor) {
                         if let container = editor.textContainer { editor.layoutManager?.ensureLayout(for: container) }
-                        editor.scrollRangeToVisible(editor.selectedRange())
+                        if reveal { editor.scrollRangeToVisible(editor.selectedRange()) }
                         if self.parent.workspace.presentation.wrapLines {
                             scroll.contentView.scroll(to: NSPoint(x: 0, y: scroll.contentView.bounds.minY))
                             scroll.reflectScrolledClipView(scroll.contentView)
@@ -497,7 +558,7 @@ struct NativeCodeEditor: NSViewRepresentable {
         var isMarkdownFile: Bool { ["md", "markdown", "mdown"].contains(((documentID ?? "") as NSString).pathExtension.lowercased()) }
         private var outlineTask: Task<Void, Never>?
 
-        /// Source mode has no styling pass, so the outline gets its headings from a debounced background scan.
+        /// The highlighter's tokens carry no heading levels or sections, so the outline has its own debounced scan.
         func scheduleOutline(immediately: Bool) {
             outlineTask?.cancel()
             guard let editor, let documentID else { return }

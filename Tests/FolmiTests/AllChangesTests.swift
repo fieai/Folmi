@@ -135,10 +135,55 @@ final class AllChangesTests: XCTestCase {
     }
 
     @MainActor
-    private func eventually(timeout: TimeInterval = 10, _ condition: @MainActor () -> Bool) async throws {
+    func testSidebarJumpsToAFileAndAutomaticLayoutKeepsItSelected() async throws {
+        let demo = try await DemoRepository.create()
+        let directory = demo.root.deletingLastPathComponent()
+        cleanupURLs.append(directory)
+        let path = "review-sidebar-jump.txt"
+        try "sidebar jump target".write(to: demo.root.appendingPathComponent(path), atomically: true, encoding: .utf8)
+        let model = FolmiModel(store: WorkspaceStore(url: directory.appendingPathComponent("workspace.json")), autoRefresh: false)
+        model.open(demo.root, environment: demo.environment, demo: true)
+        try await eventually { !model.busy && model.snapshot != nil }
+        model.showContent(.allChanges)
+        try await eventually { !model.allChangesLoading && model.allChanges.contains { $0.file.path == path } }
+        model.diffLayout = .automatic
+        model.fileSearch = path
+
+        let host = NSHostingView(rootView: HStack(spacing: 0) {
+            ChangesPane(model: model, groupByFolder: .constant(false)).frame(width: 300)
+            AllChangesView(model: model)
+        })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1_350, height: 720),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        func find<T: NSView>(_ type: T.Type, in view: NSView, where matches: (T) -> Bool = { _ in true }) -> T? {
+            if let candidate = view as? T, matches(candidate) { return candidate }
+            for child in view.subviews {
+                if let candidate = find(type, in: child, where: matches) { return candidate }
+            }
+            return nil
+        }
+        try await eventually { find(NSTableView.self, in: host)?.numberOfRows ?? 0 > 0 }
+        let list = try XCTUnwrap(find(NSTableView.self, in: host))
+        list.selectRowIndexes(IndexSet(integer: list.numberOfRows - 1), byExtendingSelection: false)
+        try await eventually { model.content == .allChanges && model.selectedFileID == path }
+        let fileCanvas = { find(DiffRowsCanvas.self, in: host) { $0.rows.first?.new?.line.text == "sidebar jump target" } }
+        try await eventually("显示目标文件的并排差异") { fileCanvas()?.unified == false }
+        window.setContentSize(NSSize(width: 880, height: 720))
+        try await eventually("缩窄后显示同一文件的统一差异") { fileCanvas()?.unified == true }
+        XCTAssertEqual(model.selectedFileID, path)
+        XCTAssertEqual(model.content, .allChanges)
+        XCTAssertEqual(model.snapshot?.files.first(where: { $0.path == path })?.isUntracked, true)
+    }
+
+    @MainActor
+    private func eventually(_ description: String = "等待超时", timeout: TimeInterval = 10, _ condition: @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {
-            if Date() >= deadline { XCTFail("等待超时"); return }
+            if Date() >= deadline { XCTFail(description); return }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
     }

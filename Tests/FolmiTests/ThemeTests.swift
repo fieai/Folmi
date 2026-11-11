@@ -44,10 +44,11 @@ final class ThemeTests: XCTestCase {
         // Each theme has its own shape, not only its own colors.
         XCTAssertGreaterThan(FolmiTheme.indigo.style.cardRadius, FolmiTheme.terrazzo.style.cardRadius, "琥珀 is the softest")
         XCTAssertGreaterThan(FolmiTheme.terrazzo.style.cardRadius, FolmiTheme.zinc.style.cardRadius, "锌莓 is the tightest above pixel")
-        XCTAssertEqual(FolmiTheme.terrazzo.style.cardRadius, FolmiTheme.terrazzo.style.rowRadius + 6, "石墨's corners are concentric")
+        XCTAssertEqual(FolmiTheme.terrazzo.style.cardRadius, 8)
         XCTAssertTrue(FolmiTheme.indigo.style.companion)
         XCTAssertTrue(FolmiTheme.zinc.style.instrument)
-        XCTAssertEqual(FolmiTheme.terrazzo.style.selection, .solid)
+        XCTAssertEqual(FolmiTheme.terrazzo.selection(dark: false), .tint)
+        XCTAssertEqual(FolmiTheme.terrazzo.selection(dark: true), .solid)
         XCTAssertNotNil(FolmiTheme.terrazzo.definition.dark.primaryMaterial)
     }
 

@@ -1,6 +1,13 @@
 import FolmiCore
 import SwiftUI
 
+struct ReviewFileJump: Equatable {
+    let key: String
+    var hunkID: String? = nil
+    var lineID: Int? = nil
+    let id = UUID()
+}
+
 /// Pure navigation over the all-changes page, so the pager keys can be tested without a window.
 struct AllChangesNavigator: Equatable {
     struct Stop: Equatable { let fileKey: String; let hunkID: String? }
@@ -54,11 +61,12 @@ struct ReviewActionNames: Equatable {
     static func make(_ diff: FileDiff, hunk: DiffHunk?, selected: Int = 0) -> ReviewActionNames {
         let wholeFile = hunk == nil || !diff.isPartialSupported
         if diff.area == .staged {
-            if wholeFile { return .init(accept: "确认整个文件", reject: "整个文件退回工作区") }
-            return .init(accept: selected > 0 ? "确认选中的 \(selected) 行" : "确认这处", reject: "退回工作区")
+            if hunk == nil { return .init(accept: "确认整个文件", reject: "整个文件退回工作区") }
+            return .init(accept: selected > 0 ? "确认选中的 \(selected) 行" : "确认这处",
+                         reject: wholeFile ? "整个文件退回工作区" : "退回工作区")
         }
         if diff.file.isUntracked { return .init(accept: "收下整个文件", reject: "删除新文件") }
-        if wholeFile { return .init(accept: "收下整个文件", reject: hunk == nil ? nil : "丢弃这处") }
+        if wholeFile { return .init(accept: "收下整个文件", reject: nil) }
         return .init(accept: selected > 0 ? "收下选中的 \(selected) 行" : "收下这处并暂存", reject: "丢弃这处")
     }
 }
@@ -98,6 +106,13 @@ struct AllChangesView: View {
     @State private var completionFeedback = TerrazzoCompletionFeedback()
     @State private var completionTick = 0
     @FocusState private var reasonFocused: Bool
+    @State private var searchOpen = false
+    @State private var searchQuery = ""
+    @State private var searchResult: (SearchRequest, DiffSearch.Result)?
+    @State private var searchIndex = 0
+    @FocusState private var searchFocused: Bool
+    @State private var narrowDiff = false
+    @State private var hoveredDecision: ReviewDecision?
     /// Files whose 只看这一轮 comparison is open (turn filter on).
     @State private var turnOnly: Set<String> = []
     @Environment(\.folmiTheme) private var theme
@@ -106,12 +121,31 @@ struct AllChangesView: View {
     /// The turn 全部改动 is narrowed to, if any (see `FolmiModel.turnFilter`).
     private var turn: AIBatch? { model.turnFilter.flatMap { id in model.aiBatches.first { $0.id == id } } }
     private var diffs: [FileDiff] { model.visibleAllChanges }
+    private var unified: Bool { model.diffLayout == .unified || (model.diffLayout == .automatic && narrowDiff) }
+
+    private enum ReviewDecision { case accept, reject }
     /// Progress over what is on the page: the whole change set, or the turn's files.
     private var tally: ReviewTally {
         turn == nil ? model.reviewTally : ReviewTally.make(diffs, ledger: model.reviewLedger, keys: ReviewKeyCache.keys)
     }
     private var stops: [AllChangesNavigator.Stop] { AllChangesNavigator.stops(diffs, collapsed: collapsed) }
     private var current: AllChangesNavigator.Stop? { stops.indices.contains(cursor) ? stops[cursor] : nil }
+    private struct SearchRequest: Equatable {
+        let query: String
+        let fingerprints: [String]
+    }
+    private var searchRequest: SearchRequest? {
+        guard searchOpen, !searchQuery.isEmpty else { return nil }
+        return SearchRequest(query: searchQuery, fingerprints: diffs.map(\.fingerprint))
+    }
+    private var matches: DiffSearch.Result? {
+        guard let searchResult, searchResult.0 == searchRequest else { return nil }
+        return searchResult.1
+    }
+    private var activeHit: DiffSearchHit? {
+        guard let hits = matches?.hits, hits.indices.contains(searchIndex) else { return nil }
+        return hits[searchIndex]
+    }
     private var completionSnapshot: TerrazzoCompletionFeedback.Snapshot {
         let tally = model.reviewTally
         return .init(project: model.repositoryURL?.path, enabled: theme == .terrazzo,
@@ -128,48 +162,18 @@ struct AllChangesView: View {
     }
 
     private var page: some View {
-        ScrollViewReader { proxy in
+        let selectedHit = activeHit
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                     summary
                     ForEach(diffs, id: \.allChangesKey) { diff in
-                        let key = diff.allChangesKey
-                        Section {
-                            if let turn, turnOnly.contains(key), !collapsed.contains(key) {
-                                TurnOnlyDiff(model: model, batch: turn.id, path: diff.file.path)
-                            }
-                            if !collapsed.contains(key) { impactRow(diff) }
-                            if !collapsed.contains(key) {
-                                SideBySideFile(
-                                    diff: diff, selected: model.allChangesSelection[key] ?? [], busy: model.busy, columnWidth: 400,
-                                    onToggleLine: { model.toggleAllChangesLine($0, in: $1) }, onApplyHunk: model.applyHunk,
-                                    onApplySelection: { model.applyAllChangesSelection($0, in: $1) },
-                                    onStageFile: model.stageFile, onUnstageFile: model.unstageFile, onEditFile: model.editPath,
-                                    comments: model.currentReviewComments.filter { $0.path == diff.file.path && $0.area == diff.area },
-                                    onComment: { model.addAllChangesComment($0, hunk: $1, in: $2) },
-                                    onDeleteComment: model.deleteReviewComment,
-                                    showsHeader: false,
-                                    currentHunkID: current?.fileKey == key ? current?.hunkID : nil,
-                                    seenHunkIDs: seenHunks(diff),
-                                    onExplain: model.explainHunk,
-                                    onHandToAgent: model.handHunkToAgent,
-                                    agentTitle: model.agentTitle,
-                                    quietHunkActions: true,
-                                    anchorPrefix: key + "#",
-                                    commenting: commentBinding(key),
-                                    unified: model.unifiedDiff,
-                                    onCurrentFrame: { frame in
-                                        let place = ReviewViewport.place(of: frame, visible: visibleBand)
-                                        if place != currentPlace { currentPlace = place }
-                                    })
-                            }
-                        } header: {
-                            header(diff, key: key).id("file:" + key)
-                        }
+                        reviewSection(diff, searchHit: selectedHit, proxy: proxy)
                     }
                 }
             }
             .coordinateSpace(.named(ReviewViewport.space))
+            .onGeometryChange(for: Bool.self) { DiffLayout.automatic.usesUnified(width: $0.size.width) } action: { narrowDiff = $0 }
             .onGeometryChange(for: ClosedRange<CGFloat>.self) { geometry in
                 geometry.safeAreaInsets.top...max(geometry.safeAreaInsets.top, geometry.size.height - geometry.safeAreaInsets.bottom)
             } action: { visibleBand = $0 }
@@ -178,8 +182,73 @@ struct AllChangesView: View {
             }
             .onChange(of: cursor) { _, _ in currentPlace = .visible; reveal(proxy) }
             .onChange(of: revealTick) { _, _ in reveal(proxy) }
+            .onChange(of: model.reviewFileJump) { _, request in
+                guard let request else { return }
+                model.reviewFileJump = nil
+                guard diffs.contains(where: { $0.allChangesKey == request.key }) else { return }
+                if searchOpen { searchOpen = false; searchResult = nil; searchFocused = false }
+                foldDecided.insert(request.key)
+                collapsed.remove(request.key)
+                let stops = self.stops
+                if let first = request.hunkID.flatMap({ stops.firstIndex(of: .init(fileKey: request.key, hunkID: $0)) })
+                    ?? stops.firstIndex(where: { $0.fileKey == request.key }) {
+                    cursor = first
+                    follow()
+                }
+                model.reviewBrowsingFileKey = request.key
+                focused = true
+                proxy.scrollTo(request.key, anchor: .top)
+                if request.hunkID != nil || request.lineID != nil {
+                    Task { @MainActor in
+                        await Task.yield()
+                        guard current?.fileKey == request.key else { return }
+                        if let lineID = request.lineID { proxy.scrollTo(request.key + "#edit-" + String(lineID), anchor: .center) }
+                        else { reveal(proxy) }
+                    }
+                }
+            }
+            .onChange(of: unified) { _, _ in
+                let browsing = model.reviewBrowsingFileKey
+                Task { @MainActor in
+                    await Task.yield()
+                    if let hit = activeHit { proxy.scrollTo(hit, anchor: .center) }
+                    else if let browsing, browsing != current?.fileKey { proxy.scrollTo(browsing, anchor: .top) }
+                    else { reveal(proxy) }
+                }
+            }
+            .onChange(of: activeHit) { _, hit in
+                guard let hit else { return }
+                let reviewStop = current
+                foldDecided.insert(hit.fileKey)
+                if collapsed.remove(hit.fileKey) != nil, let reviewStop,
+                   let index = stops.firstIndex(of: reviewStop) ?? stops.firstIndex(where: { $0.fileKey == reviewStop.fileKey }) {
+                    cursor = index
+                }
+                // Bring an off-screen file into the lazy stack, then its row anchor finishes the jump.
+                proxy.scrollTo(hit.fileKey, anchor: .top)
+            }
+            .safeAreaInset(edge: .trailing, spacing: 0) {
+                let markers = reviewMarkers()
+                if !markers.isEmpty {
+                    ReviewMarkerRail(markers: markers) { destination in
+                        switch destination {
+                        case let .match(index):
+                            if searchIndex == index, let hit = activeHit { proxy.scrollTo(hit, anchor: .center) }
+                            else { searchIndex = index }
+                            searchFocused = true
+                        case let .file(key, hunkID, _):
+                            model.reviewFileJump = ReviewFileJump(key: key, hunkID: hunkID)
+                        }
+                    }
+                }
+            }
         }
-        .safeAreaInset(edge: .top, spacing: 0) { reviewBar }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                reviewBar
+                if searchOpen { searchBar }
+            }
+        }
         .background(Color.theme(theme, \.card))
         .focusable()
         .focusEffectDisabled()
@@ -189,7 +258,12 @@ struct AllChangesView: View {
         .animation(reduceMotion ? nil : Motion.reveal, value: model.lastReject)
         .animation(reduceMotion ? nil : Motion.reveal, value: model.lastAccept)
         .onAppear { focused = true; decideFolds(); follow() }
+        .onDisappear { model.reviewBrowsingFileKey = nil }
         .task(id: diffs.map(\.fingerprint)) { await model.prepareCallImpacts(diffs) }
+        .task(id: searchRequest) {
+            guard let request = searchRequest else { return }
+            await runSearch(request, diffs: diffs)
+        }
         .onChange(of: completionSnapshot, initial: true) { _, snapshot in
             if completionFeedback.observe(snapshot) { completionTick += 1 }
         }
@@ -198,6 +272,172 @@ struct AllChangesView: View {
         .onChange(of: diffs.map(\.fingerprint)) { _, _ in settleCursor() }
         .onChange(of: model.reviewTally.remaining == 0 && !diffs.isEmpty) { _, done in
             if done { model.scheduleCommitSuggestion(settled: true) }
+        }
+    }
+
+    private func reviewSection(_ diff: FileDiff, searchHit: DiffSearchHit?, proxy: ScrollViewProxy) -> some View {
+        let key = diff.allChangesKey
+        let hit = searchHit.flatMap { $0.fileKey == key ? $0 : nil }
+        return Section {
+            if !collapsed.contains(key) {
+                if let turn, turnOnly.contains(key) {
+                    TurnOnlyDiff(model: model, batch: turn.id, path: diff.file.path, unified: unified)
+                }
+                impactRow(diff)
+                SideBySideFile(
+                    diff: diff, selected: model.allChangesSelection[key] ?? [], busy: model.busy, columnWidth: 400,
+                    onToggleLine: { model.toggleAllChangesLine($0, in: $1) }, onApplyHunk: model.applyHunk,
+                    onApplySelection: { model.applyAllChangesSelection($0, in: $1) },
+                    onStageFile: model.stageFile, onUnstageFile: model.unstageFile, onEditFile: model.editPath,
+                    comments: model.currentReviewComments.filter { $0.path == diff.file.path && $0.area == diff.area },
+                    onComment: { model.addAllChangesComment($0, hunk: $1, in: $2) },
+                    onDeleteComment: model.deleteReviewComment,
+                    showsHeader: false,
+                    currentHunkID: current?.fileKey == key ? current?.hunkID : nil,
+                    seenHunkIDs: seenHunks(diff),
+                    onExplain: model.explainHunk,
+                    onHandToAgent: model.handHunkToAgent,
+                    agentTitle: model.agentTitle,
+                    quietHunkActions: true,
+                    anchorPrefix: key + "#",
+                    commenting: commentBinding(key),
+                    unified: unified,
+                    onCurrentFrame: { frame in
+                        let place = ReviewViewport.place(of: frame, visible: visibleBand)
+                        if place != currentPlace { currentPlace = place }
+                    },
+                    searchHit: hit,
+                    onSearchAnchor: { hit in
+                        // The exact row becomes a scroll target after the lazy file opens.
+                        DispatchQueue.main.async {
+                            if activeHit == hit { proxy.scrollTo(hit, anchor: .center) }
+                        }
+                    },
+                    actionPreview: previewScope(for: diff),
+                    onEditPoint: { point, diff in Task { await model.editDiffPoint(point, in: diff) } },
+                    editReveal: model.diffEditReveal?.content == .allChanges && model.diffEditReveal?.key == key
+                        ? model.diffEditReveal : nil,
+                    onEditRowAppeared: { anchor in
+                        DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .center) }
+                    })
+            }
+        } header: {
+            browsingHeader(diff, key: key)
+        }
+    }
+
+    private func runSearch(_ request: SearchRequest, diffs: [FileDiff]) async {
+        do {
+            try await Task.sleep(for: .milliseconds(120))
+            let work = Task.detached(priority: .userInitiated) { try DiffSearch.find(request.query, in: diffs) }
+            let result = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+            guard !Task.isCancelled, request == searchRequest else { return }
+            searchIndex = 0
+            searchResult = (request, result)
+        } catch {
+            // Typing again or changing the review scope supersedes this search.
+        }
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("在当前改动中查找…", text: $searchQuery)
+                .themedTextField().focused($searchFocused)
+                .onAppear { searchFocused = true }
+                .onSubmit { stepSearch(by: 1) }
+                .onKeyPress(.return, phases: .down) { press in
+                    guard press.modifiers == .shift else { return .ignored }
+                    stepSearch(by: -1); return .handled
+                }
+                .onExitCommand(perform: closeSearch)
+                .accessibilityIdentifier("review-diff-search")
+            if !searchQuery.isEmpty {
+                if let matches {
+                    let total = matches.hits.count
+                    let count = total == 0 ? "没有匹配" : "\(searchIndex + 1) / \(total)" + (matches.limited ? "+" : "")
+                    Text(count).monospacedDigit().foregroundStyle(.secondary)
+                    if model.allChangesLoading { ProgressView().controlSize(.mini) }
+                } else {
+                    ProgressView().controlSize(.mini).accessibilityLabel("正在查找")
+                }
+            }
+            PaneIconButton(symbol: "chevron.up", help: "上一项（⇧⏎）") { stepSearch(by: -1) }
+                .disabled(matches?.hits.isEmpty != false)
+            PaneIconButton(symbol: "chevron.down", help: "下一项（⏎）") { stepSearch(by: 1) }
+                .disabled(matches?.hits.isEmpty != false)
+            PaneIconButton(symbol: "xmark", help: "关闭查找（Esc）", action: closeSearch)
+        }
+        .themedFont(.caption, points: 11)
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private func openSearch() {
+        searchOpen = true
+        searchFocused = true
+    }
+
+    private func closeSearch() {
+        searchOpen = false
+        searchResult = nil
+        searchFocused = false
+        // Restore the review cursor after scrolling through matches in other files.
+        revealTick += 1
+        focused = true
+    }
+
+    private func stepSearch(by offset: Int) {
+        guard let count = matches?.hits.count, count > 0 else { return }
+        searchIndex = (searchIndex + offset + count) % count
+        searchFocused = true
+    }
+
+    private func reviewMarkers() -> [ReviewMarker] {
+        let files = diffs
+        guard !files.isEmpty else { return [] }
+        var offsets: [String: Int] = [:]
+        var total = 0
+        for diff in files {
+            offsets[diff.allChangesKey] = total
+            total += max(1, diff.hunks.count)
+        }
+        let unit = 1 / Double(total)
+        if searchOpen {
+            let hits = matches?.hits ?? []
+            let filesByKey = Dictionary(uniqueKeysWithValues: files.map { ($0.allChangesKey, $0) })
+            var hunkPositions: [String: [String: Int]] = [:]
+            return hits.enumerated().compactMap { index, hit in
+                guard let file = filesByKey[hit.fileKey], let offset = offsets[hit.fileKey] else { return nil }
+                if hunkPositions[hit.fileKey] == nil {
+                    hunkPositions[hit.fileKey] = Dictionary(uniqueKeysWithValues: file.hunks.enumerated().map { ($0.element.id, $0.offset) })
+                }
+                let withinFile = hit.hunkID.flatMap { hunkPositions[hit.fileKey]?[$0] } ?? 0
+                return ReviewMarker(id: .match(index), position: (Double(offset + withinFile) + 0.5) * unit,
+                                    token: .accent, title: "第 \(index + 1) 项 · \(file.file.path)")
+            }
+        }
+
+        let comments = Dictionary(grouping: model.sendableReviewComments.filter { !$0.isReaderComment }) {
+            $0.area.rawValue + ":" + $0.path
+        }
+        return files.flatMap { file -> [ReviewMarker] in
+            let key = file.allChangesKey
+            let offset = offsets[key, default: 0]
+            var markers: [ReviewMarker] = []
+            if ReviewRiskRules.assess(file).level == .high {
+                markers.append(ReviewMarker(id: .file(key, hunkID: nil, comment: nil), position: (Double(offset) + 0.5) * unit,
+                                            token: .removed, title: "高风险 · \(file.file.path)"))
+            }
+            for comment in comments[key, default: []] {
+                let hunk = comment.hunkID(in: file)
+                let withinFile = hunk.flatMap { id in file.hunks.firstIndex { $0.id == id } } ?? 0
+                markers.append(ReviewMarker(id: .file(key, hunkID: hunk, comment: comment.id),
+                                            position: (Double(offset + withinFile) + 0.5) * unit,
+                                            token: .modified, title: "评论 · \(comment.reference)"))
+            }
+            return markers
         }
     }
 
@@ -246,7 +486,7 @@ struct AllChangesView: View {
     }
     /// The pill shown once the current change is scrolled away; it only scrolls back, it never acts.
     @ViewBuilder private var backToCurrent: some View {
-        if currentPlace != .visible, current?.hunkID != nil {
+        if needsReviewReveal {
             Button { revealTick += 1; focused = true } label: {
                 Label("回到当前处", systemImage: currentPlace == .above ? "arrow.up" : "arrow.down")
                     .themedFont(.caption.weight(.semibold), points: 10)
@@ -319,8 +559,14 @@ struct AllChangesView: View {
     }
 
     /// ⏎ / ⌫ / s while the current change is out of view: scroll back to it instead.
+    private var needsReviewReveal: Bool {
+        guard let current else { return false }
+        if let browsing = model.reviewBrowsingFileKey, browsing != current.fileKey { return true }
+        return currentPlace != .visible && current.hunkID != nil
+    }
+
     private func revealInsteadOfActing() -> Bool {
-        guard currentPlace != .visible, current?.hunkID != nil else { return false }
+        guard needsReviewReveal else { return false }
         revealTick += 1
         return true
     }
@@ -334,7 +580,7 @@ struct AllChangesView: View {
     }
     private func reject() {
         guard !revealInsteadOfActing() else { return }
-        guard let stop = current, let diff = diff(for: stop), !model.busy else { return }
+        guard actionNames?.reject != nil, let stop = current, let diff = diff(for: stop), !model.busy else { return }
         if let id = stop.hunkID, let hunk = diff.hunks.first(where: { $0.id == id }) { model.rejectHunk(hunk, in: diff) }
         else { model.rejectFile(diff) }
         advance()
@@ -351,6 +597,23 @@ struct AllChangesView: View {
         return ReviewActionNames.make(diff, hunk: hunk, selected: hunk.map { model.allChangesSelected(in: $0, of: diff).count } ?? 0)
     }
 
+    private func previewScope(for diff: FileDiff) -> DiffActionPreview? {
+        guard let hoveredDecision, !needsReviewReveal, let current, current.fileKey == diff.allChangesKey else { return nil }
+        let wholeFile = diff.file.isUntracked || (!diff.isPartialSupported &&
+            (hoveredDecision == .accept ? diff.area == .working : diff.area == .staged))
+        guard !wholeFile, let id = current.hunkID,
+              let hunk = diff.hunks.first(where: { $0.id == id }) else {
+            return DiffActionPreview(hunkID: nil, lineIDs: [])
+        }
+        let lines = hoveredDecision == .accept ? model.allChangesSelected(in: hunk, of: diff) : []
+        return DiffActionPreview(hunkID: id, lineIDs: lines)
+    }
+
+    private func hoverDecision(_ decision: ReviewDecision, inside: Bool) {
+        if inside { hoveredDecision = decision }
+        else if hoveredDecision == decision { hoveredDecision = nil }
+    }
+
     @ViewBuilder private var reviewBar: some View {
         let tally = self.tally
         if !diffs.isEmpty || model.lastCommit != nil {
@@ -363,10 +626,9 @@ struct AllChangesView: View {
                             .themedFont(.caption.weight(.medium), points: 10).monospacedDigit().fixedSize()
                     }
                     Spacer(minLength: 8)
+                    PaneIconButton(symbol: "magnifyingglass", help: "查找差异（⌘F）", action: openSearch)
                     WhitespaceFoldToggle(model: model)
-                    ThemedSegmented(options: [(false, "并排"), (true, "统一")],
-                                    selection: Binding(get: { model.unifiedDiff }, set: { model.unifiedDiff = $0 }))
-                        .controlSize(.small)
+                    DiffLayoutPicker(model: model)
                     if let label = model.undoLabel {
                         Button { model.undoGitOperation() } label: { Label("撤销", systemImage: "arrow.uturn.backward") }
                             .controlSize(.small).help("撤销：\(label)（⌥⌘Z）").disabled(model.busy)
@@ -376,8 +638,10 @@ struct AllChangesView: View {
                     HStack(spacing: 10) {
                         Button("⏎ \(names.accept)") { accept(); focused = true }.fixedSize()
                             .buttonStyle(.folmiProminent)
+                            .onHover { hoverDecision(.accept, inside: $0) }
                         if let rejectName = names.reject {
                             Button("⌫ \(rejectName)") { reject(); focused = true }.fixedSize()
+                                .onHover { hoverDecision(.reject, inside: $0) }
                         }
                         Spacer(minLength: 0)
                     }.controlSize(.small).disabled(model.busy)
@@ -492,6 +756,24 @@ struct AllChangesView: View {
         }
     }
 
+    private func browsingHeader(_ diff: FileDiff, key: String) -> some View {
+        let probe = visibleBand.lowerBound + 6
+        return header(diff, key: key)
+            .onGeometryChange(for: Bool.self) { geometry in
+                let frame = geometry.frame(in: .named(ReviewViewport.space))
+                return frame.minY <= probe && frame.maxY > probe
+            } action: { atTop in
+                if atTop {
+                    if model.reviewBrowsingFileKey != key { model.reviewBrowsingFileKey = key }
+                } else if model.reviewBrowsingFileKey == key {
+                    model.reviewBrowsingFileKey = nil
+                }
+            }
+            .onDisappear {
+                if model.reviewBrowsingFileKey == key { model.reviewBrowsingFileKey = nil }
+            }
+    }
+
     private func header(_ diff: FileDiff, key: String) -> some View {
         let counts = AllChangesNavigator.changedLines(diff)
         let isCollapsed = collapsed.contains(key)
@@ -579,13 +861,20 @@ struct AllChangesView: View {
         guard let stop = current else { return }
         withMotion(Motion.hover) {
             if let hunk = stop.hunkID { proxy.scrollTo(stop.fileKey + "#" + hunk, anchor: UnitPoint(x: 0.5, y: 0.2)) }
-            else { proxy.scrollTo("file:" + stop.fileKey, anchor: .top) }
+            else { proxy.scrollTo(stop.fileKey, anchor: .top) }
         }
     }
 
     private func handle(_ press: KeyPress) -> KeyPress.Result {
         // Typing the rejection reason: the review keys wait.
         if writingReason { return .ignored }
+        if press.modifiers == .command, press.characters.lowercased() == "f" {
+            openSearch(); return .handled
+        }
+        if searchOpen {
+            if press.key == .escape, !searchFocused { closeSearch(); return .handled }
+            return .ignored
+        }
         if press.modifiers == .command || press.modifiers == [.command, .shift], press.characters.lowercased() == "z" {
             if press.modifiers.contains(.shift) { model.redoGitOperation() } else { model.undoGitOperation() }
             advanceAfterReload = true
@@ -702,6 +991,7 @@ private struct TurnOnlyDiff: View {
     let model: FolmiModel
     let batch: String
     let path: String
+    let unified: Bool
     @State private var diff: FileDiff?
     @State private var note: String?
     @State private var loaded = false
@@ -718,7 +1008,7 @@ private struct TurnOnlyDiff: View {
                     onStageFile: { _ in }, onUnstageFile: { _ in }, onEditFile: { _ in },
                     comments: [], onComment: { _, _, _ in }, onDeleteComment: { _ in },
                     showsHeader: false, allowsLineSelection: false, anchorPrefix: "turn#\(batch)#",
-                    readOnly: true, sideTitles: ("这一轮之前", "这一轮之后"), unified: model.unifiedDiff)
+                    readOnly: true, sideTitles: ("这一轮之前", "这一轮之后"), unified: unified)
             } else if !loaded {
                 ProgressView().controlSize(.small)
             }

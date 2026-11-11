@@ -7,7 +7,8 @@ let package = Package(
     products: [
         .library(name: "FolmiCore", targets: ["FolmiCore"]),
         .executable(name: "Folmi", targets: ["Folmi"]),
-        .executable(name: "folmi-hook", targets: ["FolmiHook"])
+        .executable(name: "folmi-hook", targets: ["FolmiHook"]),
+        .executable(name: "folmi-cli", targets: ["FolmiCLI"])
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.19.0")
@@ -19,6 +20,7 @@ let package = Package(
         .executableTarget(name: "Folmi", dependencies: ["FolmiCore", .product(name: "SwiftTerm", package: "SwiftTerm")],
                           resources: [.copy("Resources/ReaderAssets"), .copy("Resources/Fonts"), .copy("Resources/Brand")]),
         .executableTarget(name: "FolmiHook", dependencies: ["FolmiCore"]),
+        .executableTarget(name: "FolmiCLI", dependencies: ["FolmiCore"]),
         // Tests drive AppKit views and fixtures from synchronous XCTest methods; they stay in Swift 5 mode.
         .testTarget(name: "FolmiCoreTests", dependencies: ["FolmiCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
         .testTarget(name: "FolmiTests", dependencies: ["Folmi", "FolmiCore"], swiftSettings: [.swiftLanguageMode(.v5)])

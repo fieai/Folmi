@@ -104,6 +104,66 @@ final class ReviewScreenTests: XCTestCase {
         _ = host
     }
 
+    @MainActor
+    func testDiffFindTakesTheKeyboardAndReturnMovesBetweenMatches() async throws {
+        let (model, _) = try await makeModel()
+        let (window, host) = show(AllChangesView(model: model), size: NSSize(width: 1100, height: 600))
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(400))
+
+        func key(_ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags = []) throws {
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+            window.sendEvent(event)
+        }
+        func matchedLine(_ view: NSView) -> String? {
+            if let canvas = view as? DiffRowsCanvas, let hit = canvas.searchHit {
+                return canvas.rows.lazy.flatMap { [$0.old, $0.new] }.compactMap { $0 }
+                    .first(where: { $0.line.id == hit.lineID })?.line.text
+            }
+            return view.subviews.lazy.compactMap(matchedLine).first
+        }
+
+        try key("f", code: 3, modifiers: .command)
+        try await eventually("差异查找接收输入") { window.firstResponder is NSTextView }
+        let query: [(String, UInt16)] = [("l", 37), ("i", 34), ("n", 45), ("e", 14)]
+        for (letter, code) in query { try key(letter, code: code) }
+        try await eventually("跳到已删除的第一行") { matchedLine(host) == "line 1" }
+        try key("\r", code: 36)
+        try await eventually("回车跳到下一项") { matchedLine(host) == "line 2" }
+        XCTAssertEqual(model.stagedCount, 0)
+    }
+
+    @MainActor
+    func testDiffFindUnfoldsALongFileAndRevealsTheMatchingRow() async throws {
+        let (model, demo) = try await makeModel()
+        let contents = (1...2_200).map { "line \($0)" }.joined(separator: "\n") + "\nneedle at the bottom\n"
+        try contents.write(to: demo.root.appendingPathComponent("review.txt"), atomically: true, encoding: .utf8)
+        try await model.reload()
+        await model.loadAllChanges()
+        XCTAssertTrue(AllChangesNavigator.startsFolded(try XCTUnwrap(model.allChanges.first)))
+        let (window, host) = show(AllChangesView(model: model), size: NSSize(width: 1100, height: 600))
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(400))
+        window.sendEvent(try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "f",
+            charactersIgnoringModifiers: "f", isARepeat: false, keyCode: 3)))
+        try await eventually("差异查找接收输入") { window.firstResponder is NSTextView }
+        let field = try XCTUnwrap(window.firstResponder as? NSTextView)
+        field.insertText("needle", replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        func showsMatch(_ view: NSView) -> Bool {
+            if let canvas = view as? DiffRowsCanvas, let hit = canvas.searchHit,
+               let row = hit.rowIndex(in: canvas.rows, unified: false) {
+                return canvas.visibleRect.contains(NSPoint(x: 10, y: (CGFloat(row) + 0.5) * DiffCanvasMetrics.rowHeight))
+            }
+            return view.subviews.contains(where: showsMatch)
+        }
+        try await eventually("展开文件并滚到命中行") { showsMatch(host) }
+        XCTAssertEqual(model.stagedCount, 0)
+    }
+
     /// A clean work tree with a stash waiting is not all done: the wrap-up says a batch is put away.
     @MainActor
     func testWrapUpMentionsStashedChanges() async throws {

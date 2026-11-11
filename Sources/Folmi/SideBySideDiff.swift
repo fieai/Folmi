@@ -2,6 +2,33 @@ import AppKit
 import SwiftUI
 import FolmiCore
 
+enum DiffLayout: String, Codable, CaseIterable {
+    case automatic, sideBySide, unified
+
+    var title: String {
+        switch self {
+        case .automatic: "自动"
+        case .sideBySide: "并排"
+        case .unified: "统一"
+        }
+    }
+
+    func usesUnified(width: CGFloat) -> Bool {
+        // Each side needs space for the gutter and about 45 columns of code.
+        self == .unified || (self == .automatic && width < 820)
+    }
+}
+
+struct DiffLayoutPicker: View {
+    @Bindable var model: FolmiModel
+
+    var body: some View {
+        ThemedSegmented(options: DiffLayout.allCases.map { ($0, $0.title) }, selection: $model.diffLayout)
+            .controlSize(.small)
+            .help("自动：按差异区宽度选择并排或统一")
+    }
+}
+
 /// A bounded, display-only projection. Original patches and selection IDs stay
 /// untouched, and any omitted content disables partial operations for the file.
 enum SideBySideDisplayBudget {
@@ -12,6 +39,7 @@ enum SideBySideDisplayBudget {
     struct HunkSection: Identifiable {
         let hunk: DiffHunk
         let rows: [AlignedDiffRow]
+        let leadingGap: DiffContextGap?
         var id: String { hunk.id }
     }
 
@@ -66,7 +94,8 @@ enum SideBySideDisplayBudget {
                     if let old = row.old { textLimited = textLimited || clippedText(old.line.text).limited }
                     if let new = row.new { textLimited = textLimited || clippedText(new.line.text).limited }
                 }
-                sections.append(HunkSection(hunk: hunk, rows: bounded.rows))
+                let leading = DiffContextGap(after: sections.last?.rows.last, before: bounded.rows.first)
+                sections.append(HunkSection(hunk: hunk, rows: bounded.rows, leadingGap: leading))
                 remaining -= bounded.rows.count
                 if bounded.limited { break }
             }
@@ -171,14 +200,26 @@ struct SideBySideDiff: View {
     var onExplain: ((DiffHunk, FileDiff) -> Void)?
     var onHandToAgent: ((DiffHunk, FileDiff) -> Void)?
     var agentTitle = "agent"
-    var unified = false
+    var layout: DiffLayout = .sideBySide
+    var commentReveal: ReviewCommentReveal?
+    var onEditPoint: ((DiffEditPoint, FileDiff) -> Void)?
+    var editReveal: DiffEditReturn?
     @Environment(\.folmiTheme) private var theme
 
     var body: some View {
         let _ = PerfLog.body("SideBySideDiff")
+        let target = commentTarget
+        let edit = editReveal.flatMap { origin in diffs.first(where: { $0.allChangesKey == origin.key }).map { (origin, $0) } }
         GeometryReader { geometry in
+            let unified = layout.usesUnified(width: geometry.size.width)
+            ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if target?.hunkID == nil, target != nil {
+                        Label("当前差异预览里找不到这条评论对应的改动。", systemImage: "info.circle")
+                            .themedFont(.caption, points: 10).foregroundStyle(.secondary).padding(10)
+                            .id("review-comment-unavailable")
+                    }
                     ForEach(diffs, id: \.file.path) { diff in
                         SideBySideFile(
                             diff: diff,
@@ -197,17 +238,60 @@ struct SideBySideDiff: View {
                             onExplain: onExplain,
                             onHandToAgent: onHandToAgent,
                             agentTitle: agentTitle,
+                            anchorPrefix: diff.allChangesKey + "#",
+                            revealedComment: target?.fileKey == diff.allChangesKey ? target?.note : nil,
                             unified: unified,
                             // One file on the page: a picture or document gets the page's height, not a fixed box.
                             previewHeight: diffs.count == 1 ? max(ChangePreview.defaultHeight, geometry.size.height - 170)
-                                : ChangePreview.defaultHeight
+                                : ChangePreview.defaultHeight,
+                            onEditPoint: onEditPoint,
+                            editReveal: edit?.0.key == diff.allChangesKey ? edit?.0 : nil,
+                            onEditRowAppeared: { anchor in
+                                DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .center) }
+                            }
                         )
-                        .id(diff.area.rawValue + ":" + diff.file.path)
+                        .id(diff.allChangesKey)
                     }
                 }
             }
+            .task(id: target) {
+                guard let target else { return }
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                let anchor = target.hunkID.map { target.fileKey + "#" + $0 } ?? "review-comment-unavailable"
+                proxy.scrollTo(anchor, anchor: .top)
+            }
+            .task(id: edit.map { $0.0.id.uuidString + $0.1.fingerprint }) {
+                guard let (origin, diff) = edit else { return }
+                let hunk = origin.hunk(in: diff)
+                let anchor = hunk.map { origin.key + "#" + $0.id } ?? origin.key
+                proxy.scrollTo(anchor, anchor: .top)
+                if origin.rowID(in: diff) != nil {
+                    await Task.yield()
+                    guard !Task.isCancelled else { return }
+                    proxy.scrollTo(origin.rowAnchor, anchor: .center)
+                }
+            }
+            }
         }
         .background(Color.theme(theme, \.card))
+    }
+
+    private struct CommentTarget: Equatable {
+        let requestID: UUID
+        let commentID: UUID
+        let fileKey: String
+        let hunkID: String?
+        var note: (id: UUID, hunkID: String)? { hunkID.map { (commentID, $0) } }
+    }
+
+    private var commentTarget: CommentTarget? {
+        guard let reveal = commentReveal, let diff = diffs.first(where: reveal.matches),
+              let comment = comments.first(where: { $0.id == reveal.comment.id && !$0.outdated }) else { return nil }
+        let hunkID = comment.hunkID(in: diff).flatMap { id in
+            SideBySideDisplayBudget.cachedPlan(for: diff).sections.contains { $0.id == id } ? id : nil
+        }
+        return CommentTarget(requestID: reveal.id, commentID: comment.id, fileKey: diff.allChangesKey, hunkID: hunkID)
     }
 }
 
@@ -229,6 +313,12 @@ struct WhitespaceFoldToggle: View {
             .toggleStyle(.checkbox).controlSize(.small).themedFont(.caption, points: 10)
             .help("只改了缩进、空格或换行的块收成一行；照样能看、能收下")
     }
+}
+
+struct DiffActionPreview: Equatable {
+    // A nil hunk is a file action. An empty set means every changed line in the scope.
+    let hunkID: String?
+    let lineIDs: Set<Int>
 }
 
 struct SideBySideFile: View {
@@ -261,6 +351,7 @@ struct SideBySideFile: View {
     var quietHunkActions = false
     /// Namespaces hunk scroll anchors when the same file appears as staged and unstaged.
     var anchorPrefix = ""
+    var revealedComment: (id: UUID, hunkID: String)?
     /// Lets the all-changes page open a hunk's comment box from the keyboard; the hunk ID whose box is open.
     var commenting: Binding<String?>?
     /// A committed change: no staging or comment controls, and the sides are named by `sideTitles`.
@@ -272,9 +363,16 @@ struct SideBySideFile: View {
     var previewHeight: CGFloat = ChangePreview.defaultHeight
     /// Reports where the current hunk sits in the all-changes scroll view as it scrolls.
     var onCurrentFrame: ((CGRect) -> Void)?
+    var searchHit: DiffSearchHit?
+    var onSearchAnchor: ((DiffSearchHit) -> Void)?
+    var actionPreview: DiffActionPreview?
+    var onEditPoint: ((DiffEditPoint, FileDiff) -> Void)?
+    var editReveal: DiffEditReturn?
+    var onEditRowAppeared: ((String) -> Void)?
     @Environment(\.folmiTheme) private var theme
     @State private var localCommenting: String?
     @State private var hoveredHunk: String?
+    @State private var hoveredAction: DiffActionPreview?
     @State private var openedWhitespace: Set<String> = []
     @Environment(\.foldWhitespaceHunks) private var foldWhitespace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -319,9 +417,10 @@ struct SideBySideFile: View {
                     .padding(.horizontal, 10).padding(.vertical, 8)
             }
 
-            if !comments.isEmpty {
+            let fileComments = comments.filter { $0.id != revealedComment?.id }
+            if !fileComments.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(comments) { comment in ReviewCommentRow(comment: comment) { onDeleteComment(comment.id) } }
+                    ForEach(fileComments) { comment in ReviewCommentRow(comment: comment) { onDeleteComment(comment.id) } }
                 }
                 .padding(.horizontal, 10).padding(.vertical, 8)
             }
@@ -352,9 +451,16 @@ struct SideBySideFile: View {
                 ForEach(display.sections) { section in
                     let seen = seenHunkIDs.contains(section.hunk.id)
                     VStack(alignment: .leading, spacing: 0) {
+                        contextGap(section.leadingGap, id: section.id)
                         hunkToolbar(section.hunk, partialAllowed: display.partialAllowed)
                             .id(anchorPrefix + section.hunk.id)
-                        if foldWhitespace, section.hunk.isWhitespaceOnly, !openedWhitespace.contains(section.hunk.id) {
+                        if let revealedComment, revealedComment.hunkID == section.id,
+                           let comment = comments.first(where: { $0.id == revealedComment.id }) {
+                            ReviewCommentRow(comment: comment) { onDeleteComment(comment.id) }
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                        }
+                        if foldWhitespace, section.hunk.isWhitespaceOnly, !openedWhitespace.contains(section.hunk.id),
+                           searchHit?.hunkID != section.id, revealedComment?.hunkID != section.id {
                             Button { openedWhitespace.insert(section.hunk.id) } label: {
                                 let count = section.hunk.lines.filter { $0.kind == .addition || $0.kind == .deletion }.count
                                 Label("只改了空白（\(count) 行）· 点开看", systemImage: "space")
@@ -365,10 +471,7 @@ struct SideBySideFile: View {
                             .buttonStyle(.plain)
                             .opacity(seen && currentHunkID != section.hunk.id ? 0.55 : 1)
                         } else {
-                        DiffRowsView(rows: section.rows, rowsKey: diff.fingerprint + "\0" + section.id + "\0\(section.rows.count)",
-                                     selected: selected, canSelect: allowsLineSelection && display.partialAllowed && !busy,
-                                     unified: unified, onToggle: { onToggleLine($0, diff) })
-                            .frame(height: DiffCanvasMetrics.height(rows: DiffRowsCanvas.displayCount(section.rows, unified: unified)))
+                            diffRows(section.rows, hunk: section.hunk, canSelect: allowsLineSelection && display.partialAllowed && !busy)
                             .opacity(seen && currentHunkID != section.hunk.id ? 0.55 : 1)
                         }
                     }
@@ -378,11 +481,12 @@ struct SideBySideFile: View {
                         }
                     }
                 }
+                if !display.rowsLimited {
+                    contextGap(DiffContextGap(after: display.sections.last?.rows.last, before: nil), id: "end")
+                }
             } else if diff.file.isUntracked, !diff.rawPatch.isEmpty,
                       diff.notice?.contains("二进制") != true {
-                DiffRowsView(rows: display.untrackedRows, rowsKey: diff.fingerprint + "\0untracked\0\(display.untrackedRows.count)",
-                             selected: [], canSelect: false, unified: unified, onToggle: { _ in })
-                    .frame(height: DiffCanvasMetrics.height(rows: display.untrackedRows.count))
+                diffRows(display.untrackedRows, hunk: nil, canSelect: false)
             } else if let preview, let versions = diff.versions {
                 ChangePreview(path: diff.file.path, kind: preview, versions: versions, revision: diff.fingerprint,
                               oldTitle: oldTitle, newTitle: newTitle, unified: unified, height: previewHeight)
@@ -395,6 +499,65 @@ struct SideBySideFile: View {
             }
             Divider().padding(.bottom, 14)
         }
+    }
+
+    @ViewBuilder private func contextGap(_ gap: DiffContextGap?, id: String) -> some View {
+        if let gap, let versions = diff.versions, versions.old != nil, versions.new != nil {
+            DiffContextView(gap: gap, versions: versions, unified: unified).id(diff.fingerprint + "#" + id)
+        }
+    }
+
+    private func diffRows(_ rows: [AlignedDiffRow], hunk: DiffHunk?, canSelect: Bool) -> some View {
+        let hunkID = hunk?.id
+        let hit = searchHit.flatMap { $0.hunkID == hunkID ? $0 : nil }
+        let preview = (actionPreview ?? hoveredAction).flatMap { scope in
+            scope.hunkID == nil || scope.hunkID == hunkID ? scope.lineIDs : nil
+        }
+        return DiffRowsView(rows: rows, rowsKey: diff.fingerprint + "\0" + (hunkID ?? "untracked") + "\0\(rows.count)",
+                            selected: hunkID == nil ? [] : selected, canSelect: canSelect,
+                            unified: unified, searchHit: hit, previewLines: preview, onToggle: { onToggleLine($0, diff) },
+                            onEditPoint: rowEditor(hunk: hunk))
+            .frame(height: DiffCanvasMetrics.height(rows: DiffRowsCanvas.displayCount(rows, unified: unified)))
+            .overlay(alignment: .top) {
+                if let hit, let row = hit.rowIndex(in: rows, unified: unified) {
+                    VStack(spacing: 0) {
+                        Color.clear.frame(height: CGFloat(row) * DiffCanvasMetrics.rowHeight)
+                        Color.clear.frame(height: DiffCanvasMetrics.rowHeight)
+                            .id(hit)
+                            .onAppear { onSearchAnchor?(hit) }
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+            }
+            .overlay(alignment: .top) {
+                if let editReveal, let lineID = editReveal.rowID(in: diff),
+                   let row = editRow(lineID, in: rows) {
+                    VStack(spacing: 0) {
+                        Color.clear.frame(height: CGFloat(row) * DiffCanvasMetrics.rowHeight)
+                        Color.clear.frame(height: DiffCanvasMetrics.rowHeight)
+                            .id(editReveal.rowAnchor)
+                            .onAppear { onEditRowAppeared?(editReveal.rowAnchor) }
+                    }
+                    .allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+    }
+
+    private func rowEditor(hunk: DiffHunk?) -> ((Int) -> Void)? {
+        guard !readOnly, !busy, diff.canEditPoint, let onEditPoint else { return nil }
+        return { lineID in
+            if let hunk {
+                if let point = DiffEditPoint.inHunk(hunk, lineID: lineID) { onEditPoint(point, diff) }
+            } else if diff.file.isUntracked {
+                onEditPoint(DiffEditPoint(line: lineID + 1, hunk: nil, lineID: lineID), diff)
+            }
+        }
+    }
+
+    private func editRow(_ id: Int, in rows: [AlignedDiffRow]) -> Int? {
+        if unified { return DiffRowsCanvas.unify(rows).firstIndex { $0.cell.line.id == id } }
+        return rows.firstIndex { $0.old?.line.id == id || $0.new?.line.id == id }
     }
 
     private var oldTitle: String { sideTitles?.old ?? (diff.area == .working ? "暂存区（旧）" : "HEAD（旧）") }
@@ -412,7 +575,7 @@ struct SideBySideFile: View {
             Circle().fill(.themed(token, opacity: 0.65)).frame(width: 5, height: 5)
             Text(title).themedFont(.caption.weight(.medium), points: 10)
             Spacer(minLength: 0)
-        }.padding(.horizontal, 10).frame(width: columnWidth, alignment: .leading)
+        }.padding(.horizontal, 10).frame(maxWidth: columnWidth, alignment: .leading)
     }
 
     private func hunkToolbar(_ hunk: DiffHunk, partialAllowed: Bool) -> some View {
@@ -442,6 +605,13 @@ struct SideBySideFile: View {
                     .help("把这处改动（选了行就是选中的行）放进 \(agentTitle) 会话的输入框，不会直接发送")
             }
             if !readOnly && actionsShown {
+            if diff.canEditPoint, let onEditPoint {
+                Button("编辑这一处") {
+                    if let point = DiffEditPoint.inHunk(hunk, selected: selected) { onEditPoint(point, diff) }
+                }
+                .disabled(busy)
+                .help("在编辑器里打开这处改动，选了行就从选中的行开始")
+            }
             Button(count > 0 ? "评论选中 \(count) 行" : "评论此块") { commentingHunk = hunk.id }
                 .help("写一条审查评论，之后可一次性发送到终端")
                 .popover(isPresented: Binding(get: { commentingHunk == hunk.id }, set: { if !$0 { commentingHunk = nil } }), arrowEdge: .bottom) {
@@ -456,8 +626,10 @@ struct SideBySideFile: View {
                     Button("\(diff.area == .working ? "暂存" : "取消暂存")选中 \(count) 行") {
                         onApplySelection(hunk, diff)
                     }.buttonStyle(.folmiProminent)
+                        .onHover { previewAction(hunk.id, lines: selected, inside: $0) }
                 }
                 Button(diff.area == .working ? "暂存此块" : "取消暂存此块") { onApplyHunk(hunk, diff) }
+                    .onHover { previewAction(hunk.id, lines: [], inside: $0) }
             }
             .disabled(busy || !partialAllowed)
             }
@@ -476,6 +648,11 @@ struct SideBySideFile: View {
         .overlay(alignment: .leading) {
             if currentHunkID == hunk.id { Rectangle().fill(ThemeColor(token: .accent)).frame(width: 3) }
         }
+    }
+
+    private func previewAction(_ hunk: String, lines: Set<Int>, inside: Bool) {
+        if inside { hoveredAction = DiffActionPreview(hunkID: hunk, lineIDs: lines) }
+        else if hoveredAction?.hunkID == hunk { hoveredAction = nil }
     }
 
 }

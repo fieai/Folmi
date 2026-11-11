@@ -146,14 +146,15 @@ public actor GitRepository {
                                       upstream: current.upstream, ahead: current.ahead, behind: current.behind, unpushed: previous.unpushed,
                                       operation: try operationInProgress(git), stashCount: previous.stashCount)
         }
-        let countUnpushed = current.upstream == nil && current.head != nil
         var jobs: [(arguments: [String], allowFailure: Bool)] = [
             (["for-each-ref", "--format=%(refname:short)", "refs/heads/"], false),
             (["remote"], false),
             (Self.stashListArguments, true)
         ]
-        if current.head != nil { jobs.append((["log", "-40", "--format=%H%x00%h%x00%at%x00%s%x00"], false)) }
-        if countUnpushed { jobs.append((["rev-list", "--count", "HEAD", "--not", "--remotes"], false)) }
+        if let head = current.head {
+            jobs.append((["log", "-40", "--format=%H%x00%h%x00%at%x00%s%x00"], false))
+            jobs.append((Self.unpushedCountArguments(from: head), false))
+        }
         let outputs = try Self.runSideBySide(git, jobs)
         let branches = outputs[0].components(separatedBy: .newlines).filter { !$0.isEmpty }
         let remotes = outputs[1].components(separatedBy: .newlines).filter { !$0.isEmpty }
@@ -170,10 +171,15 @@ public actor GitRepository {
             }
         }
         var unpushed = current.ahead
-        if countUnpushed, !remotes.isEmpty, let text = outputs.last { unpushed = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if current.head != nil, !remotes.isEmpty { unpushed = Int(outputs[4].trimmingCharacters(in: .whitespacesAndNewlines)) }
         return RepositorySnapshot(root: git.directory, branch: current.branch, head: current.head, files: current.files, commits: commits, branches: branches, remotes: remotes, fingerprint: current.fingerprint,
                                   upstream: current.upstream, ahead: current.ahead, behind: current.behind, unpushed: unpushed,
                                   operation: try operationInProgress(git), stashCount: stashCount)
+    }
+
+    /// A commit published to another remote branch still counts as ahead of its upstream for pulling.
+    public static func unpushedCountArguments(from commit: String) -> [String] {
+        ["rev-list", "--count", commit, "--not", "--remotes"]
     }
 
     /// Runs read-only Git commands at the same time and returns their output in order; the first failure is thrown.

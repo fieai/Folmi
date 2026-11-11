@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 import FolmiCore
 @testable import Folmi
@@ -28,6 +30,7 @@ final class ReviewCommentTests: XCTestCase {
         let draft = ReaderCommentDraft(path: "docs/a.md", firstLine: 3, lastLine: 4, quote: "第一段 重点\n第二段")
         let comment = try XCTUnwrap(ReviewComment.make(projectPath: "/p", draft: draft, body: " 说清楚一点 ", fileLines: lines))
         XCTAssertEqual(comment.reference, "docs/a.md:3-4")
+        XCTAssertTrue(comment.isReaderComment)
         XCTAssertEqual(comment.excerpt, [" 第一段 **重点**", " 第二段"])
         XCTAssertEqual(comment.body, "说清楚一点")
         let moved = comment.located(in: ["新的一行"] + lines)
@@ -46,12 +49,113 @@ final class ReviewCommentTests: XCTestCase {
     func testSelectedLinesOrWholeHunkAndFormat() throws {
         let selected = try XCTUnwrap(ReviewComment.make(projectPath: "/p", diff: diff, hunk: hunk, selected: [3, 4], body: "  用常量  "))
         XCTAssertEqual(selected.reference, "src/app.js:11-12")
+        XCTAssertEqual(selected.hunkID(in: diff), hunk.id)
         XCTAssertEqual(selected.formatted, "src/app.js:11-12\n```diff\n+const b = 3\n+const c = 4\n```\n用常量")
         let whole = try XCTUnwrap(ReviewComment.make(projectPath: "/p", diff: diff, hunk: hunk, selected: [99], body: "整块"))
         XCTAssertEqual(whole.lines, "10-13")
         XCTAssertEqual(whole.excerpt.count, 5)
         XCTAssertNil(ReviewComment.make(projectPath: "/p", diff: diff, hunk: hunk, selected: [], body: "  \n"))
         XCTAssertEqual(ReviewComment.formatted([selected, whole]).components(separatedBy: "\n\n").count, 2)
+    }
+
+    @MainActor
+    func testStagedCommentAndReaderCommentGoBackToTheirOwnSources() async throws {
+        let (model, demo) = try await makeDemoModel()
+        let path = "README.md"
+        let change = try XCTUnwrap(model.snapshot?.files.first { $0.path == path })
+        XCTAssertTrue(change.hasStaged && change.hasWorking)
+        let diff = try await model.displayDiff(change, area: .staged)
+        let hunk = try XCTUnwrap(diff.hunks.first)
+        model.addReviewComment("暂存区里的评论", hunk: hunk, in: diff)
+        let staged = try XCTUnwrap(model.currentReviewComments.first)
+        XCTAssertFalse(staged.isReaderComment)
+
+        try "# 工作区\n\n这一段只在工作区。\n".write(to: demo.root.appendingPathComponent(path), atomically: true, encoding: .utf8)
+        await model.relocateReviewComments()
+        XCTAssertEqual(model.sendableReviewComments, [staged], "unstaged edits must not invalidate a staged comment")
+        model.revealReviewComment(staged.id)
+        try await eventually { model.fileDiff?.file.path == path && model.fileDiff?.area == .staged }
+        XCTAssertEqual(model.area, .staged)
+        XCTAssertEqual(model.reviewCommentReveal?.comment.id, staged.id)
+        XCTAssertEqual(staged.hunkID(in: try XCTUnwrap(model.fileDiff)), hunk.id)
+        XCTAssertTrue(model.markdownDiffRendered, "revealing a source comment keeps the user's rendered default")
+        XCTAssertFalse(model.showsRenderedMarkdownDiff(try XCTUnwrap(model.fileDiff)))
+
+        let editor = try XCTUnwrap(model.editorWorkspace)
+        editor.markdownReading = false
+        model.addReaderComment("阅读时的评论", draft: ReaderCommentDraft(path: path, firstLine: 3, lastLine: 3, quote: "这一段只在工作区。"))
+        let reader = try XCTUnwrap(model.currentReviewComments.last)
+        model.revealReviewComment(reader.id)
+        XCTAssertEqual(model.content, .editor)
+        XCTAssertEqual(editor.selectedDocumentID, path)
+        XCTAssertTrue(editor.markdownReading)
+        XCTAssertEqual(editor.readerTopLine[path], 2)
+        XCTAssertNil(model.reviewCommentReveal)
+        model.navigateEditor(back: true)
+        XCTAssertEqual(model.content, .diff)
+        XCTAssertEqual(model.reviewCommentReveal?.comment.id, staged.id)
+        model.navigateEditor(back: false)
+        XCTAssertEqual(model.content, .editor)
+        XCTAssertEqual(editor.selectedDocumentID, path)
+        XCTAssertEqual(editor.readerTopLine[path], 2)
+    }
+
+    @MainActor
+    func testCommentJumpScrollsToItsHunkInTheSourceDiff() throws {
+        let firstHunk = DiffHunk(id: "earlier", header: "@@ -0,0 +1,100 @@", lines: (0..<100).map {
+            DiffLine(id: $0 + 100, text: "earlier \($0)", kind: .addition)
+        })
+        let targetHunk = DiffHunk(id: "target", header: "@@ -110 +210 @@", lines: hunk.lines.dropFirst().prefix(2).map { $0 })
+        let diff = FileDiff(file: file, area: .working, rawPatch: "", hunks: [firstHunk, targetHunk], fingerprint: "comment-scroll",
+                            isPartialSupported: true, notice: nil)
+        let comment = try XCTUnwrap(ReviewComment.make(projectPath: "/p", diff: diff, hunk: targetHunk, selected: [], body: "跳到这里"))
+        let view = SideBySideDiff(diffs: [diff], selectedLines: [:], busy: false, onToggleLine: { _, _ in }, onApplyHunk: { _, _ in },
+                                  onApplySelection: { _, _ in }, onStageFile: { _ in }, onUnstageFile: { _ in }, onEditFile: { _ in },
+                                  comments: [comment], commentReveal: ReviewCommentReveal(comment: comment))
+        let host = NSHostingView(rootView: view)
+        host.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        func findCanvas(_ view: NSView) -> DiffRowsCanvas? {
+            (view as? DiffRowsCanvas) ?? view.subviews.lazy.compactMap(findCanvas).first
+        }
+        let scroll = try XCTUnwrap(findCanvas(host)?.enclosingScrollView)
+        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 1_000, "the comment opens at the second hunk")
+    }
+
+    @MainActor
+    func testOnlyValidCommentsJoinTheCurrentDraftAndPickedLines() async throws {
+        let (model, _) = try await makeDemoModel()
+        defer { model.terminalSession?.stop() }
+        let diff = try XCTUnwrap(model.fileDiffs.first { $0.area == .working && !$0.hunks.isEmpty })
+        let hunk = try XCTUnwrap(diff.hunks.first)
+        model.addReviewComment("这一处再检查", hunk: hunk, in: diff)
+        let valid = try XCTUnwrap(model.currentReviewComments.first)
+        var outdated = valid
+        outdated.id = UUID(); outdated.outdated = true; outdated.body = "旧评论"
+        model.reviewComments.append(outdated)
+        let line = try XCTUnwrap(hunk.lines.first { $0.kind == .addition || $0.kind == .deletion })
+        model.toggleLine(line.id, in: diff)
+        let selection = try XCTUnwrap(model.diffSelectionContexts().first)
+        let existing = AgentContext(title: "之前选中的内容", text: "先留着")
+        model.agentContext = [existing]
+        model.agentDraft = "和前面的要求一起做"
+        model.ensureAgentSession()
+        let session = try XCTUnwrap(model.agentSession)
+
+        model.handReviewCommentsToAgent()
+        model.handReviewCommentsToAgent()
+
+        XCTAssertTrue(model.aiTabSelected)
+        XCTAssertTrue(model.agentSession === session)
+        XCTAssertEqual(model.agentDraft, "和前面的要求一起做")
+        XCTAssertEqual(model.agentContext.map(\.text), [existing.text, selection.text, valid.formatted])
+        XCTAssertTrue(session.transcript.entries.isEmpty)
+        XCTAssertEqual(model.currentReviewComments, [valid, outdated])
     }
 
     func testControlCharactersCannotEscapeThePaste() {
@@ -167,6 +271,17 @@ final class ReviewCommentTests: XCTestCase {
         XCTAssertTrue(second.sendableReviewComments.isEmpty, "outdated notes are not sent")
         second.clearOutdatedReviewComments()
         XCTAssertTrue(second.currentReviewComments.isEmpty)
+    }
+
+    @MainActor
+    private func makeDemoModel() async throws -> (FolmiModel, DemoRepository) {
+        let demo = try await DemoRepository.create()
+        let directory = demo.root.deletingLastPathComponent()
+        cleanupURLs.append(directory)
+        let model = FolmiModel(store: WorkspaceStore(url: directory.appendingPathComponent("workspace.json")))
+        model.open(demo.root, environment: demo.environment, demo: true)
+        try await eventually { !model.busy && !model.fileDiffs.isEmpty }
+        return (model, demo)
     }
 
     @MainActor

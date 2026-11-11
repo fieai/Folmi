@@ -64,10 +64,57 @@ final class FileEditorTests: XCTestCase {
         workspace.updateText(id: "a.txt", text: "my draft")
         try Data("external change".utf8).write(to: file, options: .atomic)
         XCTAssertThrowsError(try workspace.saveSelected()) { XCTAssertEqual($0 as? FileEditorError, .changedOnDisk) }
+        XCTAssertEqual(workspace.saveConflictPath, "a.txt")
+        let comparison = try XCTUnwrap(workspace.saveConflict(for: "a.txt"))
+        XCTAssertEqual(comparison.draft, "my draft")
+        XCTAssertEqual(comparison.disk, "external change")
         XCTAssertEqual(try String(contentsOf: file), "external change")
         XCTAssertEqual(workspace.selectedDocument?.text, "my draft")
         XCTAssertTrue(workspace.hasUnsavedChanges)
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: temporaryRoot.path).contains { $0.hasPrefix(".folmi-save-") })
+    }
+
+    func testNavigationRestoresSelectionAndScrollAcrossFilesAndWithinAFile() throws {
+        _ = try write("hello\nworld\n", path: "a.txt")
+        _ = try write("line one\nline two\n", path: "b.txt")
+        let workspace = EditorWorkspace(root: temporaryRoot)
+        try workspace.open(path: "a.txt")
+        let original = NSRange(location: 2, length: 3)
+        workspace.updateEditorState(id: "a.txt", selection: original, scrollOffset: 120)
+        try workspace.reveal(path: "b.txt", line: 2, column: 6, selectionLength: 3)
+        let hit = try XCTUnwrap(workspace.tabStates["b.txt"])
+        XCTAssertEqual(hit.selectionLocation, 14)
+        XCTAssertEqual(hit.selectionLength, 3)
+        XCTAssertTrue(workspace.navigate(back: true))
+        XCTAssertEqual(workspace.selectedDocumentID, "a.txt")
+        XCTAssertEqual(workspace.tabStates["a.txt"], EditorTabState(path: "a.txt", selectionLocation: 2, selectionLength: 3, scrollOffset: 120))
+        XCTAssertFalse(workspace.canNavigateBack, "the search result is one jump")
+        XCTAssertTrue(workspace.navigate(back: false))
+        XCTAssertEqual(workspace.tabStates["b.txt"], hit)
+        try workspace.reveal(path: "b.txt", line: 1)
+        XCTAssertTrue(workspace.navigate(back: true))
+        XCTAssertEqual(workspace.tabStates["b.txt"], hit)
+        try workspace.reveal(path: "a.txt", line: 2)
+        XCTAssertFalse(workspace.canNavigateForward)
+    }
+
+    func testNavigationRestoresReaderAnchorAndCrossFileHeadingAsOneJump() throws {
+        _ = try write("# Start\n\n## Another heading\n", path: "a.md")
+        _ = try write("# Start\n\n## Target\n", path: "b.md")
+        let workspace = EditorWorkspace(root: temporaryRoot)
+        try workspace.open(path: "a.md")
+        let column = workspace.columns.activeID
+        workspace.recordReaderAnchor(in: "a.md", column: column, from: 0, to: 2)
+        workspace.followLink("b.md#target", from: "a.md")
+        XCTAssertEqual(workspace.selectedDocumentID, "b.md")
+        XCTAssertEqual(workspace.readerTopLine["b.md"], 2)
+        XCTAssertTrue(workspace.navigate(back: true))
+        XCTAssertEqual(workspace.selectedDocumentID, "a.md")
+        XCTAssertEqual(workspace.readerTopLine["a.md"], 2)
+        XCTAssertTrue(workspace.navigate(back: true))
+        XCTAssertEqual(workspace.readerTopLine["a.md"], 0)
+        XCTAssertTrue(workspace.navigate(back: false))
+        XCTAssertEqual(workspace.readerTopLine["a.md"], 2)
     }
 
     func testBlocksTraversalAbsolutePathsAndGitMetadata() throws {

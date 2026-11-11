@@ -10,8 +10,12 @@ struct FileEditorPane: View {
     var onSave: () -> Void
     /// The column this pane shows; nil shows the active column's file.
     var column: UUID?
+    var onMarkdownSideBySide: (() -> Void)?
+    var markdownSideBySideBlockedReason: String?
+    var onNavigate: ((Bool) -> Void)?
     @Environment(\.folmiTheme) private var theme
     @State private var syntaxStatus = "词法高亮"
+    @State private var comparedConflict: EditorSaveConflict?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -23,9 +27,15 @@ struct FileEditorPane: View {
             } else {
                 HStack(spacing: 8) {
                     if isMarkdown {
-                        ThemedSegmented(options: [(true, "阅读"), (false, "编辑")], selection: $workspace.markdownReading)
+                        ThemedSegmented(options: [(true, "阅读"), (false, "编辑")], selection: Binding(
+                            get: { workspace.isReading(column: column) }, set: { workspace.setReading($0, column: column) }))
                             .controlSize(.small)
                         .help("阅读：排版后的文档，选中文字可发到终端。编辑：Markdown 源码。⇧⌥M 切换")
+                        PaneIconButton(symbol: "rectangle.split.2x1",
+                                       help: markdownSideBySideBlockedReason ?? "并排：左边编辑源码，右边看排版效果，滚动跟随") {
+                            onMarkdownSideBySide?()
+                        }
+                        .disabled(onMarkdownSideBySide == nil || markdownSideBySideBlockedReason != nil)
                     }
                     Text(shown?.path ?? "")
                         .themedFont(.caption.monospaced(), points: 10).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -51,6 +61,11 @@ struct FileEditorPane: View {
                         PaneIconButton(symbol: "magnifyingglass", help: reading ? "查找（⌘F）" : "查找 / 替换（⌘F）") { find() }
                     }
                     Menu {
+                        Button("回到上一个位置") { navigate(back: true) }
+                            .disabled(!workspace.canNavigateBack)
+                        Button("前往下一个位置") { navigate(back: false) }
+                            .disabled(!workspace.canNavigateForward)
+                        Divider()
                         Button("全部保存（⇧⌘S）") { perform { try workspace.saveAll(); onSave() } }
                             .disabled(!workspace.hasUnsavedChanges)
                         Divider()
@@ -156,8 +171,18 @@ struct FileEditorPane: View {
         .alert("文件未保存", isPresented: Binding(
             get: { isActiveColumn && workspace.errorMessage != nil }, set: { if !$0 { workspace.errorMessage = nil } }
         )) {
+            if workspace.errorMessage == FileEditorError.changedOnDisk.errorDescription, let path = workspace.saveConflictPath {
+                Button("比较两个版本") {
+                    let conflict = workspace.saveConflict(for: path)
+                    DispatchQueue.main.async { comparedConflict = conflict }
+                }
+                Button("复制我的草稿") {
+                    if let draft = workspace.documents.first(where: { $0.id == path })?.text { FileActionsMenu.copy(draft) }
+                }
+            }
             Button("知道了", role: .cancel) { workspace.errorMessage = nil }
         } message: { Text(workspace.errorMessage ?? "") }
+        .sheet(item: $comparedConflict) { EditorSaveConflictSheet(conflict: $0) }
     }
 
     private var shownID: String? {
@@ -166,7 +191,7 @@ struct FileEditorPane: View {
     }
     private var shown: EditorDocument? { shownID.flatMap { id in workspace.documents.first { $0.id == id } } }
     private var isActiveColumn: Bool { column == nil || column == workspace.columns.activeID }
-    private var reading: Bool { isMarkdown && workspace.markdownReading }
+    private var reading: Bool { isMarkdown && workspace.isReading(column: column) }
     private var preview: FilePreviewKind? { shown?.preview }
     private var isMarkdown: Bool { ["md", "markdown", "mdown"].contains((shown?.path as NSString?)?.pathExtension.lowercased() ?? "") }
     private func saveSelected() {
@@ -175,8 +200,12 @@ struct FileEditorPane: View {
     }
     private func find() {
         guard preview == nil else { return }
-        if reading { workspace.openReaderFind?() }
+        if reading { workspace.openReaderFindByColumn[column ?? workspace.columns.activeID]?() }
         else { NSApp.sendAction(#selector(NSTextView.performTextFinderAction(_:)), to: nil, from: FindPanelSender()) }
+    }
+    private func navigate(back: Bool) {
+        if let onNavigate { onNavigate(back) }
+        else { workspace.navigate(back: back) }
     }
     private func perform(_ operation: () throws -> Void) {
         do { try operation() } catch { workspace.errorMessage = error.localizedDescription }
@@ -357,6 +386,8 @@ struct FileActionsMenu: View {
     let url: URL
     let relativePath: String
     var body: some View {
+        Button("复制文件") { Self.copyFiles([url]) }
+            .disabled(!FileManager.default.fileExists(atPath: url.path))
         Button("复制路径") { Self.copy(url.path) }
         Button("复制相对路径") { Self.copy(relativePath) }
         Button("复制文件名") { Self.copy(url.lastPathComponent) }
@@ -367,6 +398,13 @@ struct FileActionsMenu: View {
     static func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @discardableResult
+    static func copyFiles(_ urls: [URL], to pasteboard: NSPasteboard = .general) -> Bool {
+        guard !urls.isEmpty, urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else { return false }
+        pasteboard.clearContents()
+        return pasteboard.writeObjects(urls.map { $0 as NSURL })
     }
 }
 

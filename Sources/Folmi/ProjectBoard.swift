@@ -15,15 +15,15 @@ final class ProjectBoard {
         var changes = 0
         var ahead: Int?
         var behind: Int?
+        var unpushed: Int?
         var upstream: String?
         /// A linked worktree of `parent`, not a project of its own.
         var parent: String?
         /// A worktree's commits no other branch has (see `WorktreeStatus.ownCommits`).
         var ownCommits = 0
-        /// Of the commits ahead, those already up for review on Gerrit (`FolmiModel.inReview`).
+        /// Of the commits absent from remote branches, those already up for review on Gerrit.
         var inReview = 0
-        /// Commits ahead still waiting for a push.
-        var pending: Int { max(0, (ahead ?? 0) - inReview) }
+        var pending: Int { max(0, (unpushed ?? ahead ?? 0) - inReview) }
         var aiRunning = false
         var aiLabel: String?
         var aiDate: Date?
@@ -34,18 +34,17 @@ final class ProjectBoard {
         /// project rail's 待看, `WorktreeStatus.hasWork`), or an agent at it. Being behind is left out, and so is being
         /// ahead of an upstream: most worktree branches have none, and those that do are counted by their own commits.
         var worktreeNeedsAttention: Bool { changes > 0 || ownCommits > 0 || aiRunning || error != nil }
-        var isTrackingSynchronized: Bool { pending == 0 && behind == 0 }
+        var isTrackingSynchronized: Bool { pending == 0 && ahead == inReview && behind == 0 }
         var statusSummary: String {
             guard error == nil else { return "项目状态读取失败" }
             let workspace = changes == 0 ? "工作区干净" : "\(changes) 个文件有改动"
-            guard ahead != nil, let behind else {
-                return "\(workspace) · " + (upstream == nil ? "未设置上游分支" : "未取得上游比较")
-            }
             let review = inReview > 0 ? " · 评审中 \(inReview) 个提交" : ""
-            if isTrackingSynchronized { return "\(workspace) · " + "与本地追踪分支一致" + review }
             let sync = [pending > 0 ? "待推送 \(pending) 个提交" : nil,
-                        behind > 0 ? "待拉取 \(behind) 个提交" : nil].compactMap { $0 }.joined(separator: "，")
-            return "\(workspace) · \(sync)" + review
+                        behind.flatMap { $0 > 0 ? "待拉取 \($0) 个提交" : nil }].compactMap { $0 }.joined(separator: "，")
+            if !sync.isEmpty { return "\(workspace) · \(sync)" + review }
+            if isTrackingSynchronized { return "\(workspace) · 与本地追踪分支一致" + review }
+            if let ahead, ahead > 0 { return "\(workspace) · 领先上游 \(ahead) 个提交" + review }
+            return "\(workspace) · " + (upstream == nil ? "未设置上游分支" : "未取得上游比较") + review
         }
     }
     private(set) var rows: [Row] = []
@@ -62,7 +61,8 @@ final class ProjectBoard {
         guard let index = rows.firstIndex(where: { $0.path == path }) else { return }
         var row = rows[index]
         row.branch = snapshot.branch; row.upstream = snapshot.upstream
-        row.ahead = snapshot.ahead; row.behind = snapshot.behind; row.changes = snapshot.files.count; row.inReview = inReview
+        row.ahead = snapshot.ahead; row.behind = snapshot.behind; row.unpushed = snapshot.unpushed
+        row.changes = snapshot.files.count; row.inReview = inReview
         if row != rows[index] { rows[index] = row }
     }
 
@@ -82,7 +82,7 @@ final class ProjectBoard {
             for (path, name, environment, watches) in list {
                 let root = URL(fileURLWithPath: path)
                 var row = await Self.read(root: root, name: name, environment: environment)
-                if (row.ahead ?? 0) > 0, !watches.isEmpty {
+                if row.pending > 0, !watches.isEmpty {
                     row.inReview = await Task.detached(priority: .utility) { FolmiModel.inReview(root: root, environment: environment, watches: watches) }.value
                 }
                 result.append(row)
@@ -105,13 +105,22 @@ final class ProjectBoard {
         var row = Row(path: root.path, name: name)
         do {
             let text = try await CommandRunner.git(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal"], at: root, environment: environment)
+            var head: String?
             for record in text.split(separator: "\0") {
                 if record.hasPrefix("# branch.head ") { row.branch = String(record.dropFirst(14)) }
+                else if record.hasPrefix("# branch.oid "), record != "# branch.oid (initial)" { head = String(record.dropFirst(13)) }
                 else if record.hasPrefix("# branch.upstream ") { row.upstream = String(record.dropFirst(18)) }
                 else if record.hasPrefix("# branch.ab ") {
                     let parts = record.dropFirst(12).split(separator: " ")
                     if parts.count == 2 { row.ahead = Int(parts[0].dropFirst()); row.behind = Int(parts[1].dropFirst()) }
                 } else if record.hasPrefix("1 ") || record.hasPrefix("2 ") || record.hasPrefix("u ") || record.hasPrefix("? ") { row.changes += 1 }
+            }
+            if let head {
+                let remotes = try await CommandRunner.git(["remote"], at: root, environment: environment)
+                if !remotes.isEmpty {
+                    let count = try await CommandRunner.git(GitRepository.unpushedCountArguments(from: head), at: root, environment: environment)
+                    row.unpushed = Int(count.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
             }
         } catch { row.error = "无法读取" }
         if let gitDir = AIEventStore.locate(from: root)?.gitDir, let last = lastEvent(gitDir: gitDir) {

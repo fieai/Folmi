@@ -214,18 +214,14 @@ private struct FolmiMain: View {
     /// Not observed here on purpose (plain @State): a drag re-renders only the size boxes, never this body.
     @State private var paneSizes = PaneSizes()
     @State private var treeQuery = ""
-    /// Starts as icons only; the names open with the 项目 button.
-    @State private var projectNamesExpanded = false
+    /// An explicit choice takes precedence over the theme's default for the current window width.
+    @State private var projectNamesExpanded: Bool?
     @StateObject private var treeExpansion = ProjectTreeExpansion()
 
     var body: some View {
         let _ = PerfLog.body("FolmiMain")
         if model.hasSnapshot {
-            HStack(spacing: 0) {
-                ProjectRail(model: model, expanded: $projectNamesExpanded)
-                PaneHost(model: model, tracker: paneTracker, sizes: paneSizes, treeQuery: $treeQuery, treeExpansion: treeExpansion,
-                         projectRailWidth: projectNamesExpanded ? 168 : 48)
-            }
+            GeometryReader { geometry in workspace(width: geometry.size.width) }
             .overlay(alignment: .top) { TopNotices(model: model) }
             .overlay(alignment: .bottomTrailing) { FloatingAssist(model: model) }
             .overlay(alignment: .bottomTrailing) { TourCard(model: model) }
@@ -256,6 +252,20 @@ private struct FolmiMain: View {
                 }
             }
         } else { WelcomeView(model: model) }
+    }
+
+    private func workspace(width: CGFloat) -> some View {
+        let graphite = model.theme == .terrazzo
+        let inset = graphite ? model.theme.style.paneGap : 0
+        let expandedByDefault = graphite && width >= 1180
+        let expansion = Binding(get: { projectNamesExpanded ?? expandedByDefault }, set: { projectNamesExpanded = $0 })
+        return HStack(spacing: 0) {
+            ProjectRail(model: model, expanded: expansion)
+                .padding(.leading, inset)
+                .padding(.vertical, inset)
+            PaneHost(model: model, tracker: paneTracker, sizes: paneSizes, treeQuery: $treeQuery, treeExpansion: treeExpansion,
+                     projectRailWidth: Double(ProjectRail.width(expanded: expansion.wrappedValue) + inset))
+        }
     }
 }
 
@@ -293,6 +303,22 @@ private struct ProjectRail: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
+        Group {
+            if model.theme == .terrazzo { controls.modifier(FolmiCardShape(focused: false)) }
+            else { controls.folmiSurface(.rail) }
+        }
+        .confirmationDialog("从项目列表移除「\(removing?.name ?? "")」？", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            presenting: removing) { project in
+            Button("移除", role: .destructive) { model.removeProject(project.rootPath) }
+            Button("取消", role: .cancel) {}
+        } message: { project in
+            Text(project.rootPath == model.repositoryURL?.path
+                 ? "会先切换到另一个项目。只从 Folmi 的列表移除，不会删除磁盘上的文件；这个项目的审阅评论会一起清掉。"
+                 : "只从 Folmi 的列表移除，不会删除磁盘上的文件；这个项目的审阅评论会一起清掉。")
+        }
+    }
+
+    private var controls: some View {
         VStack(spacing: 8) {
             Button { withAnimation(reduceMotion ? nil : Motion.layout) { expanded.toggle() } } label: {
                 RailRowLabel(symbol: "sidebar.left", title: "项目", expanded: expanded)
@@ -351,20 +377,10 @@ private struct ProjectRail: View {
         }
         .padding(.vertical, 8).padding(.horizontal, 8)
         .frame(width: ProjectRail.openContentWidth + 16)
-        .frame(width: expanded ? ProjectRail.openContentWidth + 16 : 48, alignment: .leading)
+        .frame(width: Self.width(expanded: expanded), alignment: .leading)
         .frame(maxHeight: .infinity)
         .clipped()
         .contentShape(Rectangle())
-        .folmiSurface(.rail)
-        .confirmationDialog("从项目列表移除「\(removing?.name ?? "")」？", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-                            presenting: removing) { project in
-            Button("移除", role: .destructive) { model.removeProject(project.rootPath) }
-            Button("取消", role: .cancel) {}
-        } message: { project in
-            Text(project.rootPath == model.repositoryURL?.path
-                 ? "会先切换到另一个项目。只从 Folmi 的列表移除，不会删除磁盘上的文件；这个项目的审阅评论会一起清掉。"
-                 : "只从 Folmi 的列表移除，不会删除磁盘上的文件；这个项目的审阅评论会一起清掉。")
-        }
     }
 
     /// One project in the rail; a worktree of the project above it is drawn with a branch mark and its branch name.
@@ -411,6 +427,7 @@ private struct ProjectRail: View {
 
     /// The rail's rows are always this wide; closing the rail clips them to the icon column.
     static let openContentWidth: CGFloat = 152
+    static func width(expanded: Bool) -> CGFloat { expanded ? openContentWidth + 16 : 48 }
 }
 
 /// Every rail row keeps its icon in one 28-point column, centered in the collapsed rail, so nothing shifts sideways

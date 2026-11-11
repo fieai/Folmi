@@ -434,6 +434,12 @@ struct ProjectFileTreeView: View {
         // Return renames the selected row and ⌘⌫ deletes it, as in VS Code.
         .onKeyPress(.return) { act(onRename) }
         .onKeyPress(keys: [.delete]) { press in press.modifiers == .command ? act(onDelete) : .ignored }
+        .onKeyPress("c", phases: .down) { press in
+            guard press.modifiers == .command, let root, let path = selection ?? selectedPath,
+                  visibleRows.contains(where: { $0.node?.path == path }) else { return .ignored }
+            if !FileActionsMenu.copyFiles([root.appendingPathComponent(path)]) { NSSound.beep() }
+            return .handled
+        }
         .onAppear { seedExpansion() }
         .onChange(of: nodes) { _, _ in seedExpansion() }
         .onChange(of: query) { _, _ in expansion.searchCollapsedPaths.removeAll() }

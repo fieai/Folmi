@@ -5,6 +5,23 @@ import FolmiCore
 @testable import Folmi
 
 final class ChangeListTests: XCTestCase {
+    @MainActor
+    func testCopyFilesWritesFileURLsForFinderAndKeepsClipboardOnMissingFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = ["a space.txt", "改动.swift"].map { directory.appendingPathComponent($0) }
+        for url in urls { try Data().write(to: url) }
+        let clipboard = NSPasteboard.withUniqueName()
+        defer { clipboard.releaseGlobally() }
+
+        XCTAssertTrue(FileActionsMenu.copyFiles(urls, to: clipboard))
+        let copied = clipboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        XCTAssertEqual(copied?.map(\.path), urls.map(\.path))
+        XCTAssertFalse(FileActionsMenu.copyFiles([urls[0], directory.appendingPathComponent("deleted.txt")], to: clipboard))
+        XCTAssertEqual(clipboard.pasteboardItems?.count, 2)
+    }
+
     func testGroupingKeepsFileAndFolderAtTheSamePath() {
         let deleted = FileChange(path: "docs", indexCode: "D", worktreeCode: ".")
         let added = FileChange(path: "docs/reference/guide.md", indexCode: "A", worktreeCode: ".")
@@ -39,7 +56,9 @@ final class ChangeListTests: XCTestCase {
         model.snapshot = try await repository.load()
         model.selectFiles([path], in: .working)
 
-        let host = NSHostingView(rootView: HostedChangesPane(model: model))
+        let clipboard = NSPasteboard.withUniqueName()
+        defer { clipboard.releaseGlobally() }
+        let host = NSHostingView(rootView: HostedChangesPane(model: model, clipboard: clipboard))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 720),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -96,6 +115,12 @@ final class ChangeListTests: XCTestCase {
         table.selectRowIndexes(IndexSet(integer: table.numberOfRows - 1), byExtendingSelection: false)
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(model.selectedFileIDs, [path])
+        window.makeFirstResponder(table)
+        window.sendEvent(try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "c",
+            charactersIgnoringModifiers: "c", isARepeat: false, keyCode: 8)))
+        let copied = clipboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        XCTAssertEqual(copied?.map(\.path), [demo.root.appendingPathComponent(path).path])
         model.toggleStageSelectedFiles()
         let deadline = Date().addingTimeInterval(5)
         while model.busy && Date() < deadline { try await Task.sleep(for: .milliseconds(25)) }
@@ -108,7 +133,8 @@ final class ChangeListTests: XCTestCase {
 
     private struct HostedChangesPane: View {
         let model: FolmiModel
+        let clipboard: NSPasteboard
         @State private var groupByFolder = false
-        var body: some View { ChangesPane(model: model, groupByFolder: $groupByFolder) }
+        var body: some View { ChangesPane(model: model, groupByFolder: $groupByFolder, filePasteboard: clipboard) }
     }
 }

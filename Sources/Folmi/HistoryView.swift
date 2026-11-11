@@ -12,6 +12,8 @@ struct HistoryView: View {
     @State private var branchFrom: CommitNode?
     @State private var branchName = ""
     @State private var historyQuery = ""
+    @State private var continuous = false
+    @State private var diffSearchRequest = 0
 
     private var filteredHistory: [CommitNode] { HistoryFilter.matches(model.history, query: historyQuery) }
 
@@ -21,6 +23,13 @@ struct HistoryView: View {
             detail.frame(minHeight: 160)
         }
         .background(Color.theme(theme, \.card))
+        .onKeyPress("f", phases: .down) { press in
+            guard press.modifiers == .command, continuous,
+                  model.commitDetail?.id == model.selectedCommitID,
+                  model.commitDetail?.files.isEmpty == false else { return .ignored }
+            diffSearchRequest += 1
+            return .handled
+        }
         .sheet(item: $rewording) { detail in
             RewordSheet(text: $rewordText, onCancel: { rewording = nil },
                         onSave: { model.rewordCommit(detail.id, message: rewordText); rewording = nil })
@@ -173,7 +182,8 @@ struct HistoryView: View {
     // MARK: Detail
 
     @ViewBuilder private var detail: some View {
-        if let detail = model.commitDetail, let commit = model.history.first(where: { $0.id == detail.id }) {
+        if let detail = model.commitDetail, detail.id == model.selectedCommitID,
+           let commit = model.history.first(where: { $0.id == detail.id }) {
             HSplitView {
                 VStack(alignment: .leading, spacing: 0) {
                     if let base = model.compareBaseID, base != detail.id {
@@ -186,8 +196,15 @@ struct HistoryView: View {
                                         onBranch: { startBranch(commit) })
                     }
                     Divider()
-                    List(selection: Binding(get: { model.selectedCommitFile },
-                                            set: { path in if let file = detail.files.first(where: { $0.path == path }) { model.selectCommitFile(file) } })) {
+                    ThemedSegmented(options: [(false, "按文件"), (true, "连续查看")], selection: $continuous)
+                        .controlSize(.small)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .accessibilityIdentifier("history-diff-mode")
+                    List(selection: Binding(get: { model.selectedCommitFile }, set: { path in
+                        guard let file = detail.files.first(where: { $0.path == path }) else { return }
+                        if continuous { model.selectedCommitFile = file.path }
+                        else { model.selectCommitFile(file) }
+                    })) {
                         ForEach(detail.files) { file in
                             HStack(spacing: 6) {
                                 Text(file.status).themedFont(.caption2.monospaced().weight(.semibold), points: 10)
@@ -208,31 +225,45 @@ struct HistoryView: View {
                 }
                 .frame(minWidth: 220, idealWidth: 280, maxWidth: 420)
 
-                GeometryReader { geometry in
-                    ScrollView {
-                        if let diff = model.commitFileDiff, diff.file.path == model.selectedCommitFile {
-                            SideBySideFile(
-                                diff: diff, selected: [], busy: false, columnWidth: max(180, (geometry.size.width - 1) / 2),
-                                onToggleLine: { _, _ in }, onApplyHunk: { _, _ in }, onApplySelection: { _, _ in },
-                                onStageFile: { _ in }, onUnstageFile: { _ in }, onEditFile: { _ in },
-                                comments: [], onComment: { _, _, _ in }, onDeleteComment: { _ in },
-                                showsHeader: false, allowsLineSelection: false, anchorPrefix: detail.id + "#",
-                                readOnly: true, sideTitles: sideTitles(detail: detail, commit: commit),
-                                unified: model.unifiedDiff,
-                                previewHeight: max(ChangePreview.defaultHeight, geometry.size.height - 60))
-                                .id(detail.id + diff.file.path)
-                        } else if detail.files.isEmpty {
-                            Text("这个提交和父提交没有文件差异").themedFont(.caption, points: 10).foregroundStyle(.secondary).padding(20)
-                        } else {
-                            ProgressView().controlSize(.small).padding(20)
-                        }
-                    }
-                }
-                .frame(minWidth: 300)
+                diffPane(detail: detail, commit: commit).frame(minWidth: 300)
+            }
+            .onChange(of: continuous) { _, enabled in
+                guard !enabled, model.commitFileDiff?.file.path != model.selectedCommitFile,
+                      let file = detail.files.first(where: { $0.path == model.selectedCommitFile }) else { return }
+                model.selectCommitFile(file)
             }
         } else {
             Text(model.history.isEmpty ? "" : "选择一个提交查看详情").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder private func diffPane(detail: CommitDetail, commit: CommitNode) -> some View {
+        let scope = HistoryDiffScope(commit: detail.id, base: model.compareBaseID)
+        let titles = sideTitles(detail: detail, commit: commit)
+        GeometryReader { geometry in
+            let unified = model.diffLayout.usesUnified(width: geometry.size.width)
+            let columnWidth = max(180, (geometry.size.width - 1) / 2)
+            if detail.files.isEmpty {
+                Text("这两个版本之间没有文件差异").themedFont(.caption, points: 10)
+                    .foregroundStyle(.secondary).padding(20)
+            } else if continuous, let repository = model.repository {
+                HistoryDiffSequence(repository: repository, scope: scope, files: detail.files,
+                                    selectedPath: model.selectedCommitFile, sideTitles: titles,
+                                    unified: unified, columnWidth: columnWidth,
+                                    initiallyFocused: !focused, searchRequestID: diffSearchRequest)
+                    .id(scope)
+            } else {
+                ScrollView {
+                    if let diff = model.commitFileDiff, diff.file.path == model.selectedCommitFile {
+                        SideBySideFile.history(diff, sideTitles: titles, unified: unified, columnWidth: columnWidth,
+                                               previewHeight: max(ChangePreview.defaultHeight, geometry.size.height - 60))
+                            .id(detail.id + diff.file.path)
+                    } else {
+                        ProgressView().controlSize(.small).padding(20)
+                    }
+                }
+            }
         }
     }
 

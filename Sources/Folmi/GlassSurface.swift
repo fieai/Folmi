@@ -42,7 +42,6 @@ struct FolmiSurface: ViewModifier {
 
     /// Solid fallback replaces the fill as well as dropping the blur, rather than leaving a see-through color.
     private var glass: Bool { theme.usesGlass(requested: glassEnabled, reduceTransparency: reduceTransparency, increaseContrast: contrast == .increased) }
-    private var stoneLight: Bool { theme == .terrazzo && colorScheme == .light && contrast != .increased }
     /// Callers give the flat radius; square themes drop it and lifted themes round a little more.
     private var radius: CGFloat {
         guard cornerRadius > 0 else { return 0 }
@@ -55,15 +54,12 @@ struct FolmiSurface: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background { fill }
-            .overlay { if glass || stoneLight || (role == .popover && (theme.style.isSquare || theme == .terrazzo)) { edge.allowsHitTesting(false) } }
+            .overlay { if glass || (role == .popover && (theme.style.isSquare || theme == .terrazzo)) { edge.allowsHitTesting(false) } }
     }
 
     @ViewBuilder private var fill: some View {
         let base = Color.theme(theme, role == .rail || role == .status ? \.canvas : \.header)
-        if stoneLight, role == .navigation || role == .header {
-            base.overlay(LinearGradient(colors: [.white.opacity(0.4), .clear], startPoint: .top, endPoint: .bottom))
-                .clipShape(shape)
-        } else if theme == .terrazzo, role == .popover {
+        if theme == .terrazzo, role == .popover {
             base.clipShape(shape)
                 .shadow(color: .black.opacity(colorScheme == .dark ? 0.24 : 0.10), radius: 4, y: 2)
         } else if !glass {
@@ -143,16 +139,14 @@ struct FolmiCardShape: ViewModifier {
             .clipShape(shape)
             .overlay {
                 ZStack {
-                    if !style.borderless || contrast == .increased {
-                        shape.strokeBorder(.themed(.border), lineWidth: min(1, style.borderWidth))
-                    }
+                    shape.strokeBorder(.themed(.border), lineWidth: min(1, style.borderWidth))
                     if focused {
                         // Focus belongs to the header; the reading surface keeps a quiet boundary.
                         FocusLine(sweep: style.focusSweep && !reduceMotion, style: .themed(.accent, opacity: style.focusLineOpacity))
                             .frame(height: style.focusLineWidth).frame(maxHeight: .infinity, alignment: .top)
                             .clipShape(shape)
                     }
-                    if !focused, !style.isSquare, glass || isLifted(style) || (theme == .terrazzo && !dark && contrast != .increased) {
+                    if !focused, !style.isSquare, glass || isLifted(style) {
                         // The inner top highlight of a solid slab.
                         shape.inset(by: 1).strokeBorder(
                             LinearGradient(colors: [Color.white.opacity(dark ? (isLifted(style) ? 0.07 : 0.06) : 0.5), .clear],
@@ -179,7 +173,7 @@ struct FolmiCardShape: ViewModifier {
                 case .soft:
                     if theme == .terrazzo {
                         shape.fill(Color.theme(theme, \.card))
-                            .shadow(color: .black.opacity(dark ? 0.22 : 0.12), radius: dark ? 3 : 16, y: dark ? 1 : 8)
+                            .shadow(color: .black.opacity(dark ? 0.22 : 0.055), radius: dark ? 3 : 4, y: dark ? 1 : 2)
                     } else if glass {
                         shape.fill(Color.theme(theme, \.card))
                             .shadow(color: .black.opacity(dark ? 0.3 : 0.08), radius: 6, y: 2)

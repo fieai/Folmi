@@ -154,8 +154,9 @@ struct WorkspacePreferences: Codable, Equatable {
     var glassSurfaces: Bool = true
     /// Markdown diffs shown rendered (with old blocks struck through) instead of as source lines.
     var markdownDiffRendered: Bool = true
-    /// Source diffs as one column (unified) instead of side by side.
+    /// Legacy preference, kept so older versions of Folmi can still read the workspace.
     var unifiedDiff: Bool = false
+    var diffLayout: DiffLayout?
     /// Hunks that only change whitespace are folded to one line (still reviewed and staged like any other).
     var foldWhitespace: Bool = false
     /// 琥珀's mascot moves (AI tab, done page); off leaves it still. The status bar mascot is always still.
@@ -169,7 +170,7 @@ struct WorkspacePreferences: Codable, Equatable {
     /// The global shortcut that opens 随手记.
     var ideaHotKey: IdeaHotKey = .standard
 
-    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, editorLineBlame, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, foldWhitespace, companionMotion, ideaHotKey }
+    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, editorLineBlame, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, diffLayout, foldWhitespace, companionMotion, ideaHotKey }
 
     init(version: Int = 1, projects: [ProjectPreferences] = [], selectedProjectPath: String? = nil,
          showTerminal: Bool = false, editorFontSize: Double = 13, appearance: FolmiAppearance = .system,
@@ -208,6 +209,7 @@ struct WorkspacePreferences: Codable, Equatable {
         glassSurfaces = try values.decodeIfPresent(Bool.self, forKey: .glassSurfaces) ?? true
         markdownDiffRendered = (try? values.decodeIfPresent(Bool.self, forKey: .markdownDiffRendered)) ?? true
         unifiedDiff = (try? values.decodeIfPresent(Bool.self, forKey: .unifiedDiff)) ?? false
+        diffLayout = try? values.decodeIfPresent(DiffLayout.self, forKey: .diffLayout)
         foldWhitespace = (try? values.decodeIfPresent(Bool.self, forKey: .foldWhitespace)) ?? false
         companionMotion = (try? values.decodeIfPresent(Bool.self, forKey: .companionMotion)) ?? true
         ideaHotKey = (try? values.decodeIfPresent(IdeaHotKey.self, forKey: .ideaHotKey)) ?? .standard

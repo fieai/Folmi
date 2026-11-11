@@ -81,29 +81,39 @@ extension FolmiModel {
 struct MarkdownDiffView: View {
     let model: FolmiModel
     let diff: FileDiff
-    @State private var page: MarkdownDiffPage.Page?
+    @State private var rendered: (key: String, page: MarkdownDiffPage.Page, text: String)?
     @State private var failed = false
+    private var key: String { "\(diff.area)\0\(diff.file.path)\0\(diff.fingerprint)" }
 
     var body: some View {
         let _ = PerfLog.body("MarkdownDiffView")
         ZStack {
-            if let page {
+            if let rendered, rendered.key == key {
+                let page = rendered.page
                 StaticReaderView(html: page.html, marks: page.marks, olds: page.olds, theme: model.theme,
-                                 presentation: model.editorPresentation, root: model.repositoryURL)
+                                 presentation: model.editorPresentation, root: model.repositoryURL,
+                                 onEditPoint: diff.canEditPoint ? { line in
+                                     let hunk = diff.hunks.last { (DiffEditPoint.inHunk($0)?.line ?? Int.max) <= line }
+                                     let point = DiffEditPoint(line: line, hunk: hunk)
+                                     Task { await model.editDiffPoint(point, in: diff, renderedText: rendered.text) }
+                                 } : nil,
+                                 editReveal: model.diffEditReveal?.key == diff.allChangesKey ? model.diffEditReveal : nil)
             } else if failed {
                 Text("无法读取这份文件的两个版本，请切到「源码」查看。").foregroundStyle(.secondary)
             } else {
                 ProgressView()
             }
         }
-        .task(id: "\(diff.area)\0\(diff.file.path)\0\(diff.fingerprint)") {
+        .task(id: key) {
+            failed = false
+            let key = self.key
             guard let texts = await model.markdownDiffTexts(diff) else { failed = true; return }
             let path = diff.file.path
             let built = await Task.detached(priority: .userInitiated) {
                 MarkdownDiffPage.build(path: path, base: texts.base, current: texts.current)
             }.value
             guard !Task.isCancelled else { return }
-            page = built
+            rendered = (key, built, texts.current)
         }
     }
 }

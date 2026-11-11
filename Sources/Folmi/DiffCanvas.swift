@@ -24,33 +24,38 @@ final class DiffRowsCanvas: NSView {
     /// One column (like `git diff`): context once with both line numbers, each change block's removed lines before
     /// its added ones. Selection, line IDs and staging are the same as side by side.
     var unified = false {
-        didSet { if unified != oldValue { rebuildUnified(); measureColumns(); clampOffsets(); followViewport(); redrawAll() } }
+        didSet {
+            if unified != oldValue {
+                rebuildUnified(); measureColumns(); clampOffsets(); revealSearchHit(); followViewport(); redrawAll()
+            }
+        }
     }
     struct UnifiedRow {
         let cell: AlignedDiffCell
         let oldNumber: Int?
         let newNumber: Int?
+        let paired: AlignedDiffCell?
     }
     private(set) var unifiedRows: [UnifiedRow] = []
     var displayCount: Int { unified ? unifiedRows.count : rows.count }
     private func rebuildUnified() { unifiedRows = unified ? Self.unify(rows) : [] }
 
     /// A row that is the same line on both sides (context, or a note outside a change block).
-    private static func isShared(_ row: AlignedDiffRow) -> Bool {
+    nonisolated private static func isShared(_ row: AlignedDiffRow) -> Bool {
         guard let old = row.old, let new = row.new else { return false }
         return old.line.id == new.line.id && old.line.kind != .addition && old.line.kind != .deletion
     }
-    static func unify(_ rows: [AlignedDiffRow]) -> [UnifiedRow] {
+    nonisolated static func unify(_ rows: [AlignedDiffRow]) -> [UnifiedRow] {
         var result: [UnifiedRow] = [], removed: [UnifiedRow] = [], added: [UnifiedRow] = []
         result.reserveCapacity(rows.count)
         func flush() { result += removed; result += added; removed.removeAll(); added.removeAll() }
         for row in rows {
             if isShared(row), let old = row.old, let new = row.new {
                 flush()
-                result.append(UnifiedRow(cell: new, oldNumber: old.lineNumber, newNumber: new.lineNumber))
+                result.append(UnifiedRow(cell: new, oldNumber: old.lineNumber, newNumber: new.lineNumber, paired: nil))
             } else {
-                if let old = row.old { removed.append(UnifiedRow(cell: old, oldNumber: old.lineNumber, newNumber: nil)) }
-                if let new = row.new { added.append(UnifiedRow(cell: new, oldNumber: nil, newNumber: new.lineNumber)) }
+                if let old = row.old { removed.append(UnifiedRow(cell: old, oldNumber: old.lineNumber, newNumber: nil, paired: row.new)) }
+                if let new = row.new { added.append(UnifiedRow(cell: new, oldNumber: nil, newNumber: new.lineNumber, paired: row.old)) }
             }
         }
         flush()
@@ -63,8 +68,18 @@ final class DiffRowsCanvas: NSView {
     }
     var rowsKey = ""
     var selected: Set<Int> = [] { didSet { if selected != oldValue { redrawAll() } } }
+    var previewLines: Set<Int>? { didSet { if previewLines != oldValue { redrawAll() } } }
     var canSelect = false { didSet { if canSelect != oldValue { redrawAll() } } }
     var onToggle: ((Int) -> Void)?
+    var onEditPoint: ((Int) -> Void)?
+    var searchHit: DiffSearchHit? {
+        didSet {
+            guard searchHit != oldValue else { return }
+            revealSearchHit()
+            redrawAll()
+        }
+    }
+    private var pendingSearchReveal = false
 
     /// Horizontal text offset of the old (0) and new (1) side.
     private(set) var offsets: [CGFloat] = [0, 0]
@@ -117,6 +132,7 @@ final class DiffRowsCanvas: NSView {
     override func layout() {
         super.layout()
         clampOffsets()
+        if pendingSearchReveal { revealSearchHit() }
         followViewport()
     }
 
@@ -195,6 +211,25 @@ final class DiffRowsCanvas: NSView {
         redrawAll()
     }
 
+    private func revealSearchHit() {
+        pendingSearchReveal = false
+        guard let hit = searchHit else { return }
+        let textWidth = columnWidth - DiffCanvasMetrics.textInset - (unified ? DiffCanvasMetrics.numberWidth : 0)
+        guard textWidth > 0 else { pendingSearchReveal = true; return }
+        let index = unified ? unifiedRows.firstIndex { $0.cell.line.id == hit.lineID } : hit.rowIndex(in: rows, unified: false)
+        guard let row = index else { return }
+        let side = !unified && rows[row].old?.line.id != hit.lineID ? 1 : 0
+        guard let line = cell(row: row, side: side)?.line else { return }
+        let text = SideBySideDisplayBudget.clippedText(line.text).text as NSString
+        guard NSMaxRange(hit.range) <= text.length else { return }
+        let x = (text.substring(to: hit.range.location) as NSString).size(withAttributes: [.font: Self.font]).width
+        let right = (text.substring(to: NSMaxRange(hit.range)) as NSString).size(withAttributes: [.font: Self.font]).width
+        if x < offsets[side] || right > offsets[side] + textWidth {
+            offsets[side] = min(maximumOffset(side), max(0, x - textWidth / 4))
+            redrawAll()
+        }
+    }
+
     /// Row and side under a point in canvas coordinates.
     func hit(_ point: NSPoint) -> (row: Int, side: Int, inCheckbox: Bool)? {
         let row = Int(floor(point.y / DiffCanvasMetrics.rowHeight))
@@ -221,7 +256,16 @@ final class DiffRowsCanvas: NSView {
             reference.target = self; reference.representedObject = String(number)
             menu.addItem(reference)
         }
+        if onEditPoint != nil, cell.line.kind == .addition || cell.line.kind == .deletion {
+            menu.addItem(.separator())
+            let edit = NSMenuItem(title: "编辑这一处", action: #selector(editPoint(_:)), keyEquivalent: "")
+            edit.target = self; edit.representedObject = cell.line.id
+            menu.addItem(edit)
+        }
         return menu
+    }
+    @objc private func editPoint(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? Int { onEditPoint?(id) }
     }
     @objc private func copyLine(_ sender: NSMenuItem) {
         guard let text = sender.representedObject as? String else { return }
@@ -256,7 +300,7 @@ final class DiffRowsPainter: NSView {
         if canvas.unified {
             for row in first...last {
                 let line = canvas.unifiedRows[row]
-                drawCell(line.cell, side: 0, x: 0, y: CGFloat(row) * height - top, width: width, canvas: canvas,
+                drawCell(line.cell, paired: line.paired, side: 0, x: 0, y: CGFloat(row) * height - top, width: width, canvas: canvas,
                          numbers: (line.oldNumber, line.newNumber))
             }
             return
@@ -266,7 +310,8 @@ final class DiffRowsPainter: NSView {
             NSGraphicsContext.saveGraphicsState()
             NSRect(x: x, y: dirtyRect.minY, width: width, height: dirtyRect.height).clip()
             for row in first...last {
-                drawCell(canvas.cell(row: row, side: side), side: side, x: x, y: CGFloat(row) * height - top, width: width, canvas: canvas)
+                drawCell(canvas.cell(row: row, side: side), paired: canvas.cell(row: row, side: 1 - side),
+                         side: side, x: x, y: CGFloat(row) * height - top, width: width, canvas: canvas)
             }
             NSGraphicsContext.restoreGraphicsState()
         }
@@ -275,19 +320,41 @@ final class DiffRowsPainter: NSView {
     }
 
     /// `numbers`: the unified layout's old and new line numbers, drawn in two columns before the sign.
-    private func drawCell(_ cell: AlignedDiffCell?, side: Int, x: CGFloat, y: CGFloat, width: CGFloat, canvas: DiffRowsCanvas,
+    private func drawCell(_ cell: AlignedDiffCell?, paired: AlignedDiffCell?, side: Int, x: CGFloat, y: CGFloat, width: CGFloat, canvas: DiffRowsCanvas,
                           numbers: (old: Int?, new: Int?)? = nil) {
         let height = DiffCanvasMetrics.rowHeight
         let rowRect = NSRect(x: x, y: y, width: width, height: height)
         guard let cell else {
-            ThemePalette.current.foreground.withAlphaComponent(0.035).setFill(); rowRect.fill(); return
+            let palette = ThemePalette.current
+            palette.foreground.withAlphaComponent(0.035).setFill()
+            rowRect.fill()
+            if paired?.line.kind == .addition || paired?.line.kind == .deletion {
+                NSGraphicsContext.saveGraphicsState()
+                rowRect.clip()
+                let stripes = NSBezierPath()
+                for start in stride(from: rowRect.minX - height, to: rowRect.maxX, by: 9) {
+                    stripes.move(to: NSPoint(x: start, y: rowRect.maxY))
+                    stripes.line(to: NSPoint(x: start + height, y: rowRect.minY))
+                }
+                palette.foreground.withAlphaComponent(0.075).setStroke()
+                stripes.lineWidth = 1
+                stripes.stroke()
+                NSGraphicsContext.restoreGraphicsState()
+            }
+            return
         }
         let kind = cell.line.kind
         let changed = kind == .addition || kind == .deletion
         let isSelected = changed && canvas.selected.contains(cell.line.id)
+        let isPreviewed = changed && (canvas.previewLines.map { $0.isEmpty || $0.contains(cell.line.id) } ?? false)
         if isSelected { ThemePalette.current.accent.withAlphaComponent(0.2).setFill(); rowRect.fill() }
         else if kind == .addition { ThemePalette.current.added.withAlphaComponent(0.11).setFill(); rowRect.fill() }
         else if kind == .deletion { ThemePalette.current.removed.withAlphaComponent(0.10).setFill(); rowRect.fill() }
+        if isPreviewed {
+            ThemePalette.current.accent.withAlphaComponent(0.20).setFill(); rowRect.fill()
+            ThemePalette.current.accent.withAlphaComponent(0.85).setFill()
+            NSRect(x: x, y: y, width: 2, height: height).fill()
+        }
 
         if changed {
             let box = NSRect(x: x + 6.5, y: y + 5.5, width: 11, height: 11)
@@ -325,8 +392,24 @@ final class DiffRowsPainter: NSView {
         NSRect(x: textX, y: y, width: max(0, x + width - textX), height: height).clip()
         let text = SideBySideDisplayBudget.clippedText(cell.line.text).text as NSString
         let font = kind == .meta ? DiffRowsCanvas.metaFont : DiffRowsCanvas.font
-        text.draw(at: NSPoint(x: textX - canvas.offsets[side], y: y + (height - font.boundingRectForFont.height) / 2 + 1),
-                  withAttributes: [.font: font, .foregroundColor: kind == .meta ? ThemePalette.current.secondaryText : ThemePalette.current.foreground])
+        let palette = ThemePalette.current
+        let origin = NSPoint(x: textX - canvas.offsets[side], y: y + (height - font.boundingRectForFont.height) / 2 + 1)
+        let textAttributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: kind == .meta ? palette.secondaryText : palette.foreground]
+        let wordRanges = changed && (paired?.line.kind == .addition || paired?.line.kind == .deletion)
+            ? DiffWords.changedRanges(in: text as String, comparedTo: SideBySideDisplayBudget.clippedText(paired?.line.text ?? "").text)
+            : []
+        let hit = canvas.searchHit.flatMap { $0.lineID == cell.line.id ? $0.range : nil }
+        if wordRanges.isEmpty, hit == nil {
+            text.draw(at: origin, withAttributes: textAttributes)
+        } else {
+            let styled = NSMutableAttributedString(string: text as String, attributes: textAttributes)
+            let wordColor = kind == .addition ? palette.added : palette.removed
+            for range in wordRanges { styled.addAttribute(.backgroundColor, value: wordColor.withAlphaComponent(0.32), range: range) }
+            if let hit, NSMaxRange(hit) <= styled.length {
+                styled.addAttribute(.backgroundColor, value: palette.accent.withAlphaComponent(0.6), range: hit)
+            }
+            styled.draw(at: origin)
+        }
         NSGraphicsContext.restoreGraphicsState()
     }
 
@@ -364,15 +447,21 @@ struct DiffRowsView: NSViewRepresentable {
     let selected: Set<Int>
     let canSelect: Bool
     var unified = false
+    var searchHit: DiffSearchHit?
+    var previewLines: Set<Int>?
     let onToggle: (Int) -> Void
+    var onEditPoint: ((Int) -> Void)?
 
     func makeNSView(context: Context) -> DiffRowsCanvas { DiffRowsCanvas(frame: .zero) }
     func updateNSView(_ canvas: DiffRowsCanvas, context: Context) {
         canvas.unified = unified
         if canvas.rowsKey != rowsKey { canvas.rowsKey = rowsKey; canvas.rows = rows }
         canvas.selected = selected
+        canvas.previewLines = previewLines
         canvas.canSelect = canSelect
+        canvas.searchHit = searchHit
         canvas.onToggle = onToggle
+        canvas.onEditPoint = onEditPoint
         canvas.window?.invalidateCursorRects(for: canvas)
     }
 }

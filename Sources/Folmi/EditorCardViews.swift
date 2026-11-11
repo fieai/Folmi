@@ -98,13 +98,19 @@ struct ReviewCommentsMenu: View {
             let sendable = comments.filter { !$0.outdated }, outdated = comments.filter(\.outdated)
             Menu {
                 Group {
+                    Button("加到 \(model.agentTitle) 输入框", action: model.handReviewCommentsToAgent)
+                        .disabled(model.agentSession?.isReadOnly == true)
+                        .help(model.agentSession?.isReadOnly == true ? "请先切到可发送消息的会话" : "评论和选中内容会一起加到草稿")
                     Button("发送到终端（不回车）", action: model.sendReviewCommentsToTerminal)
                     Button("复制到剪贴板", action: model.copyReviewComments)
                 }
                 .disabled(sendable.isEmpty)
                 Divider()
                 ForEach(sendable) { comment in
-                    Button("删除 \(comment.reference) · \(comment.body.prefix(24))") { model.deleteReviewComment(comment.id) }
+                    Menu("\(comment.reference) · \(comment.body.prefix(24))") {
+                        Button("跳到原处") { model.revealReviewComment(comment.id) }.disabled(model.busy)
+                        Button("删除评论", role: .destructive) { model.deleteReviewComment(comment.id) }
+                    }
                 }
                 if !outdated.isEmpty {
                     Section("已过时（不会发送）") {
@@ -121,7 +127,7 @@ struct ReviewCommentsMenu: View {
                       + (outdated.isEmpty ? "" : "（\(outdated.count) 条已过时）"), systemImage: "text.bubble")
             } primaryAction: { model.sendReviewCommentsToTerminal() }
             .menuStyle(.borderedButton).controlSize(.small).fixedSize()
-            .help("把审查评论粘贴到本项目终端，不按回车（⌥⌘↩）")
+            .help("点击发送到终端（⌥⌘↩），也可以从菜单跳到评论或加到 AI 输入框")
         }
     }
 }
@@ -186,11 +192,13 @@ struct DiffPane: View {
                                onComment: { model.addReviewComment($0, hunk: $1, in: $2) },
                                onDeleteComment: model.deleteReviewComment,
                                onExplain: model.explainHunk, onHandToAgent: model.handHunkToAgent, agentTitle: model.agentTitle,
-                               unified: model.unifiedDiff)
+                               layout: model.diffLayout, commentReveal: model.reviewCommentReveal,
+                               onEditPoint: { point, diff in Task { await model.editDiffPoint(point, in: diff) } },
+                               editReveal: model.diffEditReveal)
     }
     /// One Markdown file, shown rendered unless the user switched this view to source.
     private var renderedMarkdown: FileDiff? {
-        guard model.markdownDiffRendered, model.fileDiffs.count == 1, let diff = model.fileDiffs.first,
+        guard model.fileDiffs.count == 1, let diff = model.fileDiffs.first, model.showsRenderedMarkdownDiff(diff),
               EditorWorkspace.isMarkdownPath(diff.file.path), !diff.rawPatch.contains("Binary files ") else { return nil }
         return diff
     }
@@ -202,7 +210,7 @@ struct DiffToolbar: View {
     let model: FolmiModel
     /// The one file shown, or nil when several are selected.
     let diff: FileDiff?
-    private var rendered: Bool { model.markdownDiffRendered && diff.map { EditorWorkspace.isMarkdownPath($0.file.path) } == true }
+    private var rendered: Bool { diff.map { model.showsRenderedMarkdownDiff($0) && EditorWorkspace.isMarkdownPath($0.file.path) } == true }
     var body: some View {
         let _ = PerfLog.body("DiffToolbar")
         HStack(spacing: 8) {
@@ -219,11 +227,18 @@ struct DiffToolbar: View {
                     .controlSize(.small).disabled(model.busy)
             }
             if let diff, diff.file.worktreeCode != "D", diff.file.indexCode != "D" {
-                Button { model.editBeside(diff) } label: {
+                Button {
+                    let selected = model.selectedLines[diff.file.path] ?? []
+                    if diff.canEditPoint, let hunk = diff.hunks.first(where: { $0.lines.contains { selected.contains($0.id) } }),
+                       let point = DiffEditPoint.inHunk(hunk, selected: selected) {
+                        Task { await model.editDiffPoint(point, in: diff) }
+                    } else { model.editBeside(diff) }
+                } label: {
                     Label("在旁边编辑", systemImage: "rectangle.split.2x1").labelStyle(.titleAndIcon)
                 }
                 .controlSize(.small)
-                .help("在差异旁边打开这个文件，跳到第一处改动，边看边改")
+                .disabled(model.busy)
+                .help("在差异旁边打开文件，跳到选中的改动；未选行时跳到第一处改动")
             }
             if let diff, rendered {
                 Button(diff.area == .staged ? "取消暂存" : "暂存文件") {
@@ -233,16 +248,16 @@ struct DiffToolbar: View {
             }
             if let diff, EditorWorkspace.isMarkdownPath(diff.file.path) {
                 ThemedSegmented(options: [(true, "渲染"), (false, "源码")],
-                                selection: Binding(get: { model.markdownDiffRendered }, set: { model.markdownDiffRendered = $0 }))
+                                selection: Binding(get: { rendered }, set: {
+                                    model.reviewCommentReveal = nil
+                                    model.markdownDiffRendered = $0
+                                }))
                     .controlSize(.small)
                 .help("Markdown 改动按排版后的样子看，或看源码行")
             }
             if !rendered {
                 WhitespaceFoldToggle(model: model)
-                ThemedSegmented(options: [(false, "并排"), (true, "统一")],
-                                selection: Binding(get: { model.unifiedDiff }, set: { model.unifiedDiff = $0 }))
-                    .controlSize(.small)
-                .help("新旧左右并排，或合成一列（窄窗口更好读）")
+                DiffLayoutPicker(model: model)
             }
         }
         .padding(.horizontal, 12).frame(height: 34)

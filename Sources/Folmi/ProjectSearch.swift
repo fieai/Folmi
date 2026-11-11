@@ -102,8 +102,16 @@ struct ProjectSearchHit: Identifiable, Equatable, Sendable {
     let line: Int
     let column: Int
     let range: NSRange
-    let preview: String
+    let context: [ProjectSearchContextLine]
+    var preview: String { context.first { $0.line == line }?.text ?? "" }
     var id: String { "\(path):\(range.location):\(range.length)" }
+}
+
+struct ProjectSearchContextLine: Identifiable, Equatable, Sendable {
+    let line: Int
+    let text: String
+    let match: NSRange?
+    var id: Int { line }
 }
 
 struct ProjectSearchResult: Sendable {
@@ -310,10 +318,12 @@ enum ProjectTextSearch {
                 let starts = lineStarts!
                 let lineIndex = lineIndex(containing: match.location, starts: starts)
                 let firstLineBOM = lineIndex == 0 && string.character(at: 0) == 0xFEFF ? 1 : 0
+                let context = (max(0, lineIndex - 3)...min(starts.count - 1, lineIndex + 3)).map {
+                    previewLine(string, match: match, lineIndex: $0, starts: starts)
+                }
                 hits.append(ProjectSearchHit(path: path, line: lineIndex + 1,
                                              column: max(1, match.location - starts[lineIndex] + 1 - firstLineBOM),
-                                             range: match,
-                                             preview: preview(string, match: match, lineIndex: lineIndex, starts: starts)))
+                                             range: match, context: context))
                 fileHits += 1
                 let next = NSMaxRange(match)
                 searchRange = NSRange(location: next, length: string.length - next)
@@ -368,20 +378,38 @@ enum ProjectTextSearch {
         return max(0, low - 1)
     }
 
-    private static func preview(_ string: NSString, match: NSRange, lineIndex: Int, starts: [Int]) -> String {
-        let lineStart = starts[lineIndex]
+    private static func previewLine(_ string: NSString, match: NSRange, lineIndex: Int, starts: [Int]) -> ProjectSearchContextLine {
+        let lineStart = lineIndex == 0 && string.character(at: 0) == 0xFEFF ? 1 : starts[lineIndex]
         var lineEnd = lineIndex + 1 < starts.count ? starts[lineIndex + 1] : string.length
-        while lineEnd > lineStart && [UInt16(10), 13].contains(string.character(at: lineEnd - 1)) { lineEnd -= 1 }
-        var start = max(lineStart, match.location - 50)
+        while lineEnd > lineStart {
+            let character = string.character(at: lineEnd - 1)
+            if character != 10 && character != 13 { break }
+            lineEnd -= 1
+        }
+        let lineMatch = NSIntersectionRange(match, NSRange(location: lineStart, length: lineEnd - lineStart))
+        var start = lineMatch.length > 0 ? max(lineStart, lineMatch.location - 50) : lineStart
         var end = min(lineEnd, start + 180)
         // NSString indices are UTF-16; do not cut the surrogate pair of an emoji in the preview.
         if start > lineStart, start < string.length, (0xDC00...0xDFFF).contains(string.character(at: start)),
            (0xD800...0xDBFF).contains(string.character(at: start - 1)) { start -= 1 }
         if end > start, end < string.length, (0xDC00...0xDFFF).contains(string.character(at: end)),
            (0xD800...0xDBFF).contains(string.character(at: end - 1)) { end -= 1 }
-        let excerpt = string.substring(with: NSRange(location: start, length: end - start))
-            .replacingOccurrences(of: "\t", with: "  ")
-        return (start > lineStart ? "…" : "") + String(excerpt.prefix(196)) + (end < lineEnd || excerpt.count > 196 ? "…" : "")
+        func displayText(_ range: NSRange) -> String {
+            string.substring(with: range).replacingOccurrences(of: "\t", with: "  ")
+        }
+        let source = NSRange(location: start, length: end - start)
+        let excerpt = displayText(source)
+        let clipped = String(excerpt.prefix(196))
+        let leading = start > lineStart ? "…" : ""
+        let trailing = end < lineEnd || clipped != excerpt ? "…" : ""
+        let visibleMatch = NSIntersectionRange(source, lineMatch)
+        let highlight: NSRange?
+        if visibleMatch.length > 0 {
+            let before = displayText(NSRange(location: start, length: visibleMatch.location - start))
+            let length = min(displayText(visibleMatch).utf16.count, clipped.utf16.count - before.utf16.count)
+            highlight = length > 0 ? NSRange(location: leading.utf16.count + before.utf16.count, length: length) : nil
+        } else { highlight = nil }
+        return ProjectSearchContextLine(line: lineIndex + 1, text: leading + clipped + trailing, match: highlight)
     }
 
     private static func formattedBytes(_ bytes: Int) -> String {

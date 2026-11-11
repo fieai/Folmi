@@ -4,13 +4,21 @@ import Foundation
 /// pulling is fast-forward by default, and rebase or merge (for a diverged branch) need a clean work tree so that
 /// aborting a conflict puts everything back exactly as it was.
 extension GitRepository {
-    /// Fetches every remote quietly: no prompts (terminal, SSH passphrase), a time limit, no auto gc. Runs outside the
-    /// actor so a slow network never holds up reading the status. Returns false when the project has no remote.
-    public static func fetch(root: URL, environment: [String: String] = [:], timeout: TimeInterval = 90) throws -> Bool {
+    /// Fetches every remote or just a delivery target, without prompts or auto gc. Runs outside the actor so
+    /// a slow network never holds up reading the status. Returns false when fetching all with no configured remote.
+    public static func fetch(root: URL, environment: [String: String] = [:], timeout: TimeInterval = 90,
+                             target: (remote: String, branch: String)? = nil) throws -> Bool {
         var env = environment
         let probe = GitProcess(directory: root, environment: env)
-        let remotes = try probe.run(["remote"]).text.components(separatedBy: .newlines).filter { !$0.isEmpty }
-        guard !remotes.isEmpty else { return false }
+        let arguments: [String]
+        if let target {
+            arguments = ["--quiet", "--no-tags", "--", target.remote,
+                         "+refs/heads/\(target.branch):refs/remotes/\(target.remote)/\(target.branch)"]
+            env["LC_ALL"] = "C"
+        } else {
+            guard try !probe.run(["remote"]).text.isEmpty else { return false }
+            arguments = ["--all", "--prune", "--quiet"]
+        }
         // Batch mode makes ssh fail instead of asking for a passphrase; a configured ssh command is left alone.
         let configured = try probe.run(["config", "--get", "core.sshCommand"], allowFailure: true).text
         if env["GIT_SSH_COMMAND"] == nil, ProcessInfo.processInfo.environment["GIT_SSH_COMMAND"] == nil,
@@ -19,7 +27,7 @@ extension GitRepository {
         }
         env["GIT_ASKPASS"] = "/usr/bin/false"; env["SSH_ASKPASS"] = "/usr/bin/false"
         _ = try GitProcess(directory: root, environment: env)
-            .run(["-c", "gc.auto=0", "-c", "credential.interactive=never", "fetch", "--all", "--prune", "--quiet"], timeout: timeout)
+            .run(["-c", "gc.auto=0", "-c", "credential.interactive=never", "fetch"] + arguments, timeout: timeout)
         return true
     }
 

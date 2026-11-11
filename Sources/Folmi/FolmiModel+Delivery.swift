@@ -187,18 +187,18 @@ extension FolmiModel {
     /// the remote does not have yet, or a fetch that fails, is not an error: the plan says so and pushes as before.
     func fetchTarget(root: URL, remote: String, branch: String) async -> ((name: String, commit: String)?, String?) {
         let tracking = "refs/remotes/\(remote)/\(branch)"
-        let fetch = DeliveryCommand(executable: URL(fileURLWithPath: "/usr/bin/git"),
-                                    arguments: ["-c", "gc.auto=0", "fetch", "--quiet", "--no-tags", "--", remote, "+refs/heads/\(branch):\(tracking)"])
-        var environment = commandEnvironment
-        environment["GIT_ASKPASS"] = "/usr/bin/false"; environment["SSH_ASKPASS"] = "/usr/bin/false"
-        guard let result = try? await CommandRunner.run(fetch, at: root, environment: environment, timeout: 60) else {
+        let environment = commandEnvironment
+        do {
+            _ = try await Task.detached(priority: .utility) {
+                try GitRepository.fetch(root: root, environment: environment, timeout: 60, target: (remote, branch))
+            }.value
+        } catch {
+            if case let FolmiError.git(_, message) = error, message.contains("couldn't find remote ref") {
+                return (nil, "\(remote) 上还没有 \(branch) 分支")
+            }
             return (nil, "没能从 \(remote) 取回 \(branch)，没有检查远端是否有新提交")
         }
-        guard result.exitCode == 0 else {
-            if result.error.contains("couldn't find remote ref") { return (nil, "\(remote) 上还没有 \(branch) 分支") }
-            return (nil, "没能从 \(remote) 取回 \(branch)，没有检查远端是否有新提交")
-        }
-        guard let commit = try? await CommandRunner.git(["rev-parse", "--verify", "\(tracking)^{commit}"], at: root, environment: commandEnvironment) else {
+        guard let commit = try? await CommandRunner.git(["rev-parse", "--verify", "\(tracking)^{commit}"], at: root, environment: environment) else {
             return (nil, "没能读到 \(remote)/\(branch)")
         }
         return (("\(remote)/\(branch)", commit.trimmingCharacters(in: .whitespacesAndNewlines)), nil)
@@ -214,6 +214,7 @@ extension FolmiModel {
     func runDelivery() {
         guard canDeliver, let plan = deliveryPlan, let repository else { return }
         let rebaseFirst = plan.rebaseNeeded && deliveryRebaseFirst
+        let remote = deliveryRemote, targetBranch = deliveryBranch.trimmingCharacters(in: .whitespacesAndNewlines)
         busy = true
         Task {
             var delivered = false
@@ -221,7 +222,7 @@ extension FolmiModel {
                 let current = try await repository.load()
                 guard current.fingerprint == plan.fingerprint, current.head == plan.head, repositoryURL == plan.root, formSignature == plan.formSignature else { throw FolmiFailure(message: "项目、文件或提交在预检后发生变化。请重新预检，不能直接执行旧计划。") }
                 if plan.kind != .script {
-                    let endpoint = try await resolveEndpoint(root: plan.root, remote: deliveryRemote)
+                    let endpoint = try await resolveEndpoint(root: plan.root, remote: remote)
                     guard endpoint == plan.endpoint else { throw FolmiFailure(message: "远程推送地址已变化，请重新预检。") }
                 }
                 if let expected = plan.executableFingerprint,
@@ -259,11 +260,20 @@ extension FolmiModel {
                     projects[index].lastDeliveryKind = plan.kind
                     scheduleSave()
                 }
-                if delivered, plan.kind == .gerrit { await watchReview(commit: head, remote: deliveryRemote, branch: deliveryBranch.trimmingCharacters(in: .whitespacesAndNewlines), root: plan.root) }
+                if delivered, plan.kind == .gerrit { await watchReview(commit: head, remote: remote, branch: targetBranch, root: plan.root) }
+                if delivered, plan.kind == .push {
+                    // Pushing to the pinned URL bypasses Git's update of the named remote's tracking ref.
+                    let (base, problem) = await fetchTarget(root: plan.root, remote: remote, branch: targetBranch)
+                    if base == nil {
+                        let message = "提交已推送，但未能更新本地的 \(remote)/\(targetBranch) 状态。取回远端后会更新。"
+                        record("推送后取回失败", problem ?? message, isError: true)
+                        errorMessage = message
+                    }
+                }
             } catch { if !deliveryAfterRebase.contains(plan.root.path) { report(error, title: "交付失败") } else { record("交付暂停", error.localizedDescription, isError: true) } }
-            if delivered { showDelivery = false }
             deliveryPlan = nil
             do { try await reload() } catch { report(error, title: "交付后刷新失败") }
+            if delivered { showDelivery = false }
             busy = false
         }
     }

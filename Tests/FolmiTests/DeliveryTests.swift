@@ -134,20 +134,41 @@ final class DeliveryTests: XCTestCase {
         XCTAssertEqual(pushed.prefix(40), Substring(head))
     }
 
-    /// Nothing new on the remote: one click plans and pushes, no separate preview.
+    /// A push to a second remote clears the pending count without moving the branch's upstream.
     @MainActor
     func testPushIsOneClickWhenTheRemoteHasNothingNew() async throws {
         let settings = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-DeliveryOneClick-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: settings, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: settings) }
         let demo = try await DemoRepository.create()
-        defer { try? FileManager.default.removeItem(at: demo.root.deletingLastPathComponent()) }
+        let parent = demo.root.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let remote = parent.appendingPathComponent("publish.git")
+        func git(_ arguments: [String]) async throws -> String {
+            try await CommandRunner.git(arguments, at: demo.root, environment: demo.environment)
+        }
+        _ = try await git(["init", "--bare", "--quiet", "--template=", remote.path])
+        _ = try await git(["remote", "add", "publish", remote.path])
+        _ = try await git(["push", "--quiet", "-u", "demo", "main"])
+        _ = try await git(["push", "--quiet", "publish", "HEAD:refs/heads/main"])
+        _ = try await git(["add", "-A"])
+        _ = try await git(["commit", "--quiet", "-m", "本地改动"])
         let model = FolmiModel(store: WorkspaceStore(url: settings.appendingPathComponent("workspace.json")))
         model.open(demo.root, environment: demo.environment, demo: true)
         let deadline = Date().addingTimeInterval(10)
         func settle() async throws { while model.busy || model.snapshot == nil { guard Date() < deadline else { throw FolmiFailure(message: "timeout") }; try await Task.sleep(nanoseconds: 20_000_000) } }
         try await settle()
-        model.deliveryKind = .push; model.deliveryRemote = "demo"; model.deliveryBranch = "main"
+        XCTAssertEqual(model.unpushedCount, 1)
+        XCTAssertEqual(model.daySummary?.unpushed, 1)
+        let hosting = NSHostingView(rootView: DoneState(model: model))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 420), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(400))
+        let before = try ScreenText.read(hosting).replacingOccurrences(of: " ", with: "")
+        XCTAssertTrue(before.contains("1个提交没有推送"), before)
+
+        model.deliveryKind = .push; model.deliveryRemote = "publish"; model.deliveryBranch = "main"
         model.showDelivery = true
         XCTAssertNil(model.deliveryPlan)
         model.deliver()
@@ -155,8 +176,25 @@ final class DeliveryTests: XCTestCase {
         try await settle()
         XCTAssertNil(model.errorMessage)
         XCTAssertFalse(model.showDelivery)
-        let pushed = try await CommandRunner.git(["ls-remote", "demo", "refs/heads/main"], at: demo.root, environment: demo.environment)
+        let pushed = try await git(["ls-remote", "publish", "refs/heads/main"])
         XCTAssertEqual(pushed.prefix(40), Substring(model.snapshot?.head ?? "-"))
+        XCTAssertEqual(model.snapshot?.upstream, "demo/main")
+        XCTAssertEqual(model.snapshot?.ahead, 1)
+        XCTAssertEqual(model.unpushedCount, 0)
+        XCTAssertEqual(model.daySummary?.unpushed, 0)
+        XCTAssertTrue(model.isAllDone)
+        try await Task.sleep(for: .milliseconds(400))
+        let after = try ScreenText.read(hosting).replacingOccurrences(of: " ", with: "")
+        XCTAssertTrue(after.contains("都已推送"), after)
+        XCTAssertFalse(after.contains("没有推送"), after)
+
+        let board = ProjectBoard()
+        board.refresh(projects: model.projects)
+        while board.refreshing { guard Date() < deadline else { return XCTFail("项目总览刷新超时") }; try await Task.sleep(for: .milliseconds(20)) }
+        let row = try XCTUnwrap(board.rows.first)
+        XCTAssertEqual(row.ahead, 1)
+        XCTAssertEqual(row.pending, 0)
+        XCTAssertFalse(row.isTrackingSynchronized)
     }
 
     /// The push sheet starts on the upstream's remote and branch and lists that remote's branches; with no upstream a
@@ -204,6 +242,67 @@ final class DeliveryTests: XCTestCase {
 /// Reviews pushed from Folmi are checked locally after each fetch: a conflict with the target's new tip shows, a
 /// clean merge does not, and a review whose commit reached the branch stops being watched.
 final class ReviewWatchTests: XCTestCase {
+    @MainActor
+    func testGerritPushFromBranchWithoutUpstreamClearsPushPrompt() async throws {
+        let demo = try await DemoRepository.create()
+        let parent = demo.root.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        func git(_ arguments: [String]) async throws -> String {
+            try await CommandRunner.git(arguments, at: demo.root, environment: demo.environment).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        _ = try await git(["push", "--quiet", "demo", "HEAD:refs/heads/main"])
+        _ = try await git(["switch", "--quiet", "-c", "feature/review"])
+        _ = try await git(["add", "-A"])
+        _ = try await git(["commit", "--quiet", "-m", "待评审的提交\n\nChange-Id: I0123456789abcdef0123456789abcdef01234567"])
+        let head = try await git(["rev-parse", "HEAD"])
+
+        let model = FolmiModel(store: WorkspaceStore(url: parent.appendingPathComponent("workspace.json")))
+        model.open(demo.root, environment: demo.environment, demo: true)
+        let deadline = Date().addingTimeInterval(10)
+        while model.busy || model.snapshot == nil {
+            guard Date() < deadline else { return XCTFail("打开项目超时") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNil(model.snapshot?.upstream)
+        XCTAssertEqual(model.unpushedCount, 1)
+
+        let hosting = NSHostingView(rootView: DoneState(model: model))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 420), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting; window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil }
+        try await Task.sleep(for: .milliseconds(400))
+        let before = try ScreenText.read(hosting).replacingOccurrences(of: " ", with: "")
+        XCTAssertTrue(before.contains("1个提交没有推送"), before)
+
+        model.deliveryKind = .gerrit; model.deliveryRemote = "demo"; model.deliveryBranch = "main"
+        model.showDelivery = true
+        model.deliver()
+        while model.showDelivery || model.busy {
+            guard Date() < deadline else { return XCTFail(model.errorMessage ?? "提交评审超时") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let pushed = try await git(["ls-remote", "demo", "refs/for/main"])
+        XCTAssertEqual(pushed.split(separator: "\t").first.map(String.init), head)
+        XCTAssertEqual(model.reviewWatches.first?.commit, head)
+        XCTAssertNil(model.snapshot?.upstream)
+        XCTAssertEqual(model.inReviewCount, 1)
+        XCTAssertEqual(model.unpushedCount, 0)
+        try await Task.sleep(for: .milliseconds(400))
+        let after = try ScreenText.read(hosting).replacingOccurrences(of: " ", with: "")
+        XCTAssertTrue(after.contains("1个提交在评审中"), after)
+        XCTAssertFalse(after.contains("推送"), after)
+
+        let board = ProjectBoard()
+        board.refresh(projects: model.projects)
+        while board.refreshing {
+            guard Date() < deadline else { return XCTFail("项目总览刷新超时") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let row = try XCTUnwrap(board.rows.first)
+        XCTAssertEqual(row.pending, 0)
+        XCTAssertTrue(row.statusSummary.contains("评审中 1 个提交"))
+    }
+
     @MainActor
     func testReviewWatchFindsConflictsLocally() async throws {
         let settings = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-ReviewWatch-\(UUID().uuidString)", isDirectory: true)
@@ -292,6 +391,13 @@ final class ReviewWatchTests: XCTestCase {
         _ = try await git(["commit", "--quiet", "-am", "还没推的提交"])
         try await model.reload()
         try await settle { model.snapshot?.ahead == 2 && model.inReviewCount == 1 }
+        XCTAssertEqual(model.unpushedCount, 1)
+
+        // The reviewed commit was also published to another branch. It must not hide the remaining local commit.
+        _ = try await git(["push", "--quiet", "demo", "\(reviewed):refs/heads/release"])
+        model.refreshInBackground()
+        try await settle { model.snapshot?.unpushed == 1 && model.inReviewCount == 0 }
+        XCTAssertEqual(model.snapshot?.ahead, 2)
         XCTAssertEqual(model.unpushedCount, 1)
 
         // Amending the reviewed commit away: nothing on the branch is in review any more.

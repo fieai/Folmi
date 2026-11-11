@@ -206,6 +206,42 @@ final class PaneColumnsTests: XCTestCase {
         XCTAssertEqual(editor.documents.map(\.id), [change.path], "and nothing closed")
     }
 
+    @MainActor
+    func testEditStagedMarkdownPointFollowsTheDraftAndReturnsToReview() async throws {
+        let (model, _) = try await openDemo()
+        defer { _ = model.prepareToQuit() }
+        let editor = try XCTUnwrap(model.editorWorkspace)
+        let repository = try XCTUnwrap(model.repository)
+        let file = try XCTUnwrap(model.snapshot?.files.first { $0.path == "README.md" && $0.hasStaged })
+        let diff = try await repository.diff(for: file, area: .staged)
+        let hunk = try XCTUnwrap(diff.hunks.first)
+        let line = try XCTUnwrap(hunk.lines.last { $0.kind == .addition })
+        let point = try XCTUnwrap(DiffEditPoint.inHunk(hunk, selected: [line.id]))
+        try editor.open(path: file.path)
+        let original = try XCTUnwrap(editor.selectedDocument?.text)
+        let draft = "新加的草稿行\n" + original
+        editor.updateText(id: file.path, text: draft)
+        defer { try? editor.close(id: file.path, discard: true) }
+        model.content = .allChanges
+        model.allChanges = [diff]
+
+        await model.editDiffPoint(point, in: diff)
+        XCTAssertEqual(model.content, .editor)
+        XCTAssertTrue(editor.columns.hasDiff)
+        XCTAssertFalse(editor.markdownReading)
+        XCTAssertEqual(editor.tabStates[file.path]?.selectionLocation,
+                       EditorTextPosition.range(line: point.line + 1, column: 1, in: draft).location)
+        XCTAssertEqual(editor.selectedDocument?.text, draft)
+        let indexed = try await repository.indexFile(path: file.path)
+        XCTAssertFalse(String(decoding: try XCTUnwrap(indexed?.data), as: UTF8.self).contains("新加的草稿行"))
+
+        model.returnToDiffEdit()
+        XCTAssertEqual(model.content, .allChanges)
+        try await eventually { model.reviewFileJump?.key == diff.allChangesKey }
+        XCTAssertEqual(model.reviewFileJump?.hunkID, hunk.id)
+        XCTAssertEqual(model.reviewFileJump?.lineID, line.id)
+    }
+
     /// On screen: the diff column on the left with its title, the file's tab in the column beside it.
     @MainActor
     func testSplitEditorShowsTheDiffBesideTheFile() async throws {

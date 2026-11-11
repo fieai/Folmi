@@ -62,7 +62,8 @@ extension FolmiModel {
         preferences.glassSurfaces = glassSurfaces
         preferences.editorLineBlame = editorLineBlame
         preferences.markdownDiffRendered = markdownDiffRendered
-        preferences.unifiedDiff = unifiedDiff
+        preferences.unifiedDiff = diffLayout == .unified
+        preferences.diffLayout = diffLayout
         preferences.foldWhitespace = foldWhitespace
         preferences.companionMotion = companionMotion
         preferences.ideaHotKey = ideaHotKey

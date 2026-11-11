@@ -189,8 +189,6 @@ struct ThemeStyle: Sendable {
     var selection: Selection = .tint
     var marks: Marks = .tint
     var prominent: Prominent = .flat
-    /// Cards draw no edge; depth comes from the surfaces' own tones (石墨).
-    var borderless = false
     /// Extra vertical room in change-list rows: negative for a dense list, positive for a roomy one.
     var rowPadding: CGFloat = 3
     /// Counts, branches and the status bar in a monospaced face, and each changed file's +N −N (锌莓).
@@ -221,10 +219,9 @@ struct ThemeStyle: Sendable {
     static let pixel = ThemeStyle(rowRadius: 0, controlRadius: 0, cardRadius: 0, borderWidth: 2, shadow: .hard(3), typeface: .monospaced,
                                   steppedProgress: true, pixelFont: true, solidMarks: true,
                                   focusLineWidth: 2, focusLineOpacity: 1)
-    /// Apple: concentric corners (card 16 = row 10 + 6 inset), no edges, the system face, a native segmented switch,
-    /// Finder-style selection.
-    static let terrazzo = ThemeStyle(rowRadius: 10, controlRadius: 8, cardRadius: 16, borderWidth: 1, shadow: .soft, typeface: .standard,
-                                     tabs: .segmented, selection: .solid, marks: .dot, borderless: true)
+    /// Graphite: compact corners, a quiet edge and a native segmented switch.
+    static let terrazzo = ThemeStyle(rowRadius: 6, controlRadius: 6, cardRadius: 8, borderWidth: 1, shadow: .soft, typeface: .standard,
+                                     tabs: .segmented, selection: .solid, marks: .dot, paneGap: 8)
 }
 
 struct ThemeDefinition: Sendable {
@@ -264,6 +261,10 @@ struct FolmiTheme: RawRepresentable, Hashable, Codable, Sendable, CaseIterable {
     var detail: String { definition.detail }
     var style: ThemeStyle { definition.style }
     var palette: ThemePalette { ThemePalette.of(self) }
+
+    func selection(dark: Bool) -> ThemeStyle.Selection {
+        self == .terrazzo && !dark ? .tint : style.selection
+    }
 
     /// Stone stays opaque even when the shared glass preference is enabled. Other themes retain that preference.
     func usesGlass(requested: Bool, reduceTransparency: Bool = false, increaseContrast: Bool = false) -> Bool {

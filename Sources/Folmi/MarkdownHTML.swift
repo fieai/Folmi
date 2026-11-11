@@ -866,7 +866,8 @@ enum MarkdownCodeHighlight {
 
     static func html(_ code: String, language name: String) -> String {
         let language = language(name)
-        guard language != .plainText, let result = SyntaxTokenizer.tokenize(code, language: language) else { return MarkdownHTML.escape(code) }
+        // Markdown inside a fence is shown as written: the reader has no colors for its marks.
+        guard language != .plainText, language != .markdown, let result = SyntaxTokenizer.tokenize(code, language: language) else { return MarkdownHTML.escape(code) }
         let source = code as NSString
         var out = ""
         var cursor = 0
@@ -888,6 +889,7 @@ enum MarkdownCodeHighlight {
         case .literal: return "literal"
         case .type: return "type"
         case .variable: return "variable"
+        case .heading, .listMarker, .markup, .code, .link, .strong, .emphasis, .strikethrough: return "plain"
         }
     }
 }

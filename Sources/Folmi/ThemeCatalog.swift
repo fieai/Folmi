@@ -72,18 +72,17 @@ enum ThemeCatalog {
     /// Graphite: no hue of its own. Ink and stone carry the chrome; the mineral grains on the primary button are the
     /// only color, and a little verdigris marks links. Leaves sky blue and coin gold to 像素 and amber to 琥珀. Saved under its first name, terrazzo.
     static let terrazzo = ThemeDefinition(
-        id: "terrazzo", title: "石墨", detail: "石墨与石灰，不带主色：同心圆角、不描边、Finder 式选中；颜色只在矿物颗粒里",
+        id: "terrazzo", title: "石墨", detail: "中性灰白、细描边和小圆角，项目、文件、编辑和终端各自独立",
         style: .terrazzo,
         light: ThemeColors(
-            canvas: 0xE7E9EB, card: 0xF9FAFA, header: 0xF9FAFA, editorBackground: 0xFFFFFF, gutter: 0xFFFFFF,
-            border: ThemeRGB(0x23272D, 0.09), foreground: 0x15181C, secondaryText: 0x575D66, tertiaryText: 0x5F656E,
-            hover: ThemeRGB(0x23272D, 0.045), selectedFill: ThemeRGB(0x23272D, 0.07),
-            accent: 0x32363D, onAccent: 0xFFFFFF, added: 0x18764D, removed: 0xC0392F, modified: 0x8D6207,
+            canvas: 0xF1F2F3, card: 0xFFFFFF, header: 0xF8F8F9, editorBackground: 0xFFFFFF, gutter: 0xFFFFFF,
+            border: ThemeRGB(0x282B30, 0.13), foreground: 0x1B1D20, secondaryText: 0x555A61, tertiaryText: 0x676D75,
+            hover: ThemeRGB(0x282B30, 0.04), selectedFill: 0xEEEFF1,
+            accent: 0x282B30, onAccent: 0xFFFFFF, added: 0x18764D, removed: 0xC0392F, modified: 0x8D6207,
             comment: 0x5F656E, keyword: 0x7A3FD1, string: 0x4F7C1E, number: 0x9E5E00, type: 0x0C778A, variable: 0x226F6B,
             selection: 0xD6E4E2, link: 0x226F6B,
             primaryMaterial: ThemeMaterial(top: 0x3A3E45, bottom: 0x1B1D21, text: 0xF4F5F6,
                                            speckles: [0x6FD3CA, 0xE2A9C0, 0xD9DEE5, 0x8BDCE6, 0xB9A4AF, 0xF0B9CF, 0x9AA3AE]),
-            backdropGlow: 0xFFFFFF,
             progress: [0x20B2A6, 0x7CC242, 0xE8B23A, 0xE8772E]),
         dark: ThemeColors(
             canvas: 0x1A1B1D, card: 0x25272A, header: 0x2A2C2F, editorBackground: 0x212325, gutter: 0x212325,

@@ -252,20 +252,51 @@ public final class MCPServer {
     public static let scheme = "folmi"
 
     /// `folmi://open?repo=…&path=…&line=…`
-    public static func link(repository: String, path: String, line: Int?) -> URL? {
+    public static func link(repository: String, path: String? = nil, line: Int? = nil, column: Int? = nil,
+                            openInEditor: Bool = false) -> URL? {
         var components = URLComponents()
         components.scheme = scheme; components.host = "open"
-        components.queryItems = [URLQueryItem(name: "repo", value: repository), URLQueryItem(name: "path", value: path)]
-            + (line.map { [URLQueryItem(name: "line", value: String($0))] } ?? [])
+        var items = [URLQueryItem(name: "repo", value: repository)]
+        if let path { items.append(URLQueryItem(name: "path", value: path)) }
+        if let line { items.append(URLQueryItem(name: "line", value: String(line))) }
+        if let column { items.append(URLQueryItem(name: "column", value: String(column))) }
+        if openInEditor { items.append(URLQueryItem(name: "view", value: "editor")) }
+        components.queryItems = items
         return components.url
     }
-    public struct Link: Equatable, Sendable { public let repository: String; public let path: String?; public let line: Int? }
+
+    public struct Link: Equatable, Sendable {
+        public let repository: String
+        public let path: String?
+        public let line: Int?
+        public let column: Int?
+        public let openInEditor: Bool
+
+        init(repository: String, path: String?, line: Int?, column: Int? = nil, openInEditor: Bool = false) {
+            self.repository = repository
+            self.path = path
+            self.line = line
+            self.column = column
+            self.openInEditor = openInEditor
+        }
+    }
+
     public static func parse(_ url: URL) -> Link? {
         guard url.scheme == scheme, url.host == "open",
               let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
               let repository = items.first(where: { $0.name == "repo" })?.value, repository.hasPrefix("/") else { return nil }
-        let path = items.first { $0.name == "path" }?.value.flatMap { $0.isEmpty || $0.hasPrefix("/") || $0.contains("..") ? nil : $0 }
-        return Link(repository: repository, path: path, line: items.first { $0.name == "line" }?.value.flatMap { Int($0) })
+        let path = items.first { $0.name == "path" }?.value.flatMap { path -> String? in
+            let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+            guard !path.contains("\0"), !parts.contains(where: { ["", ".", "..", ".git"].contains($0) }) else { return nil }
+            return path
+        }
+        func number(_ name: String) -> Int? {
+            guard let value = items.first(where: { $0.name == name })?.value, let number = Int(value), number > 0 else { return nil }
+            return number
+        }
+        let line = number("line")
+        return Link(repository: repository, path: path, line: line, column: line == nil ? nil : number("column"),
+                    openInEditor: items.first(where: { $0.name == "view" })?.value == "editor")
     }
 
     /// `open -b <app>` (the app that wrote app.json), else whichever app claims the scheme.

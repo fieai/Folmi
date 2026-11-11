@@ -87,6 +87,9 @@ struct FolmiCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("打开仓库…") { model.openRepository() }.keyboardShortcut("o")
                 .disabled(model.busy)
+            if let command = BundledTerminalCommand.executable {
+                Button("安装终端命令…") { BundledTerminalCommand.prompt(for: command) }
+            }
             Button("创建演示仓库") { model.loadDemo() }.disabled(model.busy)
             Button("重新读取状态") { model.refresh() }.keyboardShortcut("r").disabled(!model.hasSnapshot || model.busy)
         }
@@ -166,6 +169,13 @@ struct FolmiCommands: Commands {
             Button("快捷键一览（按住 ⌘ 也能看）", action: model.toggleShortcuts).keyboardShortcut("/")
         }
         CommandMenu("编辑显示") {
+            Button("回到上一个位置") { model.navigateEditor(back: true) }
+                .keyboardShortcut("[", modifiers: [.control])
+                .disabled(model.busy || model.editorChrome?.canNavigateBack != true)
+            Button("前往下一个位置") { model.navigateEditor(back: false) }
+                .keyboardShortcut("]", modifiers: [.control])
+                .disabled(model.busy || model.editorChrome?.canNavigateForward != true)
+            Divider()
             Button("Markdown 阅读 / 编辑", action: model.toggleMarkdownPreview)
                 .keyboardShortcut("m", modifiers: [.option, .shift])
                 .disabled(!model.isMarkdownDocument || model.content != .editor || model.busy)

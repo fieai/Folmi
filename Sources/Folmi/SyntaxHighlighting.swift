@@ -5,6 +5,7 @@ import AppKit
 enum SyntaxLanguage: String, Sendable, CaseIterable {
     case javascript, typescript, python, swift, json, shell
     case yaml, toml, ini, dotenv, ignore, dockerfile, makefile, xml, css, sql
+    case markdown
     case plainText
 
     init(path: String) {
@@ -24,6 +25,7 @@ enum SyntaxLanguage: String, Sendable, CaseIterable {
              "entitlements", "resx", "vue": self = .xml
         case "css", "scss", "sass", "less": self = .css
         case "sql": self = .sql
+        case "md", "markdown", "mdown", "mkd": self = .markdown
         default: self = .plainText
         }
     }
@@ -46,6 +48,7 @@ enum SyntaxLanguage: String, Sendable, CaseIterable {
         case .xml: return "XML / HTML"
         case .css: return "CSS"
         case .sql: return "SQL"
+        case .markdown: return "Markdown"
         case .plainText: return "纯文本"
         }
     }
@@ -53,6 +56,10 @@ enum SyntaxLanguage: String, Sendable, CaseIterable {
 
 enum SyntaxTokenKind: Sendable, Equatable {
     case keyword, string, number, comment, literal, type, variable
+    // Markdown (MarkdownHighlighting.swift). The last three only change the font or add a line, never the color, so
+    // the marks inside them keep theirs.
+    case heading, listMarker, markup, code, link
+    case strong, emphasis, strikethrough
 }
 
 struct SyntaxToken: Sendable, Equatable {
@@ -85,6 +92,11 @@ enum SyntaxTokenizer {
         var isLimited = units.count > limit
         if isLimited { units.removeLast() }
         if let last = units.last, (0xD800...0xDBFF).contains(last) { units.removeLast() }
+        if language == .markdown {
+            guard let scan = MarkdownScanner.scan(units, maximumTokens: maximumTokens, isCancelled: isCancelled),
+                  !isCancelled() else { return nil }
+            return SyntaxHighlightResult(tokens: scan.tokens, scannedUTF16Count: scan.scanned, isLimited: isLimited || scan.limited)
+        }
         if language.usesConfigScanner {
             guard let scan = ConfigScanner.scan(units, language: language, maximumTokens: maximumTokens, isCancelled: isCancelled),
                   !isCancelled() else { return nil }
@@ -258,8 +270,19 @@ enum SyntaxHighlightApplier {
             // Leaving Markdown preview resets every presentation attribute without changing the source.
             storage.setAttributes([.font: presentation.font(), .foregroundColor: foreground, .paragraphStyle: presentation.paragraphStyle()], range: all)
         }
+        let bold = presentation?.font(weight: .bold) ?? NSFontManager.shared.convert(editor.font ?? .systemFont(ofSize: 13), toHaveTrait: .boldFontMask)
         for token in result.tokens where token.range.location >= 0 && NSMaxRange(token.range) <= storage.length {
-            storage.addAttribute(.foregroundColor, value: color(for: token.kind, palette: palette), range: token.range)
+            switch token.kind {
+            // Bold keeps the monospaced advance, so columns and the fixed line height stay as they are; italic is a
+            // slant, since the code font may have no italic face.
+            case .strong: storage.addAttribute(.font, value: bold, range: token.range)
+            case .emphasis: storage.addAttribute(.obliqueness, value: 0.16, range: token.range)
+            case .strikethrough: storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: token.range)
+            case .heading:
+                storage.addAttribute(.font, value: bold, range: token.range)
+                storage.addAttribute(.foregroundColor, value: color(for: token.kind, palette: palette), range: token.range)
+            default: storage.addAttribute(.foregroundColor, value: color(for: token.kind, palette: palette), range: token.range)
+            }
         }
         storage.endEditing()
         editor.typingAttributes[.foregroundColor] = foreground
@@ -276,6 +299,12 @@ enum SyntaxHighlightApplier {
             case .comment: return palette.comment
             case .type: return palette.type
             case .variable: return palette.variable
+            case .heading: return palette.keyword
+            case .listMarker: return palette.number
+            case .markup: return palette.comment
+            case .code: return palette.string
+            case .link: return palette.link
+            case .strong, .emphasis, .strikethrough: return palette.foreground
             }
         }
         // Keep the semantic default for callers that do not choose an editor presentation.
@@ -286,6 +315,12 @@ enum SyntaxHighlightApplier {
         case .comment: return .secondaryLabelColor
         case .type: return .systemTeal
         case .variable: return .systemBlue
+        case .heading: return .systemPurple
+        case .listMarker: return .systemOrange
+        case .markup: return .tertiaryLabelColor
+        case .code: return .systemRed
+        case .link: return .linkColor
+        case .strong, .emphasis, .strikethrough: return .textColor
         }
     }
 }

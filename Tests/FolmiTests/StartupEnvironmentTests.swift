@@ -98,6 +98,45 @@ final class StartupEnvironmentTests: XCTestCase {
         }
     }
 
+    func testTerminalLinkWaitsForOpenAndRevealsAChangedFileAtTheRequestedPosition() async throws {
+        let demo = try await DemoRepository.create()
+        defer { try? FileManager.default.removeItem(at: demo.root) }
+        try await withModel { model in
+            let path = "cli-example.swift"
+            let source = "first\nsecond\nthird\n"
+            try source.write(to: demo.root.appendingPathComponent(path), atomically: true, encoding: .utf8)
+            let link = try TerminalCommand.link(for: path + ":2:3", from: demo.root)
+            model.open(demo.root, environment: demo.environment, demo: true)
+            XCTAssertTrue(model.busy)
+            model.handleFolmiLink(link)
+            for _ in 0..<100 where model.editorWorkspace?.selectedDocument?.path != path {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTAssertEqual(model.content, .editor)
+            XCTAssertEqual(model.editorWorkspace?.selectedDocument?.path, path)
+            XCTAssertEqual(model.editorWorkspace?.tabStates[path]?.selectionLocation, 8)
+            XCTAssertEqual(model.projects.count, 1)
+        }
+    }
+
+    func testTerminalCommandInstallationIsIdempotentAndDoesNotOverwrite() throws {
+        let files = FileManager.default
+        let root = files.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try files.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? files.removeItem(at: root) }
+        let command = root.appendingPathComponent("Bundled Command")
+        try "command".write(to: command, atomically: true, encoding: .utf8)
+        let destination = root.appendingPathComponent("bin/folmi")
+
+        try BundledTerminalCommand.installLink(to: command, at: destination)
+        try BundledTerminalCommand.installLink(to: command, at: destination)
+        XCTAssertEqual(try files.destinationOfSymbolicLink(atPath: destination.path), command.path)
+        try files.removeItem(at: destination)
+        try "existing".write(to: destination, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try BundledTerminalCommand.installLink(to: command, at: destination))
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "existing")
+    }
+
     func testStartupScreensRenderForMissingToolsAndBrokenGit() async throws {
         try await withModel { model in
             let states: [(String, GitStartupState)] = [

@@ -122,10 +122,10 @@ extension FolmiModel {
 
     // MARK: ⌘J / ⌘L
 
-    private var focusedEditor: EditorTextView? { NSApp.keyWindow?.firstResponder as? EditorTextView }
+    private var focusedEditor: EditorTextView? { NSApp?.keyWindow?.firstResponder as? EditorTextView }
 
     private var terminalHasFocus: Bool {
-        guard let view = terminalSession?.terminalView, let responder = NSApp.keyWindow?.firstResponder as? NSView else { return false }
+        guard let view = terminalSession?.terminalView, let responder = NSApp?.keyWindow?.firstResponder as? NSView else { return false }
         return responder === view || responder.isDescendant(of: view)
     }
 
@@ -145,6 +145,21 @@ extension FolmiModel {
             return [context]
         }
         return []
+    }
+
+    /// Review comments join the same draft as ⌘J attachments, with any selection still in front of the user.
+    func handReviewCommentsToAgent() {
+        let comments = sendableReviewComments
+        guard !comments.isEmpty, agentSession?.isReadOnly != true else { return }
+        var items = focusedContexts(whole: false)
+        if content == .editor, let editor = focusedEditor, let document = editorWorkspace?.selectedDocument {
+            let range = editor.selectedRange()
+            if range.length > 0, let selection = editorSelectionContext(path: document.path, text: editor.string, range: range) {
+                items.append(selection)
+            }
+        }
+        items += comments.map { AgentContext(title: "审查评论 · \($0.reference)", text: $0.formatted) }
+        attachToAgent(items)
     }
 
     /// ⌘J: the focused editor's selection (else its file), the terminal's, lines picked in a diff or the open diff go

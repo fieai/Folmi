@@ -24,6 +24,7 @@ struct MarkdownReaderView: NSViewRepresentable {
     /// The editor column showing this reader; only the active column's reader answers ⌘F and reveals.
     var column: UUID?
     var isActiveColumn: Bool { column == nil || column == workspace.columns.activeID }
+    var columnID: UUID { column ?? workspace.columns.activeID }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -63,6 +64,7 @@ struct MarkdownReaderView: NSViewRepresentable {
         private var indexRevision: UInt64 = .max
         private var lineStarts: [Int] = [0]
         private var dismantled = false
+        private var readerDroveScroll = false
         private let createdAt = ContinuousClock.now
 
         func attach(_ webView: WKWebView, loaded: Bool = false) {
@@ -79,27 +81,42 @@ struct MarkdownReaderView: NSViewRepresentable {
         func update(_ view: MarkdownReaderView) {
             let previous = parent
             parent = view
-            if view.isActiveColumn { view.workspace.openReaderFind = { [weak self] in self?.openFind() } }
+            view.workspace.openReaderFindByColumn[view.columnID] = { [weak self] in self?.openFind() }
+            view.workspace.readerScrollToLineByColumn[view.columnID] = { [weak self] line in
+                guard let self, !self.dismantled, self.loaded, self.parent?.active == true else { return }
+                self.readerDroveScroll = false
+                self.scroll(toLine: line, smooth: false)
+            }
             updateActive(view)
-            guard loaded, view.isMarkdown else { return }
+            // Rendering the hidden reader on every keystroke would defeat the paired reader's debounce.
+            if !view.active { navigationRevision = view.navigationRevision }
+            guard loaded, view.isMarkdown, view.active else { return }
             let style = MarkdownReaderPage.style(theme: view.theme, presentation: view.presentation)
             let documentChanged = renderedKey?.documentID != view.documentID
-            if renderedKey?.documentID != view.documentID || renderedKey?.text != view.text || renderedKey?.style != style {
+            if documentChanged { readerDroveScroll = false }
+            let textChanged = renderedKey?.text != view.text
+            let navigation = view.navigationRevision != navigationRevision
+                && (view.workspace.navigationColumn == nil || view.workspace.navigationColumn == view.columnID)
+            let navigationLine = navigation ? view.workspace.navigationReaderLine : nil
+            if documentChanged || textChanged || renderedKey?.style != style {
                 if renderedKey?.style != style { js("wb.style(\(Self.json(style)))") }
                 let flashFrom = !documentChanged && view.externalChange != nil && view.externalChange != flashedChange ? renderedKey?.text : nil
-                render(view, scrollTo: documentChanged ? startLine(view) : nil, documentChanged: documentChanged, flashFrom: flashFrom)
+                let debounce = !documentChanged && textChanged
+                    && view.workspace.editingColumn(for: view.documentID, beside: view.column) != nil
+                render(view, scrollTo: navigationLine ?? (documentChanged || previous?.active == false ? startLine(view) : nil), documentChanged: documentChanged,
+                       flashFrom: flashFrom, debounce: debounce, explicitScroll: navigationLine != nil)
                 renderedKey = (view.documentID, view.text, style)
             }
             flashedChange = view.externalChange
-            if documentChanged || view.indexRevision != indexRevision || previous?.text != view.text {
+            if documentChanged || view.indexRevision != indexRevision || textChanged {
                 indexRevision = view.indexRevision
                 loadMarks(view)
             }
             if view.navigationRevision != navigationRevision {
                 navigationRevision = view.navigationRevision
-                if !documentChanged, view.workspace.navigationColumn == nil || view.column == nil || view.workspace.navigationColumn == view.column,
+                if !documentChanged, navigation,
                    let state = view.workspace.tabStates[view.documentID] {
-                    scroll(toLine: line(at: state.selectionLocation), smooth: true)
+                    scroll(toLine: navigationLine ?? line(at: state.selectionLocation), smooth: !view.workspace.navigationRestoresScroll)
                 }
             }
         }
@@ -118,12 +135,13 @@ struct MarkdownReaderView: NSViewRepresentable {
             if view.active {
                 webView.isHidden = false
                 guard !first else { return }
-                if loaded, let line = view.workspace.readerTopLine[view.documentID] { scroll(toLine: line, smooth: false) }
-                DispatchQueue.main.async { [weak webView] in
-                    if let webView, webView.window != nil { webView.window?.makeFirstResponder(webView) }
+                if loaded, let line = view.workspace.readerTopLineByColumn[view.columnID]?[view.documentID] { scroll(toLine: line, smooth: false) }
+                DispatchQueue.main.async { [weak self, weak webView] in
+                    if let self, self.parent?.isActiveColumn == true, self.parent?.active == true,
+                       let webView, webView.window != nil { webView.window?.makeFirstResponder(webView) }
                 }
             } else {
-                js("document.getElementById('pop').classList.remove('on')")
+                js("window.wb?.hideSelection()")
                 // Behind a code file the page stays un-hidden (only transparent and not hit-testable): a hidden web view
                 // drops its layers, and showing it again repaints the whole document.
                 guard view.isMarkdown else { return }
@@ -138,7 +156,8 @@ struct MarkdownReaderView: NSViewRepresentable {
 
         /// Where a document opens: the reader's last place, else the editor caret's line.
         private func startLine(_ view: MarkdownReaderView) -> Int {
-            if let line = view.workspace.readerTopLine[view.documentID] { return line }
+            if view.active, let line = view.workspace.followingEditorLine(for: view.documentID, column: view.column) { return line }
+            if let line = view.workspace.readerTopLineByColumn[view.columnID]?[view.documentID] { return line }
             let location = view.workspace.tabStates[view.documentID]?.selectionLocation ?? 0
             return Self.lineStarts(view.text).lastIndex { $0 <= location } ?? 0
         }
@@ -146,37 +165,44 @@ struct MarkdownReaderView: NSViewRepresentable {
         private var flashedChange: Date?
 
         /// `flashFrom`: the text before an outside change; blocks that differ from it light up and fade.
-        private func render(_ view: MarkdownReaderView, scrollTo line: Int?, documentChanged: Bool, flashFrom: String? = nil) {
+        private func render(_ view: MarkdownReaderView, scrollTo line: Int?, documentChanged: Bool, flashFrom: String? = nil,
+                            debounce: Bool = false, explicitScroll: Bool = false) {
             renderTask?.cancel()
             let text = view.text, path = view.documentID
             let renderStart = ContinuousClock.now
             // A page rendered before (or prefetched) goes to the web view at once. Handing it over from a task put it
             // behind the window's layout pass, about 40 ms on every switch.
-            if let cached = ReaderRenderCache.find(path: path, text: text) {
-                show(cached, line: line, documentChanged: documentChanged, flashFrom: flashFrom, renderStart: renderStart)
+            if !debounce, let cached = ReaderRenderCache.find(path: path, text: text) {
+                show(cached, line: line, documentChanged: documentChanged, flashFrom: flashFrom, renderStart: renderStart, explicitScroll: explicitScroll)
                 return
             }
             renderTask = Task { @MainActor [weak self] in
+                if debounce {
+                    do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
+                }
                 let rendered = await ReaderRenderCache.render(path: path, text: text, priority: .userInitiated)
                 guard let self, !Task.isCancelled, !self.dismantled, self.parent?.documentID == path else { return }
-                self.show(rendered, line: line, documentChanged: documentChanged, flashFrom: flashFrom, renderStart: renderStart)
+                self.show(rendered, line: line, documentChanged: documentChanged, flashFrom: flashFrom, renderStart: renderStart, explicitScroll: explicitScroll)
             }
         }
 
         private func show(_ rendered: ReaderRenderCache.Entry, line: Int?, documentChanged: Bool, flashFrom: String?,
-                          renderStart: ContinuousClock.Instant) {
+                          renderStart: ContinuousClock.Instant, explicitScroll: Bool) {
             let (html, path, text) = (rendered.html, rendered.path, rendered.text)
             PerfLog.readerStep("reader.renderAt")
             lineStarts = rendered.starts
-            let scroll = line.map(String.init) ?? "null"
-            // The selection bar is in the page template; it names the agent the AI tab would use now.
-            if let title = parent?.workspace.agentTitle?() {
-                js("(()=>{const b=document.querySelector('#pop [data-act=agent]');if(b)b.textContent=\(Self.json("交给 " + title))})()")
+            // Rendering can finish after more scrolling; restore the editor's current place, not the render's input.
+            let following: Int? = readerDroveScroll ? nil : parent.flatMap { view in
+                view.active ? view.workspace.followingEditorLine(for: path, column: view.column) : nil
             }
+            let scroll = (explicitScroll ? line : following ?? line).map(String.init) ?? "null"
+            let render = "wb.render(\(Self.json(html)), \(scroll), \(documentChanged), \(Self.json(path)))"
+            // The selection bar is in the page template; it names the agent the AI tab would use now.
+            updateSelectionAgentTitle()
             if PerfLog.enabled {
                 let swiftDone = ContinuousClock.now
                 PerfLog.interval("reader.swift", since: renderStart, detail: path)
-                webView?.evaluateJavaScript("(()=>{const t=performance.now();wb.render(\(Self.json(html)), \(scroll), \(documentChanged));const a=performance.now()-t;document.body.offsetHeight;return [a, performance.now()-t]})()") { value, _ in
+                webView?.evaluateJavaScript("(()=>{const t=performance.now();\(render);const a=performance.now()-t;document.body.offsetHeight;return [a, performance.now()-t]})()") { value, _ in
                     if let pair = value as? [Double] { PerfLog.note("reader.js", "render \(Int(pair[0]))ms layout \(Int(pair[1]))ms \(html.utf8.count)B") }
                     PerfLog.interval("reader.jsRoundtrip", since: swiftDone)
                 }
@@ -185,7 +211,7 @@ struct MarkdownReaderView: NSViewRepresentable {
                                              arguments: [:], in: nil, in: .page) { _ in
                     PerfLog.readerPainted(path, bytes: text.utf8.count, renderStart: renderStart)
                 }
-            } else { js("wb.render(\(Self.json(html)), \(scroll), \(documentChanged))") }
+            } else { js(render) }
             // The outline is published state; this can run inside a view update, so it moves to the next turn.
             let layout = rendered.layout
             renderTask = Task { @MainActor [weak self] in
@@ -200,7 +226,7 @@ struct MarkdownReaderView: NSViewRepresentable {
                 }
                 guard let self, !Task.isCancelled, !self.dismantled, let parent = self.parent, parent.documentID == path else { return }
                 parent.workspace.outline(for: parent.column).update(documentID: path, layout: layout,
-                                                caret: self.offset(ofLine: parent.workspace.readerTopLine[path] ?? line ?? 0))
+                                                caret: self.offset(ofLine: parent.workspace.readerTopLineByColumn[parent.columnID]?[path] ?? following ?? line ?? 0))
             }
         }
 
@@ -226,6 +252,12 @@ struct MarkdownReaderView: NSViewRepresentable {
 
         private func scroll(toLine line: Int, smooth: Bool) {
             js("wb.scrollToLine(\(line), \(smooth))")
+        }
+
+        private func updateSelectionAgentTitle() {
+            if let title = parent?.workspace.agentTitle?() {
+                js("wb.selectionAgentTitle(\(Self.json("交给 " + title)))")
+            }
         }
 
         func dismantle() {
@@ -257,17 +289,29 @@ struct MarkdownReaderView: NSViewRepresentable {
             let workspace = parent.workspace, id = parent.documentID
             switch type {
             case "link":
+                if let line = body["fromLine"] as? Int { workspace.noteReaderLocation(line, in: id, column: parent.columnID) }
                 if let href = body["href"] as? String { workspace.followLink(href, from: id) }
+            case "anchor":
+                if let from = body["fromLine"] as? Int, let to = body["line"] as? Int {
+                    workspace.recordReaderAnchor(in: id, column: parent.columnID, from: from, to: to)
+                }
             case "task":
                 if let offset = body["offset"] as? Int {
                     do { try workspace.toggleTask(at: offset, in: id) } catch { workspace.errorMessage = error.localizedDescription }
                 }
             case "top":
-                if let line = body["line"] as? Int {
-                    workspace.readerTopLine[id] = line
+                if parent.active, body["path"] as? String == id, let line = body["line"] as? Int {
+                    workspace.readerTopLineByColumn[parent.columnID, default: [:]][id] = line
                     workspace.outline(for: parent.column).updateCaret(offset(ofLine: line))
+                    if body["userScroll"] as? Bool == true {
+                        readerDroveScroll = true
+                        workspace.followReaderScroll(from: parent.columnID, documentID: id, line: line)
+                    }
                 }
+            case "selectionToolbar":
+                updateSelectionAgentTitle()
             case "edit":
+                workspace.columns.activate(parent.columnID)
                 guard let first = body["line"] as? Int else { workspace.editMarkdown(at: nil, in: id); return }
                 let lines = range(lines: first, through: (body["end"] as? Int) ?? first)
                 let exact = (body["text"] as? String).flatMap { Self.sourceRange(of: $0, in: parent.text, lines: lines) }
@@ -544,20 +588,34 @@ enum MarkdownReaderPage {
     #find button{font:inherit;color:var(--fg);background:none;border:0;width:24px;height:24px;border-radius:6px;cursor:pointer}
     #find button:hover{background:var(--code-bg)}
     #pop{position:absolute;z-index:10;display:none;cursor:default;-webkit-user-select:none;user-select:none;gap:2px;padding:4px;border-radius:10px;background:var(--pop);
+      max-width:calc(100vw - 16px);box-sizing:border-box;flex-wrap:wrap;
       -webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);
       box-shadow:inset 0 1px 0 var(--edge),0 0 0 1px var(--border),0 8px 24px rgba(0,0,0,.22);font:12.5px -apple-system,"PingFang SC",sans-serif;white-space:nowrap}
     .flash{animation:wbflash 3s ease-out}@keyframes wbflash{0%,25%{background:var(--accent-bg);box-shadow:0 0 0 6px var(--accent-bg)}100%{background:transparent;box-shadow:0 0 0 6px transparent}}
     @media (prefers-reduced-motion:reduce){.flash{animation:none;background:var(--accent-bg)}*{transition:none!important}}
     #pop.on{display:flex}#pop button{font:inherit;color:var(--fg);background:none;border:0;padding:5px 10px;border-radius:7px;cursor:pointer}
     #pop button:hover{background:var(--code-bg)}#pop button.primary{color:var(--accent);background:var(--accent-bg)}
+    #pop button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+    #pop-actions{position:absolute;right:0;top:calc(100% + 5px);min-width:116px;max-height:min(235px,55vh);overflow:auto;padding:4px;
+      border-radius:9px;background:var(--pop);box-shadow:0 0 0 1px var(--border),0 6px 20px rgba(0,0,0,.25)}
+    #pop-actions.above{top:auto;bottom:calc(100% + 5px)}
+    #pop-actions button{display:block;width:100%;text-align:left}
     </style></head><body><main id="doc"></main>
     <div id="find"><input id="find-q" placeholder="在文档中查找" spellcheck="false"><span class="n" id="find-n"></span>
     <button data-dir="-1" title="上一个（⇧↩）">↑</button><button data-dir="1" title="下一个（↩）">↓</button><button data-dir="0" title="关闭（Esc）">✕</button></div>
-    <div id="pop"><button data-act="ask">问</button><button data-act="agent">交给 agent</button><button class="primary" data-act="send">发到终端</button><button data-act="comment">评论</button><button data-act="quote">复制为引用</button><button data-act="plain">说人话</button><button data-act="deai">去 AI 腔</button><button data-act="translate">翻译</button><button data-act="edit">编辑这里</button></div>
+    <div id="pop" role="group" aria-label="选区操作">
+      <button class="primary" data-act="edit">编辑这里</button><button data-act="agent">交给 agent</button><button data-act="comment">评论</button>
+      <button id="pop-more" aria-controls="pop-actions" aria-expanded="false">更多</button>
+      <div id="pop-actions" role="group" aria-label="更多选区操作" hidden>
+        <button data-act="ask">问</button><button data-act="send">发到终端</button><button data-act="quote">复制为引用</button>
+        <button data-act="plain">说人话</button><button data-act="deai">去 AI 腔</button><button data-act="translate">翻译</button>
+      </div>
+    </div>
     <script>
     (function(){
     const post=(m)=>window.webkit.messageHandlers.wb.postMessage(m);
     const doc=document.getElementById('doc'),pop=document.getElementById('pop');
+    const more=document.getElementById('pop-more'),moreActions=document.getElementById('pop-actions');
     let marks=[];
     function blocks(){return doc.querySelectorAll('[data-line]')}
     function topBlock(){
@@ -640,8 +698,11 @@ enum MarkdownReaderPage {
     window.wb={
       find(){const sel=window.getSelection().toString().trim();if(sel&&!sel.includes('\\n'))fq.value=sel;
         bar.classList.add('on');hide();fq.focus();fq.select();runFind(false)},
-      style(css){document.getElementById('vars').textContent=css},
-      render(html,line,fresh){
+      style(css){stopReaderFollow();document.getElementById('vars').textContent=css},
+      hideSelection(){hide()},
+      selectionAgentTitle(title){pop.querySelector('[data-act=agent]').textContent=title;if(picked)placeSelection()},
+      render(html,line,fresh,path=null){
+        renderedPath=path;stopReaderFollow();clearTimeout(scrollTimer);
         const anchor=fresh?null:topBlock(),key=anchor?anchor.dataset.line:null,delta=anchor?anchor.getBoundingClientRect().top:0;
         doc.innerHTML=html;decorate();hide();if(bar.classList.contains('on')&&fq.value)runFind(true);
         if(line!==null&&line!==undefined){wb.scrollToLine(line,false)}
@@ -659,37 +720,94 @@ enum MarkdownReaderPage {
         for(const el of leaves){const a=+el.dataset.line,b=+(el.dataset.end||el.dataset.line);
         if(ranges.some(r=>r[0]<=b&&r[1]>=a))hit.push(el)}
         for(const el of hit){el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');setTimeout(()=>el.classList.remove('flash'),3200)}},
-      scrollToLine(line,smooth){let target=null;for(const el of blocks()){if(+el.dataset.line<=line)target=el;else break}
+      scrollToLine(line,smooth){stopReaderFollow();let target=null;for(const el of blocks()){if(+el.dataset.line<=line)target=el;else break}
         if(!target){window.scrollTo(0,0);return}
         if(line===0&&+target.dataset.line===0){window.scrollTo(0,0);return}
         target.scrollIntoView({block:'start',behavior:smooth?'smooth':'auto'})}
     };
-    let scrollTimer=null;
-    window.addEventListener('scroll',()=>{hide();clearTimeout(scrollTimer);scrollTimer=setTimeout(()=>{const t=topBlock();if(t)post({type:'top',line:+t.dataset.line})},120)},{passive:true});
+    let renderedPath=null,scrollTimer=null,followTimer=null,scrollIntentUntil=0,lastFollowLine=null,draggingScrollbar=false;
+    function stopReaderFollow(){scrollIntentUntil=0;lastFollowLine=null;clearTimeout(followTimer);followTimer=null}
+    function noteScrollIntent(){scrollIntentUntil=performance.now()+250}
+    function postTop(userScroll){
+      const t=topBlock();if(!t)return;
+      const line=+t.dataset.line;
+      if(userScroll&&line===lastFollowLine)return;
+      if(userScroll)lastFollowLine=line;
+      post({type:'top',path:renderedPath,line,userScroll})}
+    // Scroll events also fire during reflow and source-driven alignment. Only input in this pane drives the source.
+    window.addEventListener('wheel',(e)=>{if(e.deltaY&&!e.ctrlKey&&!e.metaKey&&!pop.contains(e.target))noteScrollIntent()},{passive:true});
+    window.addEventListener('mousedown',(e)=>{
+      draggingScrollbar=e.button===0&&e.target===document.documentElement&&e.clientX>=window.innerWidth-12;
+    });
+    window.addEventListener('mouseup',()=>{draggingScrollbar=false});
+    window.addEventListener('blur',()=>{draggingScrollbar=false;stopReaderFollow()});
+    window.addEventListener('resize',hide);
+    window.addEventListener('scroll',()=>{
+      hide();clearTimeout(scrollTimer);scrollTimer=setTimeout(()=>postTop(false),120);
+      if(followTimer===null&&(draggingScrollbar||performance.now()<scrollIntentUntil)){
+        followTimer=setTimeout(()=>{followTimer=null;postTop(true)},50);
+      }
+    },{passive:true});
     document.addEventListener('click',(e)=>{
       const box=e.target.closest('input.task');if(box){e.preventDefault();post({type:'task',offset:+box.dataset.offset});return}
-      const a=e.target.closest('a[data-href]');if(a){e.preventDefault();const h=a.dataset.href;
-        if(h.startsWith('#')&&!h.startsWith('#L')){const el=document.getElementById(decodeURIComponent(h.slice(1)).toLowerCase().replace(/ /g,'-'));if(el){el.scrollIntoView({behavior:'smooth'});return}}
-        post({type:'link',href:h})}});
+      const a=e.target.closest('a[data-href]');if(a){e.preventDefault();const h=a.dataset.href,t=topBlock(),fromLine=t?+t.dataset.line:null;
+        if(h.startsWith('#')&&!h.startsWith('#L')){const el=document.getElementById(decodeURIComponent(h.slice(1)).toLowerCase().replace(/ /g,'-'));if(el){const line=+el.dataset.line;if(Number.isFinite(line))post({type:'anchor',line,fromLine});el.scrollIntoView({behavior:'smooth'});return}}
+        post({type:'link',href:h,fromLine})}});
     function lineOf(node,attr){let el=node&&(node.nodeType===1?node:node.parentElement);el=el&&el.closest('[data-line]');return el?+el.dataset[attr]:null}
     function selectionInfo(){const s=window.getSelection();if(!s||s.isCollapsed||!s.rangeCount)return null;
       const r=s.getRangeAt(0);if(!doc.contains(r.commonAncestorContainer))return null;
       let a=lineOf(r.startContainer,'line'),b=lineOf(r.endContainer,'end');if(a===null||b===null)return null;if(b<a)b=a;
       return {text:s.toString(),line:a,end:b,rect:r.getBoundingClientRect()}}
-    function hide(){pop.classList.remove('on')}
-    document.addEventListener('mouseup',()=>setTimeout(()=>{const info=selectionInfo();if(!info||!info.text.trim()){hide();return}
-      pop.classList.add('on');const w=pop.offsetWidth,x=Math.max(8,Math.min(window.innerWidth-w-8,info.rect.left+info.rect.width/2-w/2+window.scrollX));
-      const y=info.rect.top+window.scrollY-pop.offsetHeight-8;pop.style.left=x+'px';pop.style.top=(y<window.scrollY+4?info.rect.bottom+window.scrollY+8:y)+'px'},0));
+    let picked=null;
+    function placeSelection(){
+      const r=picked.rect,w=pop.offsetWidth,h=pop.offsetHeight;
+      const x=Math.max(8,Math.min(window.innerWidth-w-8,r.left+r.width/2-w/2));
+      const y=r.top-h-8>=4?r.top-h-8:r.bottom+8;
+      pop.style.left=(x+window.scrollX)+'px';
+      pop.style.top=(Math.max(4,Math.min(window.innerHeight-h-4,y))+window.scrollY)+'px';
+      if(!moreActions.hidden){
+        const r=pop.getBoundingClientRect(),h=moreActions.offsetHeight+5;
+        moreActions.classList.toggle('above',r.bottom+h>window.innerHeight-8&&r.top>=h+8);
+      }
+    }
+    function setMore(open){
+      moreActions.hidden=!open;more.setAttribute('aria-expanded',String(open));
+      if(open)placeSelection();
+    }
+    function hide(){pop.classList.remove('on');setMore(false);picked=null}
+    function showSelection(){
+      if(renderedPath===null)return;
+      const info=selectionInfo();if(!info||!info.text.trim()){hide();return}
+      if(!picked)post({type:'selectionToolbar'});
+      picked=info;pop.classList.add('on');placeSelection();
+    }
+    document.addEventListener('mouseup',(e)=>{if(!pop.contains(e.target))setTimeout(showSelection,0)});
     document.addEventListener('mousedown',(e)=>{if(!e.target.closest('#pop'))hide()});
     pop.addEventListener('mousedown',(e)=>e.preventDefault());
-    pop.addEventListener('click',(e)=>{const b=e.target.closest('button');const info=selectionInfo();if(!b||!info)return;
-      const act=b.dataset.act;if(act==='send')post({type:'send',line:info.line,end:info.end,text:info.text});
-      else if(act==='comment')post({type:'comment',text:info.text.trim(),line:info.line,end:info.end});
-      else if(act==='quote')post({type:'quote',text:info.text.trim(),line:info.line,end:info.end});
-      else if(act==='ask'||act==='agent')post({type:act,text:info.text.trim(),line:info.line,end:info.end});
-      else if(act==='plain'||act==='deai'||act==='translate')post({type:act,text:info.text.trim(),line:info.line,end:info.end});
-      else if(act==='edit')post({type:'edit',line:info.line,end:info.end,text:info.text});hide();window.getSelection().removeAllRanges()});
-    document.addEventListener('keydown',(e)=>{if(e.key==='Escape')hide()});
+    pop.addEventListener('focusout',(e)=>{if(e.relatedTarget&&!pop.contains(e.relatedTarget))hide()});
+    pop.addEventListener('click',(e)=>{
+      const b=e.target.closest('button');if(!b||!picked)return;
+      if(b===more){
+        const open=moreActions.hidden;setMore(open);
+        (open?moreActions.querySelector('button'):more).focus({preventScroll:true});return;
+      }
+      const {line,end,text}=picked,type=b.dataset.act;
+      post({type,line,end,text:type==='send'||type==='edit'?text:text.trim()});
+      hide();window.getSelection().removeAllRanges();
+    });
+    const scrollKeys=new Set(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' ']);
+    document.addEventListener('keydown',(e)=>{
+      if(e.key==='Escape'){
+        if(!moreActions.hidden){setMore(false);more.focus({preventScroll:true})}else hide();
+      }else if(e.key==='Tab'&&!e.shiftKey&&picked&&!pop.contains(e.target)){
+        e.preventDefault();pop.querySelector('button').focus({preventScroll:true});
+      }else if(scrollKeys.has(e.key)&&!e.target.closest('input,textarea,button,#pop,[contenteditable]')){
+        noteScrollIntent();
+      }
+    });
+    document.addEventListener('keyup',(e)=>{
+      if(e.shiftKey&&(e.key.startsWith('Arrow')||scrollKeys.has(e.key)&&e.key!==' ')&&!e.target.closest('#pop,#find'))showSelection();
+    });
     })();
     </script></body></html>
     """

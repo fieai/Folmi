@@ -358,7 +358,7 @@ extension FolmiModel {
         guard let snapshot else { return nil }
         let start = Calendar.current.startOfDay(for: Date())
         let today = snapshot.commits.filter { ($0.date ?? .distantPast) >= start }.count
-        return DaySummary(commitsToday: today, unpushed: snapshot.ahead.map { _ in unpushedCount }, behind: snapshot.behind, hasUpstream: snapshot.upstream != nil)
+        return DaySummary(commitsToday: today, unpushed: snapshot.unpushed.map { _ in unpushedCount }, behind: snapshot.behind, hasUpstream: snapshot.upstream != nil)
     }
     /// Nothing left locally or in the known upstream state: clean worktree, no pending push/pull and no stash.
     /// Upstream counts reflect the local tracking branch from the most recent fetch.

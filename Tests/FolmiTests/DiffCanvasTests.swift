@@ -5,6 +5,48 @@ import FolmiCore
 @testable import Folmi
 
 final class DiffCanvasTests: XCTestCase {
+    func testSearchFindsRemovedAndAddedTextWithoutDuplicatingContext() throws {
+        let hunk = DiffHunk(id: "h", header: "@@ -4,2 +4,2 @@", lines: [
+            .init(id: 1, text: "timeout = 15", kind: .deletion),
+            .init(id: 2, text: "TIMEOUT = 30", kind: .addition),
+            .init(id: 3, text: "check(timeout)", kind: .context)
+        ])
+        let file = FileChange(path: "settings.swift", indexCode: "M", worktreeCode: "M")
+        let diffs = [ChangeArea.staged, .working].map {
+            FileDiff(file: file, area: $0, rawPatch: "", hunks: [hunk], fingerprint: $0.rawValue, isPartialSupported: true, notice: nil)
+        }
+        let hits = try DiffSearch.find("timeout", in: diffs).hits
+        XCTAssertEqual(hits.map(\.lineID), [1, 2, 3, 1, 2, 3])
+        XCTAssertEqual(hits.map(\.fileKey), Array(repeating: "staged:settings.swift", count: 3) + Array(repeating: "working:settings.swift", count: 3))
+        XCTAssertEqual(hits[2].range, NSRange(location: 6, length: 7))
+        XCTAssertEqual(hits[1].rowIndex(in: DiffAlignment.rows(in: hunk), unified: false), 0)
+        XCTAssertEqual(hits[1].rowIndex(in: DiffAlignment.rows(in: hunk), unified: true), 1)
+    }
+
+    func testContextUsesBothLineNumbersAndRefusesAnEditInsideTheGap() throws {
+        func anchor(_ text: String, old: Int, new: Int) -> AlignedDiffRow {
+            let line = DiffLine(id: old, text: text, kind: .context)
+            return .init(id: old, old: .init(line: line, lineNumber: old), new: .init(line: line, lineNumber: new))
+        }
+        let gap = try XCTUnwrap(DiffContextGap(after: anchor("left", old: 1, new: 2),
+                                              before: anchor("right", old: 4, new: 5)))
+        let old = Data("left\ncontext 1\ncontext 2\nright\n".utf8)
+        let new = Data("inserted\nleft\ncontext 1\ncontext 2\nright\n".utf8)
+        let rows = try gap.content(old: old, new: new).rows
+        XCTAssertEqual(gap.count, 2)
+        XCTAssertEqual(rows.compactMap { $0.old?.lineNumber }, [2, 3])
+        XCTAssertEqual(rows.compactMap { $0.new?.lineNumber }, [3, 4])
+        XCTAssertTrue(rows.allSatisfy { $0.old?.line.kind == .context && $0.old?.line == $0.new?.line })
+        XCTAssertThrowsError(try gap.content(old: old, new: Data("inserted\nleft\nchanged\ncontext 2\nright\n".utf8)))
+    }
+
+    func testWordHighlightsPreserveUnchangedTokensAndChineseCharacters() {
+        let old = "let 版本 = (fast, 15)"
+        let new = "let 版号 = (slow, 30)"
+        let text = new as NSString
+        XCTAssertEqual(DiffWords.changedRanges(in: new, comparedTo: old).map { text.substring(with: $0) }, ["号", "slow", "30"])
+    }
+
     private func rows(_ count: Int) -> [AlignedDiffRow] {
         (0..<count).map { index in
             switch index % 3 {
