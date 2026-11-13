@@ -398,32 +398,47 @@ struct ChangesPane: View {
                               expanded: expanded, prepared: preparedTree(in: group))
         PerfLog.spend("ChangesPane.rows", since: rowsStart)
         let folderCounts = cache.counts
-        return ForEach(rows) { item in
-            // A Group exposes the conditional to List. A single row container lets SwiftUI index
-            // the rows directly instead of walking the ForEach again for every outline row.
-            VStack(spacing: 0) {
-                switch item {
-                case let .file(file, depth):
-                    row(file, group, depth: depth, unreviewed: unreviewed[file.path] != nil, grouped: groupByFolder || large)
-                case let .folder(path, depth, expanded):
-                    folderRow(path, depth: depth, expanded: expanded, count: large ? folderCounts[path] : nil) {
-                        if large {
-                            if expanded {
-                                expandedLarge.wrappedValue[group, default: []] = expandedLarge.wrappedValue[group, default: []].filter {
-                                    $0 != path && !$0.hasPrefix(path + "/")
-                                }
-                            } else { expandedLarge.wrappedValue[group, default: []].insert(path) }
-                        } else {
-                            if expanded { collapsed.wrappedValue[group, default: []].insert(path) }
-                            else { collapsed.wrappedValue[group, default: []].remove(path) }
-                        }
+        let grouped = groupByFolder || large
+        let groupPrefix = group.rawValue + ":"
+        let toggleFolder: (String, Bool) -> Void = { path, isExpanded in
+            if large {
+                if isExpanded {
+                    expandedLarge.wrappedValue[group, default: []] = expandedLarge.wrappedValue[group, default: []].filter {
+                        $0 != path && !$0.hasPrefix(path + "/")
                     }
+                } else {
+                    expandedLarge.wrappedValue[group, default: []].insert(path)
+                }
+            } else if isExpanded {
+                collapsed.wrappedValue[group, default: []].insert(path)
+            } else {
+                collapsed.wrappedValue[group, default: []].remove(path)
+            }
+        }
+        return ForEach(rows) { item in
+            let fileTag = item.fileID.map { groupPrefix + $0 }
+            let content = changeRowContent(item, in: group, unreviewed: unreviewed, grouped: grouped,
+                                           folderCounts: large ? folderCounts : [:], toggleFolder: toggleFolder)
+            content
+                .tag(fileTag ?? item.id)
+                .id(fileTag ?? groupPrefix + item.id)
+                .selectionDisabled(item.fileID == nil)
+                .listRowBackground(rowBackground(item, in: group))
+        }
+    }
+
+    private func changeRowContent(_ item: ChangeListRow, in group: ChangeArea, unreviewed: [String: Int], grouped: Bool,
+                                  folderCounts: [String: Int], toggleFolder: @escaping (String, Bool) -> Void) -> some View {
+        // A single row container lets List index rows directly instead of walking the ForEach again.
+        VStack(spacing: 0) {
+            switch item {
+            case let .file(file, depth):
+                row(file, group, depth: depth, unreviewed: unreviewed[file.path] != nil, grouped: grouped)
+            case let .folder(path, depth, expanded):
+                folderRow(path, depth: depth, expanded: expanded, count: folderCounts[path]) {
+                    toggleFolder(path, expanded)
                 }
             }
-            .tag(item.fileID.map { group.rawValue + ":" + $0 } ?? item.id)
-            .id(item.fileID.map { group.rawValue + ":" + $0 } ?? group.rawValue + ":" + item.id)
-            .selectionDisabled(item.fileID == nil)
-            .listRowBackground(rowBackground(item, in: group))
         }
     }
 
