@@ -45,11 +45,12 @@ enum FileEditorError: LocalizedError, Equatable {
     }
 }
 
-/// Edits only explicitly opened regular files beneath one repository root.
+/// Edits only explicitly opened regular files beneath one root.
 /// Disk fingerprints are checked before an atomic replacement; this is not an external-writer CAS lock.
 @MainActor
 final class EditorWorkspace: ObservableObject {
     let root: URL
+    let singleFilePath: String?
     @Published var documents: [EditorDocument] = []
     /// The 编辑 page's columns (向左拆分 / 向右拆分). Each holds some of `documents` as tabs; one file can be in two.
     @Published var columns = PaneColumns() {
@@ -253,8 +254,9 @@ final class EditorWorkspace: ObservableObject {
     }
     private var formats: [String: Format] = [:]
 
-    init(root: URL, markdownReading: Bool = true) {
+    init(root: URL, markdownReading: Bool = true, singleFilePath: String? = nil) {
         defaultMarkdownReading = markdownReading
+        self.singleFilePath = singleFilePath
         let candidate = root.standardizedFileURL
         // Foundation keeps the /var spelling while its directory enumerator returns /private/var.
         // A POSIX canonical path keeps containment checks consistent for both spellings.
@@ -294,6 +296,7 @@ final class EditorWorkspace: ObservableObject {
     func open(path: String, asText: Bool = false, in column: UUID? = nil) throws {
         let components = try safeComponents(path)
         let normalizedPath = components.joined(separator: "/")
+        guard singleFilePath == nil || singleFilePath == normalizedPath else { throw FileEditorError.unsafePath }
         func show() {
             if let column, columns.index(of: column) != nil { columns.select(normalizedPath, in: column) }
             else { selectedDocumentID = normalizedPath }
@@ -555,6 +558,11 @@ final class EditorWorkspace: ObservableObject {
                   let line = MarkdownLinks.headingLine(anchor, in: document.text) else { errorMessage = "找不到标题「\(anchor)」。"; return }
             try? reveal(path: documentPath, line: line)
         case let .file(path, line, anchor):
+            if let singleFilePath {
+                guard path == singleFilePath else { showNotice("请用「打开文件…」打开其他文件"); return }
+                try? reveal(path: path, line: line, heading: anchor)
+                return
+            }
             let url = root.appendingPathComponent(path)
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {

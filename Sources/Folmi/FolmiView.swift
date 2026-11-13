@@ -31,11 +31,12 @@ struct FolmiView: View {
                 // Opening and refreshing are occasional; one menu holds them (and the 文件 menu has their shortcuts).
                 Menu {
                     Button("打开仓库…（⌘O）", action: model.openRepository).disabled(model.busy)
+                    Button("打开文件…（⌥⌘O）") { model.standaloneFiles.choose(using: model) }
                     Button("创建演示仓库", action: model.loadDemo).disabled(model.busy)
                     Divider()
                     Button("重新读取状态（⌘R）", action: model.refresh).disabled(!model.hasSnapshot || model.busy)
                 } label: { Label("仓库", systemImage: "folder") }
-                .help("打开仓库、新建演示仓库、重新读取状态")
+                .help("打开仓库或文件、新建演示仓库、重新读取状态")
             }
             ToolbarItem(placement: .principal) { BranchMenu(model: model) }
             ToolbarItemGroup(placement: .primaryAction) {
@@ -591,14 +592,17 @@ private struct WelcomeView: View {
                         }
                     }
                 } else {
-                    Button("打开本地仓库", action: model.openRepository)
-                        .buttonStyle(.folmiProminent)
-                    Button("试用演示仓库", action: model.loadDemo)
-                        .help("演示仓库独立创建，可用来试验暂存和提交")
+                    Group {
+                        Button("打开本地仓库", action: model.openRepository)
+                            .buttonStyle(.folmiProminent)
+                        Button("试用演示仓库", action: model.loadDemo)
+                            .help("演示仓库独立创建，可用来试验暂存和提交")
+                    }
+                    .disabled(model.busy)
+                    Button("打开文件…") { model.standaloneFiles.choose(using: model) }
                 }
             }
             .controlSize(.large)
-            .disabled(model.busy)
             .padding(.top, 18)
             if !recentProjects.isEmpty {
                 recents.padding(.top, 24)

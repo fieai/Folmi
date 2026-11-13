@@ -8,7 +8,8 @@ final class FolmiAppDelegate: NSObject, NSApplicationDelegate {
         FinderService.shared.install()
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        model?.prepareToQuit() == false ? .terminateCancel : .terminateNow
+        guard let model else { return .terminateNow }
+        return model.standaloneFiles.prepareToQuit() && model.prepareToQuit() ? .terminateNow : .terminateCancel
     }
 }
 
@@ -49,10 +50,8 @@ struct FolmiApp: App {
                     }
                 }
                 // `folmi://` links (MCP show_in_folmi) go to this window, not a new one.
-                // A folder dropped on the Dock icon or passed to `open -a` arrives here as a file URL.
-                .onOpenURL { url in
-                    if url.isFileURL { model.openFromFinder(url) } else { model.handleFolmiLink(url) }
-                }
+                // Files and folders passed by macOS arrive here as file URLs.
+                .onOpenURL(perform: model.handleExternalOpen)
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
         .handlesExternalEvents(matching: ["*"])
@@ -87,6 +86,8 @@ struct FolmiCommands: Commands {
         CommandGroup(replacing: .newItem) {
             Button("打开仓库…") { model.openRepository() }.keyboardShortcut("o")
                 .disabled(model.busy)
+            Button("打开文件…") { model.standaloneFiles.choose(using: model) }
+                .keyboardShortcut("o", modifiers: [.command, .option])
             if let command = BundledTerminalCommand.executable {
                 Button("安装终端命令…") { BundledTerminalCommand.prompt(for: command) }
             }
@@ -97,15 +98,15 @@ struct FolmiCommands: Commands {
             Divider()
             Button(model.undoLabel.map { "撤销 Git：\($0.prefix(40))" } ?? "撤销 Git 操作") { model.undoGitOperation() }
                 .keyboardShortcut("z", modifiers: [.command, .option])
-                .disabled(model.undoLabel == nil || model.busy)
+                .disabled(model.undoLabel == nil || model.busy || model.standaloneFiles.active != nil)
             Button(model.redoLabel.map { "重做 Git：\($0.prefix(40))" } ?? "重做 Git 操作") { model.redoGitOperation() }
                 .keyboardShortcut("z", modifiers: [.command, .option, .shift])
-                .disabled(model.redoLabel == nil || model.busy)
+                .disabled(model.redoLabel == nil || model.busy || model.standaloneFiles.active != nil)
         }
         CommandGroup(after: .saveItem) {
             Button(model.showCommitComposer ? "提交暂存区" : "准备提交…", action: model.handleCommitShortcut)
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(!model.hasSnapshot || model.busy)
+                .disabled(!model.hasSnapshot || model.busy || model.standaloneFiles.active != nil)
         }
         CommandMenu("查找") {
             Button("万能搜索…", action: model.openPalette).keyboardShortcut("k")
@@ -148,7 +149,7 @@ struct FolmiCommands: Commands {
             Divider()
             Button("发送审查评论到终端") { model.sendReviewCommentsToTerminal() }
                 .keyboardShortcut(.return, modifiers: [.command, .option])
-                .disabled(model.sendableReviewComments.isEmpty)
+                .disabled(model.sendableReviewComments.isEmpty || model.standaloneFiles.active != nil)
             Button("查看调用关系") { model.showCallsAtCursor() }
                 .keyboardShortcut("h", modifiers: [.control, .option]).disabled(!model.hasSnapshot)
             Button("发送编辑器选中的行到终端") { model.sendEditorSelectionToTerminal() }
@@ -171,14 +172,17 @@ struct FolmiCommands: Commands {
         CommandMenu("编辑显示") {
             Button("回到上一个位置") { model.navigateEditor(back: true) }
                 .keyboardShortcut("[", modifiers: [.control])
-                .disabled(model.busy || model.editorChrome?.canNavigateBack != true)
+                .disabled(model.standaloneFiles.active != nil || model.busy || model.editorChrome?.canNavigateBack != true)
             Button("前往下一个位置") { model.navigateEditor(back: false) }
                 .keyboardShortcut("]", modifiers: [.control])
-                .disabled(model.busy || model.editorChrome?.canNavigateForward != true)
+                .disabled(model.standaloneFiles.active != nil || model.busy || model.editorChrome?.canNavigateForward != true)
             Divider()
-            Button("Markdown 阅读 / 编辑", action: model.toggleMarkdownPreview)
+            Button("Markdown 阅读 / 编辑") {
+                if let file = model.standaloneFiles.active { file.workspace.markdownReading.toggle() }
+                else { model.toggleMarkdownPreview() }
+            }
                 .keyboardShortcut("m", modifiers: [.option, .shift])
-                .disabled(!model.isMarkdownDocument || model.content != .editor || model.busy)
+                .disabled(!(model.standaloneFiles.active?.isMarkdown ?? (model.isMarkdownDocument && model.content == .editor && !model.busy)))
             Divider()
             ThemeMenuItems(model: model)
             Divider()

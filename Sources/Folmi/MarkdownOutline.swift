@@ -170,6 +170,7 @@ extension EditorWorkspace {
 
     /// Markdown and other project files, listed at most every few seconds while names are being completed.
     func wikiCandidatePaths() -> [String] {
+        if let singleFilePath { return [singleFilePath] }
         if let cached = wikiPathCache, Date().timeIntervalSince(cached.date) < 5 { return cached.paths }
         let paths = (try? filePaths()) ?? []
         wikiPathCache = (Date(), paths)
@@ -214,6 +215,7 @@ extension EditorWorkspace {
         wikiPathCache = nil
         var path = MarkdownWiki.match(name, from: documentPath, in: wikiCandidatePaths())
         if path == nil {
+            guard singleFilePath == nil else { showNotice("请用「打开文件…」打开其他文件"); return }
             guard confirmCreate(name) else { return }
             do { path = try createWikiNote(name, from: documentPath) }
             catch { errorMessage = "无法创建笔记「\(name)」：\(error.localizedDescription)"; return }

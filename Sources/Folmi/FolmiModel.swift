@@ -100,6 +100,7 @@ final class FolmiModel {
     /// once the conflicts are resolved.
     var conflictedRestores: [String: StashEntry] = [:]
     var projects: [ProjectPreferences] = []
+    let standaloneFiles = StandaloneFiles()
     var editorWorkspace: EditorWorkspace?
     /// The selected terminal tab of this project.
     var terminalSession: TerminalSession?

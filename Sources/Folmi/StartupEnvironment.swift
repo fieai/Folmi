@@ -108,6 +108,9 @@ struct StartupEnvironmentView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            Button("打开文件…") { model.standaloneFiles.choose(using: model) }.padding(.bottom, 24)
+        }
         .textSelection(.enabled)
         .padding(30)
         .frame(maxWidth: checking ? nil : 620, alignment: .leading)

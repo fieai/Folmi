@@ -30,12 +30,14 @@ struct FileEditorPane: View {
                         ThemedSegmented(options: [(true, "阅读"), (false, "编辑")], selection: Binding(
                             get: { workspace.isReading(column: column) }, set: { workspace.setReading($0, column: column) }))
                             .controlSize(.small)
-                        .help("阅读：排版后的文档，选中文字可发到终端。编辑：Markdown 源码。⇧⌥M 切换")
-                        PaneIconButton(symbol: "rectangle.split.2x1",
-                                       help: markdownSideBySideBlockedReason ?? "并排：左边编辑源码，右边看排版效果，滚动跟随") {
-                            onMarkdownSideBySide?()
+                        .help("阅读：排版后的文档。编辑：Markdown 源码。⇧⌥M 切换")
+                        if workspace.singleFilePath == nil {
+                            PaneIconButton(symbol: "rectangle.split.2x1",
+                                           help: markdownSideBySideBlockedReason ?? "并排：左边编辑源码，右边看排版效果，滚动跟随") {
+                                onMarkdownSideBySide?()
+                            }
+                            .disabled(onMarkdownSideBySide == nil || markdownSideBySideBlockedReason != nil)
                         }
-                        .disabled(onMarkdownSideBySide == nil || markdownSideBySideBlockedReason != nil)
                     }
                     Text(shown?.path ?? "")
                         .themedFont(.caption.monospaced(), points: 10).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -88,7 +90,7 @@ struct FileEditorPane: View {
                 .motion(Motion.reveal, value: workspace.notice)
                 .background {
                     // Keyboard shortcuts stay on even when their buttons are tucked away; only the active column has them.
-                    if isActiveColumn {
+                    if isActiveColumn && workspace.singleFilePath == nil {
                         Group {
                             Button("保存") { saveSelected() }.keyboardShortcut("s", modifiers: .command)
                                 .disabled(shown?.isDirty != true)
@@ -110,7 +112,7 @@ struct FileEditorPane: View {
                             // The notice takes its own row above the text, so it never covers the heading being read.
                             VStack(spacing: 0) {
                                 if workspace.externalChanges[document.id] != nil {
-                                    ExternalChangeBanner(onShowChanges: { workspace.showChanges?(document.path) },
+                                    ExternalChangeBanner(onShowChanges: workspace.showChanges.map { showChanges in { showChanges(document.path) } },
                                                          onDismiss: { workspace.dismissExternalChange(document.id) })
                                         .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 6)
                                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -410,7 +412,7 @@ struct FileActionsMenu: View {
 
 /// Shown over a document that another program (usually the agent in the terminal) just changed on disk.
 struct ExternalChangeBanner: View {
-    let onShowChanges: () -> Void
+    let onShowChanges: (() -> Void)?
     let onDismiss: () -> Void
     var body: some View {
         let _ = PerfLog.body("ExternalChangeBanner")
@@ -418,7 +420,9 @@ struct ExternalChangeBanner: View {
             Circle().fill(ThemeColor(token: .accent)).frame(width: 7, height: 7)
             Text("这个文件刚被其他程序修改，已自动刷新").themedFont(.system(size: 12.5), points: 12.5)
             Spacer(minLength: 8)
-            Button("查看改动", action: onShowChanges).buttonStyle(.themedLink).themedFont(.system(size: 12.5), points: 12.5)
+            if let onShowChanges {
+                Button("查看改动", action: onShowChanges).buttonStyle(.themedLink).themedFont(.system(size: 12.5), points: 12.5)
+            }
             Button("知道了", action: onDismiss).buttonStyle(.pressable).foregroundStyle(.secondary).themedFont(.system(size: 12.5), points: 12.5)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>FolmiFinder</string>
+  <key>CFBundleIdentifier</key><string>local.folmi.app.finder</string>
+  <key>CFBundleName</key><string>Folmi Finder</string>
+  <key>CFBundleDisplayName</key><string>Folmi Finder</string>
+  <key>CFBundlePackageType</key><string>XPC!</string>
+  <key>CFBundleShortVersionString</key><string>0.0.0</string>
+  <key>CFBundleVersion</key><string>0</string>
+  <key>CFBundleSupportedPlatforms</key><array><string>MacOSX</string></array>
+  <key>FolmiOpenMenuTitle</key><string>用 Folmi 打开</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSExtension</key><dict>
+    <key>NSExtensionPointIdentifier</key><string>com.apple.FinderSync</string>
+    <key>NSExtensionPrincipalClass</key><string>FolmiFinderSync</string>
+  </dict>
+</dict></plist>

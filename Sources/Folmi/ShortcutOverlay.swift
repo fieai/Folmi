@@ -30,7 +30,8 @@ struct ShortcutGroup: Identifiable {
                 ("⌥⌘⏎", "审阅评论发到终端"), (ideaKey, "随手记（任何 App 里都能按）")
             ]),
             ShortcutGroup(title: "编辑", items: [
-                ("⌘S / ⌘⇧S", "保存 / 全部保存"), ("⌥⇧M", "Markdown 阅读 / 编辑"), ("⌘⇧Y", "这份文档的演变史")
+                ("⌥⌘O", "打开文件"), ("⌘S / ⌘⇧S", "保存 / 全部保存"),
+                ("⌥⇧M", "Markdown 阅读 / 编辑"), ("⌘⇧Y", "这份文档的演变史")
             ])
         ]
         return reviewing ? [review] + general : general + [review]

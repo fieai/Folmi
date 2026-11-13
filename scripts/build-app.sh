@@ -104,16 +104,31 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSServices</key><array><dict>
     <key>NSMenuItem</key><dict><key>default</key><string>用 Folmi 打开</string></dict>
-    <key>NSMessage</key><string>openFolder</string>
+    <key>NSMessage</key><string>openItem</string>
     <key>NSPortName</key><string>Folmi</string>
-    <key>NSRequiredContext</key><dict/>
-    <key>NSSendFileTypes</key><array><string>public.folder</string></array>
+    <key>NSRequiredContext</key><dict><key>NSApplicationIdentifier</key><string>com.apple.finder</string></dict>
+    <key>NSSendFileTypes</key><array><string>public.folder</string><string>public.data</string></array>
   </dict></array>
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Folder</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>
-    <key>LSHandlerRank</key><string>None</string>
+    <key>LSHandlerRank</key><string>Alternate</string>
     <key>LSItemContentTypes</key><array><string>public.folder</string></array>
+  </dict><dict>
+    <key>CFBundleTypeName</key><string>File</string>
+    <key>CFBundleTypeRole</key><string>Editor</string>
+    <key>LSHandlerRank</key><string>Alternate</string>
+    <key>LSItemContentTypes</key><array>
+      <string>public.data</string>
+      <string>public.plain-text</string>
+      <string>public.source-code</string>
+      <string>net.daringfireball.markdown</string>
+    </array>
+  </dict><dict>
+    <key>CFBundleTypeName</key><string>Other File</string>
+    <key>CFBundleTypeRole</key><string>Viewer</string>
+    <key>LSHandlerRank</key><string>None</string>
+    <key>CFBundleTypeExtensions</key><array><string>*</string></array>
   </dict></array>
   <key>CFBundleURLTypes</key><array><dict>
     <key>CFBundleURLName</key><string>local.folmi.link</string>
@@ -129,12 +144,26 @@ version="$(<"$app_root/VERSION")"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName $bundle_title" "$app_dir/Contents/Info.plist"
 # Finder's right-click 「用 Folmi 打开」; preview builds name themselves so the two entries can be told apart.
 if [[ "$bundle_title" != Folmi ]]; then
-  /usr/libexec/PlistBuddy -c "Set :NSServices:0:NSMenuItem:default 用 ${bundle_title}打开" "$app_dir/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :NSServices:0:NSMenuItem:default 用 ${bundle_title} 打开" "$app_dir/Contents/Info.plist"
 fi
 # Ad-hoc signatures are pinned to the cdhash, so macOS forgets folder-access grants on every rebuild.
 # Prefer a stable Apple Development identity; set FOLMI_SIGN_IDENTITY=- to force ad-hoc.
 sign_identity="${FOLMI_SIGN_IDENTITY:-$(/usr/bin/security find-identity -v -p codesigning | /usr/bin/awk '/"Apple Development:/ { print $2; exit }')}"
 sign_identity="${sign_identity:--}"
+# Build the Finder extension with its own sandbox signature before sealing the containing app.
+finder_source="$app_root/Sources/FolmiFinderExtension"
+finder_bundle="$app_dir/Contents/PlugIns/FolmiFinder.appex"
+mkdir -p "$finder_bundle/Contents/MacOS"
+cp "$finder_source/Info.plist" "$finder_bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $bundle_id.finder" "$finder_bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $bundle_title Finder 扩展" "$finder_bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :FolmiOpenMenuTitle 用 $bundle_title 打开" "$finder_bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$finder_bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${version//./}" "$finder_bundle/Contents/Info.plist"
+/usr/bin/xcrun --sdk macosx swiftc -O -swift-version 6 -application-extension -parse-as-library \
+  -target arm64-apple-macos14.0 -module-name FolmiFinder -framework FinderSync \
+  -Xlinker -e -Xlinker _NSExtensionMain "$finder_source/FinderSync.swift" -o "$finder_bundle/Contents/MacOS/FolmiFinder"
+/usr/bin/codesign --force --sign "$sign_identity" --entitlements "$finder_source/FolmiFinder.entitlements" "$finder_bundle"
 # Sign embedded Mach-O code first; --deep is reserved for verification.
 while IFS= read -r -d '' code_file; do
   if [[ "$(/usr/bin/file -b "$code_file")" == *Mach-O* ]]; then
@@ -143,7 +172,7 @@ while IFS= read -r -d '' code_file; do
     fi
     /usr/bin/codesign --force --sign "$sign_identity" "$code_file"
   fi
-done < <(/usr/bin/find "$app_dir/Contents" -type f -print0)
+done < <(/usr/bin/find "$app_dir/Contents" -path "$app_dir/Contents/PlugIns" -prune -o -type f -print0)
 /usr/bin/codesign --force --sign "$sign_identity" "$app_dir"
 /usr/bin/codesign --verify --deep --strict "$app_dir"
 # Replace the whole generated bundle so obsolete executables/resources cannot survive a rename.
