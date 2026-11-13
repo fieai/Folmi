@@ -66,6 +66,69 @@ final class MarkdownReaderTests: XCTestCase {
         XCTAssertEqual(workspace.selectedDocument?.text, "- [x] 第一\n- [ ] 第二\n草稿\n")
     }
 
+    private final class LayoutProbe: NSLayoutManager {
+        var forcedLayouts = 0
+        override func ensureLayout(for container: NSTextContainer) {
+            forcedLayouts += 1
+            super.ensureLayout(for: container)
+        }
+    }
+
+    func testRestoredReaderDefersLayoutUntilItsViewportExists() async throws {
+        let text = "# 第一节\n" + (0..<1000).map {
+            ($0 == 500 ? "\n# 第二节\n" : "") + "第 \($0) 行，恢复阅读时无需排版隐藏的源码。\n"
+        }.joined()
+        try write("large.md", text)
+        let workspace = EditorWorkspace(root: root)
+        try workspace.open(path: "large.md")
+        let position = (text as NSString).range(of: "第 10 行").location
+        let selection = NSRange(location: position, length: 3)
+        workspace.updateEditorState(id: "large.md", selection: selection, scrollOffset: 0)
+        let host = NSHostingView(rootView: NativeCodeEditor(workspace: workspace, documentID: "large.md",
+                                                          text: .constant(text), syntaxStatus: .constant("")))
+        host.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        defer { window.close() }
+        func source(_ view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap(source).first
+        }
+        host.layoutSubtreeIfNeeded()
+        let editor = try XCTUnwrap(source(host))
+        let coordinator = try XCTUnwrap(editor.delegate as? NativeCodeEditor.Coordinator)
+        let scroll = try XCTUnwrap(editor.enclosingScrollView)
+        let container = try XCTUnwrap(scroll.superview as? EditorContainer)
+        let layout = LayoutProbe()
+        layout.backgroundLayoutEnabled = false
+        try XCTUnwrap(editor.textContainer).replaceLayoutManager(layout)
+        // Reproduce the task winning the race against the container's first real size.
+        container.frame = .zero; scroll.frame = .zero
+        coordinator.restorePosition(scroll: scroll, reveal: false)
+        layout.forcedLayouts = 0
+        for _ in 0..<80 {
+            if workspace.outline.documentID == "large.md" { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(layout.forcedLayouts, 0, "a hidden source without a viewport must not force full-document layout")
+        XCTAssertTrue(coordinator.deferredRestore)
+        XCTAssertEqual(editor.selectedRange(), selection, "the saved caret still drives the initial outline")
+        XCTAssertEqual(workspace.outline.current, 0)
+        XCTAssertEqual(workspace.tabStates["large.md"]?.selectionLocation, position)
+        container.frame = host.bounds
+        host.layoutSubtreeIfNeeded()
+        workspace.markdownReading = false
+        for _ in 0..<40 {
+            host.layoutSubtreeIfNeeded()
+            if !editor.isHiddenOrHasHiddenAncestor, layout.forcedLayouts > 0 { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertFalse(editor.isHiddenOrHasHiddenAncestor)
+        XCTAssertGreaterThan(layout.forcedLayouts, 0, "the visible source restores its layout normally")
+        XCTAssertEqual(editor.string, text)
+        XCTAssertEqual(editor.selectedRange(), selection)
+    }
+
     func testEditHereLeavesReadingAtTheLine() throws {
         try write("doc.md", "# a\n\nline two\n\nline four\n")
         let workspace = EditorWorkspace(root: root)

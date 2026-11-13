@@ -489,6 +489,16 @@ struct NativeCodeEditor: NSViewRepresentable {
             // Layout must reflect wrapping and current type before a bounded scroll position can be restored.
             Task { @MainActor [weak self, weak scroll] in
                 guard let self, !self.isDismantled, let scroll, let editor = self.editor, self.documentID == documentID, self.restorationRevision == expectedRestoration else { return }
+                // Before the first container layout a hidden source has a one-point wrapping width.
+                // Forcing the whole document through it blocks the visible reader; restore when editing instead.
+                if self.isMarkdownFile, self.parent.workspace.isReading(column: self.parent.column),
+                   scroll.contentSize.width <= editor.textContainerInset.width * 2 {
+                    self.deferredRestore = true
+                    self.deferredReveal = self.deferredReveal || reveal
+                    self.navigationAwaitingStyle = nil
+                    self.restoringPosition = false
+                    return
+                }
                 if let container = editor.textContainer, let layout = editor.layoutManager {
                     layout.ensureLayout(for: container)
                     let height = max(scroll.contentSize.height, layout.usedRect(for: container).maxY + editor.textContainerInset.height * 2)

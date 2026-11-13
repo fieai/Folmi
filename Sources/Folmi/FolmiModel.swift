@@ -18,6 +18,7 @@ enum FolmiContent: String, CaseIterable { case diff = "差异", editor = "编辑
 @MainActor
 @Observable
 final class FolmiModel {
+    @ObservationIgnored var changeListInput: ChangeListInput?
     var snapshot: RepositorySnapshot? {
         // The fingerprint covers the index, so open editors reload their gutter base when it moves.
         didSet {
@@ -126,6 +127,8 @@ final class FolmiModel {
     var reviewFocusAfterUndo: (paths: [String], date: Date)?
     var showMemory = false
     @ObservationIgnored var sharedPublishTask: Task<Void, Never>?
+    @ObservationIgnored var learningRefreshTask: Task<Void, Never>?
+    @ObservationIgnored var learningFileTypes: (root: URL, fingerprint: String, hasCallMapFiles: Bool)?
     /// Size and date of each project's comment-replies.jsonl when last read.
     @ObservationIgnored var commentReplyStamps: [String: String?] = [:]
     var content: FolmiContent = .diff
@@ -416,10 +419,17 @@ final class FolmiModel {
     var repositoryTitle: String {
         projects.first { $0.rootPath == repositoryURL?.path }?.name ?? repositoryURL?.lastPathComponent ?? "Folmi"
     }
-    var filesInArea: [FileChange] { snapshot?.files.filter { area == .working ? $0.hasWorking : $0.hasStaged } ?? [] }
+    var filesInArea: [FileChange] { files(in: area) }
+    private func files(in group: ChangeArea) -> [FileChange] {
+        if let input = changeListInput, input.root == snapshot?.root, input.fingerprint == snapshot?.fingerprint {
+            return group == .working ? input.working.files : input.staged.files
+        }
+        return snapshot?.files.filter { group == .working ? $0.hasWorking : $0.hasStaged } ?? []
+    }
     var visibleFiles: [FileChange] { visibleFiles(in: area) }
     func visibleFiles(in group: ChangeArea) -> [FileChange] {
-        (snapshot?.files ?? []).filter { (group == .working ? $0.hasWorking : $0.hasStaged) && (fileSearch.isEmpty || $0.path.localizedCaseInsensitiveContains(fileSearch)) }
+        let files = files(in: group)
+        return fileSearch.isEmpty ? files : files.filter { $0.path.localizedCaseInsensitiveContains(fileSearch) }
     }
     var visibleBrowserPaths: [String] { browserPaths.filter { fileSearch.isEmpty || $0.localizedCaseInsensitiveContains(fileSearch) } }
     var selectedFile: FileChange? { filesInArea.first { $0.id == selectedFileID } }
@@ -574,6 +584,10 @@ final class FolmiModel {
         let candidate = GitRepository(url: url, environment: environment, largeRepository: large)
         let state: RepositorySnapshot
         if let cached { state = cached } else { state = try await candidate.load() }
+        changeListInput = state.files.count > ChangeListRow.automaticGroupingThreshold
+            ? await ChangeListInput.prepare(state) : nil
+        let installStart = ContinuousClock.now
+        PerfLog.note("project.snapshot", String(state.files.count))
         PerfLog.mark("launch.repoLoaded")
         restoring = true
         defer { restoring = false }
@@ -686,6 +700,7 @@ final class FolmiModel {
         syncTerminalTabs()
         if showTerminal { startTerminal() }
         // The file tree is read beside the first diff instead of before it.
+        PerfLog.spend("project.install", since: installStart)
         PerfLog.mark("launch.diffStart")
         async let tree: Void = refreshProjectTree()
         await updateDiff()
@@ -754,10 +769,13 @@ final class FolmiModel {
             guard next.fingerprint != current.fingerprint || next.branch != current.branch || next.head != current.head ||
                   next.branches != current.branches || next.remotes != current.remotes || next.unpushed != current.unpushed else { return }
             let pathsChanged = Set(next.files.map(\.path)) != Set(current.files.map(\.path))
+            let listInput = await ChangeListInput.prepare(next)
+            guard repositoryURL == root, !busy, snapshot?.fingerprint == current.fingerprint else { return }
             if next.head != current.head || next.fingerprint != current.fingerprint { deliveryPlan = nil }
             noteExternalChanges(from: current, to: next)
             let applied = ContinuousClock.now
             PerfLog.resetBodies()
+            changeListInput = listInput
             snapshot = next
             autoRefreshCount += 1
             scheduleCommitSuggestion()
@@ -803,7 +821,9 @@ final class FolmiModel {
     func reload() async throws {
         guard let repository else { return }
         editorWorkspace?.reloadCleanDocuments()
-        snapshot = try await repository.load()
+        let next = try await repository.load()
+        changeListInput = await ChangeListInput.prepare(next)
+        snapshot = next
         scheduleCommitSuggestion()
         scheduleCommitCheck()
         await refreshProjectTree()

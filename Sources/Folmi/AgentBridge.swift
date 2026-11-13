@@ -6,36 +6,48 @@ import SwiftUI
 /// The app's half of `folmi-hook mcp`: it writes the review state the MCP server reads, takes in the agent's
 /// "dealt with it" replies, and opens `folmi://` links.
 extension FolmiModel {
+    private static let sharedPublishQueue = DispatchQueue(label: "local.folmi.shared-publish", qos: .utility)
+
     /// Writes comments, review status and app.json a moment after they change (several changes, one write).
     func schedulePublishShared() {
         guard autoRefresh else { return }
         sharedPublishTask?.cancel()
         sharedPublishTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-            self?.publishShared()
+            guard let self else { return }
+            Self.sharedPublishQueue.async(execute: self.sharedPublication())
         }
     }
 
     func publishShared() {
+        Self.sharedPublishQueue.sync(execute: sharedPublication())
+    }
+
+    private func sharedPublication() -> @Sendable () -> Void {
         let state = SharedAppState(bundleID: Bundle.main.bundleIdentifier, appPath: Bundle.main.bundlePath, repository: repositoryURL?.path)
-        AppLog.attempt("写 app.json") { try FolmiShared.write(state, to: FolmiShared.appState(settingsDirectory: AppFiles.directory)) }
-        guard let snapshot, let gitDir = aiGitDir else { return }
+        let appURL = FolmiShared.appState(settingsDirectory: AppFiles.directory)
+        let snapshot = snapshot, gitDir = aiGitDir
         let comments = currentReviewComments.map {
             SharedComment(id: $0.id.uuidString, path: $0.path, firstLine: $0.firstLine, lastLine: $0.lastLine, excerpt: $0.excerpt,
                           body: $0.body, outdated: $0.outdated)
         }
-        let files = snapshot.files.map {
-            SharedReviewStatus.File(path: $0.path, staged: $0.hasStaged, working: $0.hasWorking && !$0.isUntracked, untracked: $0.isUntracked)
-        }
         let latest = aiBatches.last(where: { !$0.paths.isEmpty }).map { SharedReviewStatus.Batch(id: $0.id, prompt: $0.prompt, paths: $0.paths, finished: $0.stopped != nil) }
-        let status = SharedReviewStatus(branch: snapshot.branch, files: files, remaining: allChanges.isEmpty ? nil : reviewTally.remaining,
-                                        latestBatch: latest)
-        let commentsURL = FolmiShared.comments(gitDir: gitDir), statusURL = FolmiShared.status(gitDir: gitDir)
-        // An empty list needs no file in a repository that never had notes.
-        if !comments.isEmpty || FileManager.default.fileExists(atPath: commentsURL.path) {
-            AppLog.attempt("写 comments.json") { try FolmiShared.write(comments, to: commentsURL) }
+        let remaining = allChanges.isEmpty ? nil : reviewTally.remaining
+        // Capture one coherent model state; a serial writer preserves publication order across project switches.
+        return {
+            AppLog.attempt("写 app.json") { try FolmiShared.write(state, to: appURL) }
+            guard let snapshot, let gitDir else { return }
+            let files = snapshot.files.map {
+                SharedReviewStatus.File(path: $0.path, staged: $0.hasStaged, working: $0.hasWorking && !$0.isUntracked, untracked: $0.isUntracked)
+            }
+            let status = SharedReviewStatus(branch: snapshot.branch, files: files, remaining: remaining, latestBatch: latest)
+            let commentsURL = FolmiShared.comments(gitDir: gitDir), statusURL = FolmiShared.status(gitDir: gitDir)
+            // An empty list needs no file in a repository that never had notes.
+            if !comments.isEmpty || FileManager.default.fileExists(atPath: commentsURL.path) {
+                AppLog.attempt("写 comments.json") { try FolmiShared.write(comments, to: commentsURL) }
+            }
+            AppLog.attempt("写 review-status.json") { try FolmiShared.write(status, to: statusURL) }
         }
-        AppLog.attempt("写 review-status.json") { try FolmiShared.write(status, to: statusURL) }
     }
 
     /// The agent's replies (`mark_comment_addressed`) shown on their notes. Read when the file changed.

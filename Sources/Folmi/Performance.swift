@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Darwin
 import os
@@ -16,6 +17,37 @@ enum Perf {
     }
 }
 
+/// Samples main-loop gaps, including the unfinished interval when the measured frame completes.
+@MainActor
+final class MainThreadHeartbeat {
+    private var timer: Timer?
+    private var previous = ContinuousClock.now
+    private(set) var maximumIntervalMilliseconds: Double = 0
+
+    init() {
+        let timer = Timer(timeInterval: 0.01, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sample() }
+        }
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func stop() {
+        sample()
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func sample() {
+        let now = ContinuousClock.now
+        let elapsed = now - previous
+        maximumIntervalMilliseconds = max(maximumIntervalMilliseconds,
+            Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15)
+        PerfLog.mainGap(Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15)
+        previous = now
+    }
+}
+
 /// Wall-clock timings for `--perf-log <file>` runs (scripts/perf.sh): launch milestones in ms since the process
 /// started, and switch intervals in ms. One tab-separated line per event. Does nothing without the flag.
 @MainActor
@@ -30,6 +62,12 @@ enum PerfLog {
     static var enabled: Bool { handle != nil }
     /// Whether the run drives itself through switches and quits (scripts/perf.sh).
     static let scripted = CommandLine.arguments.contains("--perf-run")
+    private static var scriptStarted = false
+    static func beginScriptRun() -> Bool {
+        guard !scriptStarted else { return false }
+        scriptStarted = true
+        return true
+    }
     private static var seen: Set<String> = []
 
     /// Kernel start time of this process, so a milestone includes dyld and Swift runtime start-up.
@@ -61,12 +99,47 @@ enum PerfLog {
         let elapsed = ContinuousClock.now - start
         let ms = Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
         write(name, ms, detail: detail)
-        if ["reader.swift", "switch.diffFrame", "switch.refreshFrame"].contains(name) { flushBodies(name) }
+        if ["reader.swift", "switch.diffFrame", "switch.refreshFrame", "switch.largeProject", "switch.hugeProject"].contains(name) { flushBodies(name) }
     }
     /// Roughly "on screen": two main-loop turns later, after SwiftUI has applied the change and Core Animation has
     /// committed the transaction that holds it.
     static func afterFrame(_ work: @escaping @MainActor () -> Void) {
         DispatchQueue.main.async { DispatchQueue.main.async { MainActor.assumeIsolated(work) } }
+    }
+    private static var largeProjectSwitch: (root: URL, metric: String, start: ContinuousClock.Instant, heartbeat: MainThreadHeartbeat)?
+    private static var largeProjectFramePending = false
+    static var largeProjectSwitchPending: Bool { largeProjectSwitch != nil }
+
+    static func mainGap(_ milliseconds: Double) {
+        guard let pending = largeProjectSwitch, milliseconds > 100 else { return }
+        let elapsed = ContinuousClock.now - pending.start
+        let end = Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
+        write("main.gap", milliseconds, detail: String(format: "%@ %.1f–%.1fms active=%@", pending.metric,
+                                                       end - milliseconds, end, NSApp.isActive.description))
+    }
+
+    static func beginLargeProjectSwitch(root: URL, metric: String) {
+        guard enabled else { return }
+        // A later project must not finish an unpainted file-switch interval from the reader scenario.
+        readerSwitch = nil
+        largeProjectSwitch?.heartbeat.stop()
+        largeProjectFramePending = false
+        largeProjectSwitch = (root, metric, .now, MainThreadHeartbeat())
+        note("project.switch.begin", metric)
+    }
+
+    /// Called after the changes pane has installed the rows for the destination snapshot.
+    static func largeProjectListReady(root: URL) {
+        guard let pending = largeProjectSwitch, pending.root == root, !largeProjectFramePending else { return }
+        largeProjectFramePending = true
+        afterFrame {
+            guard let current = largeProjectSwitch, current.start == pending.start else { return }
+            current.heartbeat.stop()
+            interval(current.metric, since: current.start)
+            write(current.metric + ".stall", current.heartbeat.maximumIntervalMilliseconds)
+            largeProjectSwitch = nil
+            largeProjectFramePending = false
+        }
     }
     private static var bodies: [String: Int] = [:]
     /// Counts a view body (or representable update) evaluation; each switch line is followed by a `bodies` line with

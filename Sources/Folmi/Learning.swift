@@ -393,17 +393,25 @@ extension FolmiModel {
 
     func refreshLearning() {
         guard let gitDir = aiGitDir else { if !ruleProposals.isEmpty { ruleProposals = [] }; return }
+        let knownTypes = learningFileTypes?.root == snapshot?.root && learningFileTypes?.fingerprint == snapshot?.fingerprint
+        let callTools = knownTypes && learningFileTypes?.hasCallMapFiles == true && MCPInstaller.Client.allCases.contains { MCPInstaller.isInstalled($0) }
         let next = Learning.proposals(decisions: FolmiShared.lines(ReviewDecision.self, from: FolmiShared.decisions(gitDir: gitDir), limit: 2_000),
                                       notes: Self.learningNotes(gitDir: gitDir),
-                                      state: learningState, existingRules: projectRules, callTools: suggestsCallTools)
+                                      state: learningState, existingRules: projectRules, callTools: callTools)
         if next != ruleProposals { ruleProposals = next }
-    }
-
-    /// Folmi's MCP is connected for some agent, and the changes under review include JS / TS / Python files.
-    var suggestsCallTools: Bool {
-        guard snapshot?.files.contains(where: { Self.callMapExtensions.contains(($0.path as NSString).pathExtension.lowercased()) }) == true
-        else { return false }
-        return MCPInstaller.Client.allCases.contains { MCPInstaller.isInstalled($0) }
+        guard !knownTypes, let snapshot else { return }
+        learningRefreshTask?.cancel()
+        let extensions = Self.callMapExtensions
+        // Scanning every changed path must not delay the new project's first frame.
+        learningRefreshTask = Task { [weak self] in
+            let hasCallMapFiles = await Task.detached(priority: .utility) {
+                snapshot.files.contains { extensions.contains(($0.path as NSString).pathExtension.lowercased()) }
+            }.value
+            guard !Task.isCancelled, let self, self.aiGitDir == gitDir,
+                  self.snapshot?.root == snapshot.root, self.snapshot?.fingerprint == snapshot.fingerprint else { return }
+            self.learningFileTypes = (snapshot.root, snapshot.fingerprint, hasCallMapFiles)
+            self.refreshLearning()
+        }
     }
 
     /// Review notes and rejection reasons, oldest first.

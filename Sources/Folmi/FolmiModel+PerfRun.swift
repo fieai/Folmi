@@ -8,7 +8,16 @@ extension FolmiModel {
     /// `--perf-run`: walks through the changed files' diffs, then the largest Markdown files in reading mode (each
     /// twice, so the second visit shows a switch back to an open tab), and quits. Timings go to `--perf-log`.
     func runPerfScript() {
+        // Installing each destination invokes this entry point again; only the initial install owns the script.
+        guard PerfLog.beginScriptRun() else { return }
         Task { @MainActor in
+            // An unattended benchmark may be inactive; App Nap must not coalesce its heartbeat timer.
+            let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep,
+                                                                 reason: "Folmi performance measurement")
+            defer { ProcessInfo.processInfo.endActivity(activity) }
+            // A restored reader must be visible for WebKit's frame callbacks to run during measurement.
+            NSApp.windows.first(where: { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
             try? await Task.sleep(for: .seconds(2))
             PerfLog.launchOver = true
             // Like a person going down the changes list: the list is what is on screen.
@@ -49,7 +58,52 @@ extension FolmiModel {
                     editPath(back); try? await Task.sleep(for: .milliseconds(900))
                 }
             }
+            let measuredProjects = ["perf-large", "perf-huge"].compactMap { name in projects.first { $0.name == name } }
+            if !measuredProjects.isEmpty {
+                let selection = (area: area, ids: selectedFileIDs, id: selectedFileID)
+                let savedContent = content, savedLayout = paneLayout
+                let editorColumns = editorWorkspace?.columns
+                let markdownReading = editorWorkspace?.markdownReading
+                showSideTab(.changes)
+                await waitForPerfFrame()
+                for project in measuredProjects {
+                    let metric = project.name == "perf-huge" ? "switch.hugeProject" : "switch.largeProject"
+                    for _ in 0..<3 {
+                        PerfLog.beginLargeProjectSwitch(root: URL(fileURLWithPath: project.rootPath), metric: metric)
+                        switchProject(project.rootPath)
+                        guard await waitForPerfProject(project.rootPath, measured: true) else { break }
+                        switchProject(root.path)
+                        guard await waitForPerfProject(root.path) else { break }
+                        await waitForPerfFrame()
+                    }
+                }
+                // Restore exactly where the original script quit. editPath would also replace the diff selection.
+                area = selection.area; selectedFileIDs = selection.ids; selectedFileID = selection.id
+                content = savedContent; paneLayout = savedLayout
+                if let editorColumns { editorWorkspace?.columns = editorColumns }
+                if let markdownReading { editorWorkspace?.markdownReading = markdownReading }
+            }
             NSApp.terminate(nil)
         }
+    }
+
+    private func waitForPerfFrame() async {
+        // A loaded project can still have a reader/list layout queued for its first frame.
+        // Finish that frame before starting the next project's measurement.
+        await withCheckedContinuation { continuation in
+            PerfLog.afterFrame { continuation.resume() }
+        }
+    }
+
+    private func waitForPerfProject(_ path: String, measured: Bool = false) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(30)
+        while busy || repositoryURL?.path != path || (measured && PerfLog.largeProjectSwitchPending) {
+            guard ContinuousClock.now < deadline else {
+                PerfLog.note("error", "切换项目超时：\(path)")
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return true
     }
 }

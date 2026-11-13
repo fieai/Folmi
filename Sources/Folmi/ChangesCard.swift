@@ -194,20 +194,32 @@ struct ChangesPane: View {
     var filePasteboard: NSPasteboard = .general
     @State private var collapsedFolders: [ChangeArea: Set<String>] = [:]
     @State private var searchCollapsedFolders: [ChangeArea: Set<String>] = [:]
+    @State private var expandedLargeFolders: [ChangeArea: Set<String>] = [:]
+    @State private var searchExpandedLargeFolders: [ChangeArea: Set<String>] = [:]
+    @State private var stagedRows = ChangeListRowCache()
+    @State private var workingRows = ChangeListRowCache()
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let _ = PerfLog.body("ChangesPane")
-        let staged = model.visibleFiles(in: .staged), working = model.visibleFiles(in: .working)
+        let filesStart = ContinuousClock.now
+        let staged = stagedRows.files(model.snapshot, in: .staged, query: model.fileSearch, prepared: preparedTree(in: .staged))
+        let working = workingRows.files(model.snapshot, in: .working, query: model.fileSearch, prepared: preparedTree(in: .working))
+        let _ = PerfLog.spend("ChangesPane.filter", since: filesStart)
+        let forcedGrouping = staged.count > ChangeListRow.automaticGroupingThreshold || working.count > ChangeListRow.automaticGroupingThreshold
+        let selectionIsLarge = (model.area == .staged ? staged.count : working.count) > ChangeListRow.automaticGroupingThreshold
+        let revealKey = selectionKey + (selectionIsLarge ? ":large" : ":small")
         let unreviewed = model.unreviewedStaged
         let unreviewedWarning: String? = unreviewed.isEmpty ? nil : "\(unreviewed.values.reduce(0, +)) 处没验收"
         VStack(spacing: 0) {
             HStack(spacing: 4) {
                 TextField("搜索改动…", text: $model.fileSearch).themedTextField()
                 PaneIconButton(symbol: groupByFolder ? "list.bullet" : "folder",
-                               help: groupByFolder ? "切换为平铺展示" : "切换为按文件夹展示") {
+                               help: forcedGrouping ? ChangeListRow.forcedGroupingHelp : (groupByFolder ? "切换为平铺展示" : "切换为按文件夹展示")) {
                     groupByFolder.toggle()
                 }
+                .disabled(forcedGrouping)
+                .accessibilityIdentifier("changes.layout")
             }.padding(10)
             if let operation = model.snapshot?.operation {
                 OperationNotice(model: model, operation: operation).padding(.horizontal, 10).padding(.bottom, 8)
@@ -288,9 +300,30 @@ struct ChangesPane: View {
                 .onChange(of: model.reviewBrowsingFileKey) { _, key in
                     if let key { proxy.scrollTo(key) }
                 }
+                .task(id: revealKey) {
+                    // Let a project change reset its folders before revealing the restored selection.
+                    await Task.yield()
+                    guard !Task.isCancelled, let path = model.selectedFileID,
+                          model.filesInArea.contains(where: { $0.id == path }) else { return }
+                    guard model.fileSearch.isEmpty || path.localizedCaseInsensitiveContains(model.fileSearch) else { return }
+                    reveal(path, in: model.area)
+                    if selectionIsLarge {
+                        let cache = model.area == .staged ? stagedRows : workingRows
+                        cache.revealedSelection = revealKey
+                    }
+                    let key = model.area.rawValue + ":" + path
+                    PerfLog.afterFrame { proxy.scrollTo(key) }
+                }
+                .onChange(of: model.snapshot?.fingerprint, initial: true) { _, _ in
+                    if let root = model.snapshot?.root { PerfLog.largeProjectListReady(root: root) }
+                }
                 .task(id: model.theme.style.instrument ? model.snapshot?.fingerprint : nil) { await model.loadLineCounts() }
                 // Staging, unstaging or committing slides rows from one group to the other instead of a jump.
-                .motion(Motion.reveal, value: staged.map(\.id) + ["|"] + working.map(\.id))
+                .motion(Motion.reveal, value: forcedGrouping ? [] : staged.map(\.id) + ["|"] + working.map(\.id))
+                .transaction { transaction in
+                    // Animating thousands of hidden file identities delays the first usable large-project frame.
+                    if forcedGrouping { transaction.animation = nil; transaction.disablesAnimations = true }
+                }
                 }
             }
             if let count = model.snapshot?.stashCount, count > 0 {
@@ -299,11 +332,43 @@ struct ChangesPane: View {
             Divider()
             CommitSection(model: model)
         }
-        .onChange(of: model.fileSearch) { _, _ in searchCollapsedFolders.removeAll() }
+        .onChange(of: model.fileSearch) { _, _ in
+            searchCollapsedFolders.removeAll()
+            searchExpandedLargeFolders.removeAll()
+        }
         .onChange(of: model.repositoryURL) { _, _ in
             collapsedFolders.removeAll()
             searchCollapsedFolders.removeAll()
+            if !expandedLargeFolders.isEmpty { expandedLargeFolders.removeAll() }
+            if !searchExpandedLargeFolders.isEmpty { searchExpandedLargeFolders.removeAll() }
+            stagedRows.revealedSelection = nil; workingRows.revealedSelection = nil
         }
+    }
+
+    private var selectionKey: String {
+        (model.repositoryURL?.path ?? "") + ":" + model.area.rawValue + ":" + (model.selectedFileID ?? "")
+    }
+
+    private func reveal(_ path: String, in group: ChangeArea) {
+        let cache = group == .staged ? stagedRows : workingRows
+        let large = cache.files(model.snapshot, in: group, query: model.fileSearch, prepared: preparedTree(in: group)).count > ChangeListRow.automaticGroupingThreshold
+        var parent = (path as NSString).deletingLastPathComponent
+        while !parent.isEmpty {
+            if model.fileSearch.isEmpty {
+                if collapsedFolders[group]?.contains(parent) == true { collapsedFolders[group]?.remove(parent) }
+                if large, expandedLargeFolders[group]?.contains(parent) != true { expandedLargeFolders[group, default: []].insert(parent) }
+            } else {
+                if searchCollapsedFolders[group]?.contains(parent) == true { searchCollapsedFolders[group]?.remove(parent) }
+                if large, searchExpandedLargeFolders[group]?.contains(parent) != true { searchExpandedLargeFolders[group, default: []].insert(parent) }
+            }
+            parent = (parent as NSString).deletingLastPathComponent
+        }
+    }
+
+    private func preparedTree(in group: ChangeArea) -> ChangeListTree? {
+        guard model.fileSearch.isEmpty, let input = model.changeListInput,
+              input.root == model.snapshot?.root, input.fingerprint == model.snapshot?.fingerprint else { return nil }
+        return group == .staged ? input.staged : input.working
     }
 
     private func stagedHeader(_ staged: [FileChange], warning: String?) -> GroupHeader {
@@ -314,26 +379,60 @@ struct ChangesPane: View {
 
     private func fileRows(_ files: [FileChange], in group: ChangeArea, unreviewed: [String: Int] = [:]) -> some View {
         let collapsed = model.fileSearch.isEmpty ? $collapsedFolders : $searchCollapsedFolders
-        let rows = ChangeListRow.rows(files, grouped: groupByFolder, collapsed: collapsed.wrappedValue[group, default: []])
+        let expandedLarge = model.fileSearch.isEmpty ? $expandedLargeFolders : $searchExpandedLargeFolders
+        let cache = group == .staged ? stagedRows : workingRows
+        let large = files.count > ChangeListRow.automaticGroupingThreshold
+        var expanded = expandedLarge.wrappedValue[group, default: []]
+        // Include a navigation target in the first projection instead of updating the large table twice.
+        // Mount an editor's selection later: List can echo its initial selection as a navigation action.
+        if large, model.content == .diff, group == model.area, cache.revealedSelection != selectionKey + ":large",
+           let path = model.selectedFileID, files.contains(where: { $0.id == path }) {
+            var parent = (path as NSString).deletingLastPathComponent
+            while !parent.isEmpty {
+                expanded.insert(parent)
+                parent = (parent as NSString).deletingLastPathComponent
+            }
+        }
+        let rowsStart = ContinuousClock.now
+        let rows = cache.rows(files, grouped: groupByFolder, collapsed: collapsed.wrappedValue[group, default: []],
+                              expanded: expanded, prepared: preparedTree(in: group))
+        PerfLog.spend("ChangesPane.rows", since: rowsStart)
+        let folderCounts = cache.counts
         return ForEach(rows) { item in
-            Group {
+            // A Group exposes the conditional to List. A single row container lets SwiftUI index
+            // the rows directly instead of walking the ForEach again for every outline row.
+            VStack(spacing: 0) {
                 switch item {
                 case let .file(file, depth):
-                    row(file, group, depth: depth, unreviewed: unreviewed[file.path] != nil)
+                    row(file, group, depth: depth, unreviewed: unreviewed[file.path] != nil, grouped: groupByFolder || large)
                 case let .folder(path, depth, expanded):
-                    folderRow(path, depth: depth, expanded: expanded) {
-                        if expanded { collapsed.wrappedValue[group, default: []].insert(path) }
-                        else { collapsed.wrappedValue[group, default: []].remove(path) }
+                    folderRow(path, depth: depth, expanded: expanded, count: large ? folderCounts[path] : nil) {
+                        if large {
+                            if expanded {
+                                expandedLarge.wrappedValue[group, default: []] = expandedLarge.wrappedValue[group, default: []].filter {
+                                    $0 != path && !$0.hasPrefix(path + "/")
+                                }
+                            } else { expandedLarge.wrappedValue[group, default: []].insert(path) }
+                        } else {
+                            if expanded { collapsed.wrappedValue[group, default: []].insert(path) }
+                            else { collapsed.wrappedValue[group, default: []].remove(path) }
+                        }
                     }
                 }
             }
             .tag(item.fileID.map { group.rawValue + ":" + $0 } ?? item.id)
             .id(item.fileID.map { group.rawValue + ":" + $0 } ?? group.rawValue + ":" + item.id)
             .selectionDisabled(item.fileID == nil)
+            .listRowBackground(rowBackground(item, in: group))
         }
     }
 
-    private func folderRow(_ path: String, depth: Int, expanded: Bool, action: @escaping () -> Void) -> some View {
+    private func rowBackground(_ item: ChangeListRow, in group: ChangeArea) -> SelectedRowBackground {
+        let selected = model.area == group && item.fileID.map { model.selectedFileIDs.contains($0) } == true
+        return SelectedRowBackground(selected: selected, focused: model.paneLayout.focused == .changes)
+    }
+
+    private func folderRow(_ path: String, depth: Int, expanded: Bool, count: Int?, action: @escaping () -> Void) -> some View {
         let name = (path as NSString).lastPathComponent
         return Button(action: action) {
             HStack(spacing: 5) {
@@ -342,6 +441,9 @@ struct ChangesPane: View {
                 Image(systemName: expanded ? "folder.fill" : "folder")
                     .foregroundStyle(ThemeColor(token: .accent)).frame(width: 15)
                 Text(name).lineLimit(1).truncationMode(.middle)
+                if !expanded, let count {
+                    Text(count.formatted()).foregroundStyle(.secondary).monospacedDigit()
+                }
             }
             .padding(.leading, CGFloat(depth) * 16)
             .padding(.vertical, model.theme.style.rowPadding)
@@ -353,19 +455,18 @@ struct ChangesPane: View {
         .accessibilityValue(expanded ? "已展开" : "已折叠")
     }
 
-    private func row(_ file: FileChange, _ group: ChangeArea, depth: Int, unreviewed: Bool) -> some View {
+    private func row(_ file: FileChange, _ group: ChangeArea, depth: Int, unreviewed: Bool, grouped: Bool) -> some View {
         let key = group.rawValue + ":" + file.id
         let selected = model.area == group && model.selectedFileIDs.contains(file.id)
         let browsing = model.content == .allChanges && model.reviewBrowsingFileKey == key
         let focused = model.paneLayout.focused == .changes
-        let indent = groupByFolder ? CGFloat(depth) * 16 + 15 : 0
+        let indent = grouped ? CGFloat(depth) * 16 + 15 : 0
         return FileChangeRow(file: file, area: group, counts: model.theme.style.instrument ? model.lineCounts[key] : nil,
                              onAccent: selected && focused && model.theme.selection(dark: colorScheme == .dark) == .solid,
-                             unreviewed: unreviewed, showsDirectory: !groupByFolder)
+                             unreviewed: unreviewed, showsDirectory: !grouped)
             .padding(.leading, indent)
             .padding(.vertical, model.theme.style.rowPadding)
             .background(ListHighlightSuppressor())
-            .listRowBackground(SelectedRowBackground(selected: selected, focused: focused))
             .overlay(alignment: .trailing) {
                 if browsing {
                     Circle().fill(ThemeColor(token: .accent)).frame(width: 5, height: 5)

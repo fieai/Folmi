@@ -7,3 +7,6 @@ switch.reader again	150
 switch.reader first	200
 switch.reader fromCode	150
 switch.refreshFrame	50
+# Five unlocked runs on 2026-11-12 (15 switches), starting load 7.62/12: medians 219.0 / 130.8 ms; 30% headroom, capped at 1000 / 150 ms.
+switch.largeProject	285
+switch.largeProject.stall	150
