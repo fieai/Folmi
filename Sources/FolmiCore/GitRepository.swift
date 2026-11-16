@@ -15,6 +15,15 @@ public actor GitRepository {
         initialURL = url.standardizedFileURL; self.environment = environment; self.largeRepository = largeRepository
     }
 
+    /// `git init` in a folder that has no repository yet, so any project can be reviewed. Creates only `.git`; files
+    /// stay untracked and nothing is committed. Refuses when the folder already belongs to a repository.
+    public static func initialize(at url: URL, environment: [String: String] = [:]) throws {
+        let git = GitProcess(directory: url.standardizedFileURL, environment: environment)
+        let inside = try git.run(["rev-parse", "--is-inside-work-tree"], allowFailure: true)
+        guard inside.status != 0 else { throw FolmiError.unsupported("这个文件夹已经在 Git 仓库里了。") }
+        _ = try git.run(["init", "--quiet"])
+    }
+
     /// Files inside the Git directory that status and in-progress checks look at. Where they live never changes for
     /// a repository, so one `rev-parse` answers for its whole life instead of one per refresh.
     struct GitPaths { let index, rebaseMerge, rebaseApply, mergeHead: URL }

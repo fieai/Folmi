@@ -23,13 +23,24 @@ extension FolmiModel {
     func reportNotRepository(_ url: URL) {
         let path = url.standardizedFileURL.path
         if projects.contains(where: { $0.rootPath == path }) { missingProjectPath = path } else { notRepositoryPath = path }
-        let message = "「\(url.lastPathComponent)」不是 Git 仓库：这个文件夹和它的上层都没有 .git。\n请选择项目的根目录（含 .git 的文件夹），或其中的子文件夹。"
+        let message = "「\(url.lastPathComponent)」还没有用 Git 管理。\n启用后，Folmi 会在这个文件夹里建一个 .git 文件夹来记录你收下了哪些改动；不会改动、提交或上传你的文件。不想用了，删掉 .git 文件夹即可。\n也可以选择已经用 Git 管理的项目文件夹。"
         errorMessage = message
         record("打开项目失败", message + "\n\(path)", isError: true)
     }
     nonisolated static func isNotRepository(_ error: Error) -> Bool {
         guard case let FolmiError.git(code, message) = error, code == 128 else { return false }
         return message.localizedCaseInsensitiveContains("not a git repository") || message.contains("不是 git 仓库")
+    }
+    /// 启用 Git: `git init` the folder the user just picked, then open it. Its files start as untracked new files.
+    func initializeRepository() {
+        guard !busy, let path = notRepositoryPath else { return }
+        notRepositoryPath = nil; errorMessage = nil
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        do {
+            try GitRepository.initialize(at: url)
+            record("已启用 Git", path)
+        } catch { report(error, title: "启用 Git 失败"); return }
+        open(url)
     }
     func chooseAnotherRepository() {
         notRepositoryPath = nil; errorMessage = nil

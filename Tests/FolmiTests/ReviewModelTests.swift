@@ -231,13 +231,34 @@ final class ReviewModelTests: XCTestCase {
         model.open(directory)
         try await eventually("打开失败") { !model.busy && model.errorMessage != nil }
         let message = try XCTUnwrap(model.errorMessage)
-        XCTAssertTrue(message.contains("不是 Git 仓库"), message)
+        XCTAssertTrue(message.contains("还没有用 Git 管理"), message)
         XCTAssertFalse(message.contains("128"), message)
         XCTAssertEqual(model.notRepositoryPath, directory.standardizedFileURL.path)
         XCTAssertNil(model.missingProjectPath)
         XCTAssertTrue(model.projects.isEmpty)
         XCTAssertTrue(FolmiModel.isNotRepository(FolmiError.git(exitCode: 128, message: "fatal: 不是 git 仓库（或者任何父目录）：.git")))
         XCTAssertFalse(FolmiModel.isNotRepository(FolmiError.git(exitCode: 1, message: "not a git repository")))
+    }
+
+    /// 启用 Git turns a plain folder into a repository and opens it; its files wait as new, unaccepted changes.
+    @MainActor
+    func testInitializingPlainFolderOpensItWithFilesAsNewChanges() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-Plain-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        cleanupURLs.append(directory)
+        try "hello\n".write(to: directory.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+        let store = FileManager.default.temporaryDirectory.appendingPathComponent("Folmi-Store-\(UUID().uuidString).json")
+        cleanupURLs.append(store)
+        let model = FolmiModel(store: WorkspaceStore(url: store))
+        model.open(directory)
+        try await eventually("提示启用 Git") { !model.busy && model.notRepositoryPath != nil }
+        model.initializeRepository()
+        try await eventually("打开项目") { !model.busy && model.snapshot != nil }
+        XCTAssertNil(model.errorMessage, model.errorMessage ?? "")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent(".git").path))
+        XCTAssertEqual(model.snapshot?.files.map(\.path), ["notes.txt"])
+        XCTAssertEqual(model.projects.map { URL(fileURLWithPath: $0.rootPath).lastPathComponent }, [directory.lastPathComponent])
+        XCTAssertThrowsError(try GitRepository.initialize(at: directory))
     }
 
     /// The change list follows the review page's current file, across areas, without leaving the page.

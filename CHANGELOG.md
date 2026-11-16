@@ -2,6 +2,12 @@
 
 每个版本改了什么。版本号见 [VERSION](VERSION)，安装包在 [Releases](https://github.com/fieai/Folmi/releases)。
 
+## 未发布
+
+### 新增
+
+- 没有用 Git 管理的文件夹也能打开：点「启用 Git 并打开」，Folmi 会在文件夹里建一个 .git 来记录验收进度，不会提交或上传你的文件。
+
 ## 0.16.0 — 2026-11-13
 
 ### 新增

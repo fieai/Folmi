@@ -108,6 +108,7 @@ struct FolmiView: View {
                 Button("重新定位…") { model.errorMessage = nil; model.relocateMissingProject() }
                 Button("从项目列表移除", role: .destructive) { model.removeMissingProject() }
             } else if model.notRepositoryPath != nil {
+                Button("启用 Git 并打开") { model.initializeRepository() }
                 Button("选择其他文件夹…") { model.chooseAnotherRepository() }
             }
             Button("知道了", role: .cancel) { model.errorMessage = nil; model.missingProjectPath = nil; model.notRepositoryPath = nil }

@@ -530,7 +530,7 @@ final class FolmiModel {
     func openRepository() {
         guard !busy, !gitStartupState.blocksGit else { return }
         let panel = NSOpenPanel()
-        panel.title = "添加 Git 项目"; panel.prompt = "添加"
+        panel.title = "添加项目"; panel.prompt = "添加"
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url { open(url) }
     }
