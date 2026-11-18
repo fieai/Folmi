@@ -43,7 +43,8 @@ public enum ProcessExecutor {
         input: Data? = nil,
         timeout: TimeInterval = 60,
         stdoutLimit: Int = 16 * 1_024 * 1_024,
-        stderrLimit: Int = 2 * 1_024 * 1_024
+        stderrLimit: Int = 2 * 1_024 * 1_024,
+        keepStdoutTail: Bool = false
     ) throws -> ProcessExecutionResult {
         guard executable.isFileURL, executable.path.hasPrefix("/"),
               directory.isFileURL, directory.path.hasPrefix("/"),
@@ -156,7 +157,7 @@ public enum ProcessExecutor {
             }
         }
 
-        func drain(_ descriptor: OwnedDescriptor, into bytes: inout Data, limit: Int, label: String) {
+        func drain(_ descriptor: OwnedDescriptor, into bytes: inout Data, limit: Int, label: String, keepTail: Bool = false) {
             guard descriptor.fd >= 0 else { return }
             var buffer = [UInt8](repeating: 0, count: 65_536)
             // Limit each turn so a child writing forever cannot starve timeout or waitpid checks.
@@ -171,7 +172,11 @@ public enum ProcessExecutor {
                     beginTermination(error)
                     return
                 }
-                if bytes.count <= limit, count <= limit - bytes.count {
+                if keepTail {
+                    // Logs can be large, and only the most recent output is useful to the caller.
+                    bytes.append(contentsOf: buffer.prefix(count))
+                    if bytes.count > limit, bytes.count - limit > limit { bytes = Data(bytes.suffix(limit)) }
+                } else if bytes.count <= limit, count <= limit - bytes.count {
                     bytes.append(contentsOf: buffer.prefix(count))
                 } else {
                     beginTermination(.outputLimit(stream: label, limit: limit))
@@ -234,7 +239,7 @@ public enum ProcessExecutor {
                     beginTermination(.io("进程管道已失效"))
                     continue
                 }
-                if descriptor.fd == outRead.fd { drain(outRead, into: &stdout, limit: stdoutLimit, label: "标准输出") }
+                if descriptor.fd == outRead.fd { drain(outRead, into: &stdout, limit: stdoutLimit, label: "标准输出", keepTail: keepStdoutTail) }
                 else if descriptor.fd == errRead.fd { drain(errRead, into: &stderr, limit: stderrLimit, label: "标准错误") }
                 else if let inputWrite, descriptor.fd == inputWrite.fd, let input {
                     if descriptor.revents & Int16(POLLHUP | POLLERR) != 0 {
@@ -267,7 +272,8 @@ public enum ProcessExecutor {
         if inputIncomplete, exitStatus == 0 {
             throw ProcessExecutionError.io("子进程在接收完标准输入之前已退出")
         }
-        return ProcessExecutionResult(stdout: stdout, stderr: stderr, status: exitStatus)
+        return ProcessExecutionResult(stdout: keepStdoutTail ? Data(stdout.suffix(stdoutLimit)) : stdout,
+                                      stderr: stderr, status: exitStatus)
     }
 
     private static func makePipe() throws -> (OwnedDescriptor, OwnedDescriptor) {

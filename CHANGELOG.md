@@ -2,6 +2,12 @@
 
 每个版本改了什么。版本号见 [VERSION](VERSION)，安装包在 [Releases](https://github.com/fieai/Folmi/releases)。
 
+## 未发布
+
+### 新增
+
+- GitHub 分支支持「推送并创建 PR」。改动栏可查看 PR 的评审意见和失败检查，也可以把评论和失败日志加到当前 AI 输入框。
+
 ## 0.17.0 — 2026-11-16
 
 ### 新增

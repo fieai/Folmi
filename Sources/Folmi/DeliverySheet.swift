@@ -19,12 +19,20 @@ struct DeliverySheet: View {
         }
     }
     private var runTitle: String {
-        switch model.deliveryKind { case .push: return "推送"; case .gerrit: return "提交评审"; case .script: return "运行脚本" }
+        switch model.deliveryKind {
+        case .push: return model.githubDeliveryStatus?.pushTitle ?? "推送"
+        case .gerrit: return "提交评审"
+        case .script: return "运行脚本"
+        }
     }
     /// The main button: after a plan stopped on a moved target it says what the next click does.
     private var buttonTitle: String {
         guard model.deliveryKind != .script, model.canDeliver, model.deliveryPlan?.rebaseNeeded == true else { return runTitle }
         return (model.deliveryRebaseFirst ? "变基并" : "直接") + runTitle
+    }
+    private var createPRTitle: String {
+        guard model.canDeliver, model.deliveryPlan?.rebaseNeeded == true else { return "推送并创建 PR" }
+        return model.deliveryRebaseFirst ? "变基、推送并创建 PR" : "直接推送并创建 PR"
     }
     private var placeholder: String {
         if model.deliveryKind == .script { return "点「预览命令」：锁定当前提交，并在这里列出命令。这一步什么都不会执行。" }
@@ -34,6 +42,31 @@ struct DeliverySheet: View {
 
     var body: some View {
         let _ = PerfLog.body("DeliverySheet")
+        Group {
+            if let draft = model.visibleGitHubDraft, draft.created == nil,
+               let binding = Binding($model.githubDraft) {
+                VStack(alignment: .leading, spacing: 12) {
+                    GitHubDraftView(draft: binding, busy: model.busy, canSubmit: model.canSubmitGitHubDraft) {
+                        Task { await model.createGitHubPullRequest() }
+                    }
+                    GitHubDeliveryDetails(model: model, target: draft.target)
+                    HStack {
+                        Spacer()
+                        Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction).disabled(model.busy)
+                    }
+                }
+            } else {
+                pushControls
+            }
+        }
+        .padding(22)
+        .frame(width: 650)
+        // Another remote has other branches; switching to a review fills its default branch if none is set.
+        .onChange(of: model.deliveryRemote) { _, _ in Task { await model.loadDeliveryTargets() } }
+        .onChange(of: model.deliveryKind) { _, _ in Task { await model.loadDeliveryTargets() } }
+    }
+
+    private var pushControls: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -156,6 +189,10 @@ struct DeliverySheet: View {
                 Text("推送成功只表示 Git 已接收；评审、CI 和合并要在 Gerrit 上确认。").themedFont(.caption, points: 10).foregroundStyle(.secondary)
             }
 
+            if let target = model.githubDeliveryTarget, !model.isDemo {
+                GitHubDeliveryDetails(model: model, target: target)
+            }
+
             if let entry = model.currentActivity.first {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
@@ -203,17 +240,21 @@ struct DeliverySheet: View {
                     BusyButton("预览命令", busy: model.busy, action: model.preflightDelivery).disabled(model.busy)
                         .help("锁定当前提交并列出命令，不执行")
                 }
+                if let target = model.githubDeliveryTarget, let status = model.githubDeliveryStatus,
+                   model.visibleGitHubDraft == nil, status.pullRequest == nil {
+                    if status.canCreate(branch: target.branch) {
+                        Button(createPRTitle, action: model.pushForGitHubPullRequest)
+                            .disabled(model.busy || model.githubRequests[target] != nil)
+                    } else if case let .unavailable(reason, _) = status.access {
+                        Button(createPRTitle, action: model.pushForGitHubPullRequest).disabled(true).help(reason)
+                    }
+                }
                 BusyButton(model.busy ? (model.deliveryKind == .script ? "正在运行…" : "正在推送…") : buttonTitle, busy: model.busy, action: model.deliver)
                     .buttonStyle(.folmiProminent)
                     .disabled(model.busy || (model.deliveryKind == .script && !model.canDeliver))
                     .help(model.deliveryKind != .script ? "锁定当前提交，取回远端后推送" : model.canDeliver ? "执行上面列出的命令" : "先点「预览命令」")
             }
         }
-        .padding(22)
-        .frame(width: 650)
-        // Another remote has other branches; switching to a review fills its default branch if none is set.
-        .onChange(of: model.deliveryRemote) { _, _ in Task { await model.loadDeliveryTargets() } }
-        .onChange(of: model.deliveryKind) { _, _ in Task { await model.loadDeliveryTargets() } }
     }
 }
 

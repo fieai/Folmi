@@ -230,6 +230,10 @@ struct ChangesPane: View {
             ForEach(model.conflictingReviews) { watch in
                 ReviewConflictNotice(model: model, watch: watch).padding(.horizontal, 10).padding(.bottom, 8)
             }
+            if let target = model.githubBranchTarget, model.githubStatuses[target]?.pullRequest != nil {
+                GitHubStatusBadge(model: model, target: target)
+                    .id(target).padding(.horizontal, 10).padding(.bottom, 8)
+            }
             if staged.isEmpty && working.isEmpty {
                 if model.fileSearch.isEmpty, model.snapshot?.files.isEmpty == true {
                     if model.diffPageShowsWrapUp {
@@ -332,6 +336,7 @@ struct ChangesPane: View {
             Divider()
             CommitSection(model: model)
         }
+        .task(id: model.repositoryURL) { await model.showGitHubStatusOnFirstChangesDisplay() }
         .onChange(of: model.fileSearch) { _, _ in
             searchCollapsedFolders.removeAll()
             searchExpandedLargeFolders.removeAll()

@@ -8,7 +8,11 @@ extension FolmiModel {
     func prepareDelivery() {
         guard !busy, snapshot != nil else { return }
         deliveryPlan = nil; showDelivery = true
-        Task { await loadDeliveryTargets() }
+        Task {
+            await loadDeliveryTargets()
+            guard showDelivery else { return }
+            await refreshGitHubForDelivery()
+        }
     }
 
     /// The current branch's upstream split into remote and branch ("origin/feature/x" → origin, feature/x), when that
@@ -113,11 +117,16 @@ extension FolmiModel {
         }
         guard state.remotes.contains(deliveryRemote), !deliveryRemote.hasPrefix("-"), !deliveryRemote.isEmpty else { throw FolmiFailure(message: "请选择项目已有的远程。") }
         let branch = deliveryBranch.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !branch.isEmpty, !branch.hasPrefix("-"), !branch.hasPrefix("/"), !branch.hasSuffix("/"), !branch.hasSuffix("."), !branch.contains(".."), !branch.contains("//"), !branch.contains("@{"),
-              !branch.contains(where: { $0.isWhitespace || $0.isNewline || "~^:?*[\\".contains($0) }),
-              !branch.components(separatedBy: "/").contains(where: { $0.hasPrefix(".") || $0.hasSuffix(".lock") }) else { throw FolmiFailure(message: "填写有效的目标分支名称，例如 main 或 feature/topic。") }
+        guard Self.isValidDeliveryBranch(branch) else { throw FolmiFailure(message: "填写有效的目标分支名称，例如 main 或 feature/topic。") }
         let target = deliveryKind == .gerrit ? "refs/for/\(branch)" : "refs/heads/\(branch)"
         return DeliveryCommand(executable: URL(fileURLWithPath: "/usr/bin/git"), arguments: ["push", "--", endpoint ?? deliveryRemote, "\(head):\(target)"])
+    }
+
+    nonisolated static func isValidDeliveryBranch(_ branch: String) -> Bool {
+        !branch.isEmpty && !branch.hasPrefix("-") && !branch.hasPrefix("/") && !branch.hasSuffix("/") && !branch.hasSuffix(".")
+            && !branch.contains("..") && !branch.contains("//") && !branch.contains("@{")
+            && !branch.contains(where: { $0.isWhitespace || $0.isNewline || "~^:?*[\\".contains($0) })
+            && !branch.components(separatedBy: "/").contains(where: { $0.hasPrefix(".") || $0.hasSuffix(".lock") })
     }
 
     func resolveEndpoint(root: URL, remote: String) async throws -> String {
@@ -134,11 +143,22 @@ extension FolmiModel {
     /// The main button. A script runs the plan previewed before it. A push or a Gerrit review needs no separate
     /// preview: it is planned (commit locked, target fetched) and pushed in one go, unless the target branch moved on:
     /// then it stops with the plan on screen and the rebase choice, and the next click goes ahead.
-    func deliver() {
-        if deliveryKind == .script || (deliveryPlan?.rebaseNeeded == true && canDeliver) { runDelivery(); return }
+    func deliver() { deliver(createPullRequest: false) }
+
+    func pushForGitHubPullRequest() { deliver(createPullRequest: true) }
+
+    private func deliver(createPullRequest: Bool) {
+        if createPullRequest {
+            guard let target = githubDeliveryTarget, githubDeliveryStatus?.canCreate(branch: target.branch) == true,
+                  githubRequests[target] == nil else { return }
+        }
+        if deliveryKind == .script || (deliveryPlan?.rebaseNeeded == true && canDeliver) {
+            runDelivery(createPullRequest: createPullRequest)
+            return
+        }
         Task {
             guard let plan = await planDelivery(quiet: true), !plan.rebaseNeeded else { return }
-            runDelivery()
+            runDelivery(createPullRequest: createPullRequest)
         }
     }
 
@@ -211,13 +231,22 @@ extension FolmiModel {
         }
     }
 
-    func runDelivery() {
+    func runDelivery(createPullRequest: Bool = false) {
         guard canDeliver, let plan = deliveryPlan, let repository else { return }
         let rebaseFirst = plan.rebaseNeeded && deliveryRebaseFirst
         let remote = deliveryRemote, targetBranch = deliveryBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let githubTarget = plan.kind == .push && !isDemo ? GitHubTarget(root: plan.root, remote: remote, branch: targetBranch) : nil
+        let draftStatus = createPullRequest ? githubDeliveryStatus : nil
+        if createPullRequest {
+            guard let draftStatus, draftStatus.canCreate(branch: targetBranch), draftStatus.endpoint == plan.endpoint else {
+                report(FolmiFailure(message: "推送地址或 PR 状态已变化。请刷新 PR 状态后重试。"), title: "无法创建 PR")
+                return
+            }
+        }
         busy = true
         Task {
             var delivered = false
+            var pushedHead = plan.head
             do {
                 let current = try await repository.load()
                 guard current.fingerprint == plan.fingerprint, current.head == plan.head, repositoryURL == plan.root, formSignature == plan.formSignature else { throw FolmiFailure(message: "项目、文件或提交在预检后发生变化。请重新预检，不能直接执行旧计划。") }
@@ -255,6 +284,7 @@ extension FolmiModel {
                        + "\(command.display)\n\n锁定提交：\(head)\n退出码：\(result.exitCode)\n\(result.combined)", isError: result.exitCode != 0)
                 if result.exitCode != 0 { errorMessage = "交付命令退出码 \(result.exitCode)。本地提交仍然保留，详情见操作记录。" }
                 delivered = result.exitCode == 0
+                pushedHead = head
                 if delivered, plan.kind != .script, let index = projects.firstIndex(where: { $0.rootPath == plan.root.path }),
                    projects[index].lastDeliveryKind != plan.kind {
                     projects[index].lastDeliveryKind = plan.kind
@@ -273,7 +303,19 @@ extension FolmiModel {
             } catch { if !deliveryAfterRebase.contains(plan.root.path) { report(error, title: "交付失败") } else { record("交付暂停", error.localizedDescription, isError: true) } }
             deliveryPlan = nil
             do { try await reload() } catch { report(error, title: "交付后刷新失败") }
-            if delivered { showDelivery = false }
+            if delivered, let githubTarget, let draftStatus, let endpoint = plan.endpoint {
+                await refreshGitHub(githubTarget, afterMutation: true)
+                var status = draftStatus
+                if let refreshed = githubStatuses[githubTarget], case .ready = refreshed.access, refreshed.defaultBranch != nil {
+                    status = refreshed
+                }
+                await prepareGitHubDraft(target: githubTarget, endpoint: endpoint, head: pushedHead, from: status)
+            } else if delivered {
+                showDelivery = false
+                if let githubTarget {
+                    Task { await refreshGitHub(githubTarget, afterMutation: true) }
+                }
+            }
             busy = false
         }
     }
