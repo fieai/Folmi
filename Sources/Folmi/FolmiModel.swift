@@ -281,6 +281,7 @@ final class FolmiModel {
     var aiAssist: AIAssistState?
     /// All projects and worktrees, for the menu bar and the overview.
     let board = ProjectBoard()
+    let projectIcons: ProjectIcons
     /// New Folmi versions; checking starts from the app's window task, so tests never reach the network.
     let updater = AppUpdater()
     var showOverview = false
@@ -364,6 +365,7 @@ final class FolmiModel {
     init(store: WorkspaceStore = WorkspaceStore(url: RuntimeOptions.workspaceURL), autoRefresh: Bool = false,
          checkEnvironmentOnStartup: Bool = false) {
         self.store = store
+        projectIcons = ProjectIcons(workspace: store.url)
         self.autoRefresh = autoRefresh
         if checkEnvironmentOnStartup { gitStartupState = .checking }
         // Caches, AI settings and ⌘K history sit next to the settings file this model uses (a test's own folder).
@@ -411,6 +413,7 @@ final class FolmiModel {
             preferencesStatus = "配置读取失败，原文件保留"
         }
         restoring = false
+        observeAgentAttention()
         PerfLog.mark("launch.modelInit")
         if autoRefresh {
             activationObserver = NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)

@@ -83,10 +83,12 @@ extension FolmiModel {
                 throw FolmiError.unsupported("所选目录已在项目列表中，请直接切换到该项目，或选择原项目的新位置。")
             }
             let previousProjects = projects, previousPreferences = preferences, previousComments = reviewComments
+            let relocatedIcon = try projectIcons.cache.relocated(oldProject.customIcon, from: oldPath, to: newPath)
             do {
                 if let index = projects.firstIndex(where: { $0.rootPath == oldPath }) {
                     var relocated = savedProject(oldPath) ?? oldProject
                     relocated.rootPath = newPath
+                    relocated.customIcon = relocatedIcon
                     relocated.reviewComments = relocated.reviewComments.map { $0.relocated(to: newPath) }
                     projects[index] = relocated
                     // captureProjectState reads these before serializing; replace both copies together.
@@ -99,8 +101,10 @@ extension FolmiModel {
             } catch {
                 projects = previousProjects; preferences = previousPreferences; reviewComments = previousComments
                 saveTask?.cancel(); saveTask = nil; saveDeadline = nil
+                if newPath != oldPath { projectIcons.removeCustom(relocatedIcon, path: newPath) }
                 throw error
             }
+            if newPath != oldPath { projectIcons.remove(oldPath, icon: oldProject.customIcon) }
             discardRecoveredProjectCaches(oldPath)
             missingProjectPath = nil; errorMessage = nil
             record("项目已重新定位", "\(oldPath)\n→ \(newPath)")
@@ -162,6 +166,7 @@ extension FolmiModel {
             reviewComments.removeAll { $0.projectPath == path }
             if preferences.selectedProjectPath == path { preferences.selectedProjectPath = nil }
             try savePreferencesNow()
+            projectIcons.remove(path, icon: previousProjects.first { $0.rootPath == path }?.customIcon)
             discardRecoveredProjectCaches(path)
             editorObservers.removeValue(forKey: path)
             record("已从项目列表移除", path)

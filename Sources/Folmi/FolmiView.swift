@@ -298,10 +298,12 @@ private struct FloatingAssist: View {
     }
 }
 
-private struct ProjectRail: View {
+struct ProjectRail: View {
     let model: FolmiModel
     @Binding var expanded: Bool
     @State private var removing: ProjectPreferences?
+    @State private var emojiProject: ProjectPreferences?
+    @State private var emoji = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
@@ -318,6 +320,16 @@ private struct ProjectRail: View {
                  ? "会先切换到另一个项目。只从 Folmi 的列表移除，不会删除磁盘上的文件；这个项目的审阅评论会一起清掉。"
                  : "只从 Folmi 的列表移除，不会删除磁盘上的文件；这个项目的审阅评论会一起清掉。")
         }
+        .alert("使用 Emoji", isPresented: Binding(get: { emojiProject != nil }, set: { if !$0 { emojiProject = nil } }),
+               presenting: emojiProject) { project in
+            TextField("Emoji", text: $emoji)
+            Button("使用") {
+                if let first = emoji.first { model.setProjectIcon(.emoji(String(first)), path: project.rootPath) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: { _ in
+            Text("只使用第一个字符。按 ⌃⌘空格打开系统表情面板。")
+        }
     }
 
     private var controls: some View {
@@ -332,9 +344,9 @@ private struct ProjectRail: View {
                     ForEach(RailEntry.entries(projects: model.projects, current: model.repositoryURL?.path, worktrees: model.worktrees)) { entry in
                         switch entry {
                         case .project(let project):
-                            projectRow(project, letter: String(project.name.prefix(1)).uppercased(), title: project.name, worktree: false)
+                            projectRow(project, title: project.name, worktree: false)
                         case .worktreeProject(let project, let title):
-                            projectRow(project, letter: nil, title: title, worktree: true)
+                            projectRow(project, title: title, worktree: true)
                         case .worktreeNotice(let count, let agent):
                             WorktreeNoticeRow(count: count, agent: agent, expanded: expanded) { model.showWorktrees = true }
                                 .disabled(model.busy)
@@ -386,23 +398,38 @@ private struct ProjectRail: View {
     }
 
     /// One project in the rail; a worktree of the project above it is drawn with a branch mark and its branch name.
-    private func projectRow(_ project: ProjectPreferences, letter: String?, title: String, worktree: Bool) -> some View {
+    private func projectRow(_ project: ProjectPreferences, title: String, worktree: Bool) -> some View {
         let selected = model.repositoryURL?.path == project.rootPath
+        let attention = model.board.attention(for: project.rootPath, includeWorktrees: !worktree)
+        let name = worktree ? "工作树 \(title)" : project.name
+        let help = worktree ? "\(project.name) 的工作树：\(title)\n\(project.rootPath)" : "\(project.name)\n\(project.rootPath)"
+        let status = attention.map { "\n" + $0.text } ?? ""
         return Button { model.switchProject(project.rootPath) } label: {
             HStack(spacing: 8) {
                 Group {
-                    if let letter {
-                        Text(letter).themedFont(.system(size: 13, weight: .semibold), points: 13)
-                    } else {
+                    if worktree {
                         Image(systemName: "arrow.triangle.branch").font(.system(size: 11, weight: .medium))
+                            .frame(width: 28, height: 26)
+                    } else {
+                        ProjectRailIcon(project: project, model: model, help: help + status)
                     }
                 }
-                .frame(width: 28, height: worktree ? 26 : 30)
-                // Always laid out at the open width and only faded, so nothing re-wraps while the rail
-                // slides open or shut.
-                Text(title).themedFont(.system(size: worktree ? 11.5 : 12, weight: selected ? .semibold : .regular), points: worktree ? 11.5 : 12)
-                    .lineLimit(worktree ? 1 : 2).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
-                    .opacity(expanded ? 1 : 0)
+                .overlay(alignment: .topTrailing) {
+                    if let attention {
+                        AgentAttentionBadge(attention: attention, backdrop: model.theme == .terrazzo ? .card : .canvas)
+                            .offset(x: 1, y: 1).allowsHitTesting(false)
+                    }
+                }
+                // Keep the open layout under the clip so the labels do not wrap during expansion.
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).themedFont(.system(size: worktree ? 11.5 : 12, weight: selected ? .semibold : .regular), points: worktree ? 11.5 : 12)
+                        .lineLimit(worktree || attention != nil ? 1 : 2).truncationMode(.middle)
+                    if let attention {
+                        Text(attention.text).themedFont(.caption2, points: 10).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .opacity(expanded ? 1 : 0)
                 if project.isDemo { Image(systemName: "play.fill").font(.system(size: 8)).foregroundStyle(.secondary).opacity(expanded ? 1 : 0) }
             }
             .modifier(RailRowInsets())
@@ -417,10 +444,20 @@ private struct ProjectRail: View {
             }
         }
         .buttonStyle(.pressableRow).disabled(model.busy)
-        .accessibilityLabel(worktree ? "工作树 \(title)" : project.name)
-        .help(worktree ? "\(project.name) 的工作树：\(title)\n\(project.rootPath)" : "\(project.name)\n\(project.rootPath)")
+        .accessibilityLabel(name + status)
+        .help(help + status)
         .contextMenu {
             Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.rootPath)]) }
+            if !worktree {
+                Divider()
+                Button("更换项目图标…") { model.chooseProjectImage(project.rootPath) }
+                Button("使用 Emoji…") { emoji = ""; emojiProject = project }
+                if project.customIcon == nil {
+                    Button("重新查找图标") { model.projectIcons.load(project, force: true) }
+                } else {
+                    Button("恢复默认图标") { model.setProjectIcon(nil, path: project.rootPath) }
+                }
+            }
             Divider()
             Button("从项目列表移除…") { removing = project }
                 .disabled(model.busy || !model.canRemoveProject(project.rootPath))

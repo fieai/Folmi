@@ -1,6 +1,6 @@
 # 产品方向
 
-更新：2026-10-19（定位）；2026-10-26 补随手记和待办在主循环里的位置；2026-10-28 改成可以从 Folmi 把选区、随手记、待办交给 Codex（见 [ai-sessions.md](design/ai-sessions.md)）。旧版（0.4 时期的需求表）已过时，见 git 历史。
+更新：2026-10-19（定位）；2026-10-26 补随手记和待办在主循环里的位置；2026-10-28 改成可以从 Folmi 把选区、随手记、待办交给 Codex（见 [ai-sessions.md](design/ai-sessions.md)）；2026-11-18 定下一阶段的四项（见「下一步」）。旧版（0.4 时期的需求表）已过时，见 git 历史。
 
 ## 定位
 
@@ -53,12 +53,27 @@ AI 改完 → 通知 / 顶部胶囊 → 逐个验收（空格看下一处，⏎ 
 | 脚注 | 遇到再加 | Claude 写的文档很少用 |
 | AI 对话框 | 排在最后 | 对话框里聊的就是 agent 本身（Claude Code / Codex 会话，经 ACP 接进终端卡片的 AI 标签），不另起一个模型；之前先做模型配置、MCP、规则提议。见 [ai-roadmap.md](design/ai-roadmap.md) |
 | LSP、格式化器、插件平台 | 不做 | 这不是 IDE |
+| 调用关系图支持更多语言 | 暂不做 | 手写解析维护成本高；验收卡片上一行字的调用影响已够用，查签名错误交给项目自己的编译器和测试 |
+| 待办页加日程属性（更多日期类型、统计、拖拽排期） | 不做 | 随手记和待办是交给 agent 的队列，不是日程应用；保持现状 |
+| OSC 7501 等终端状态协议 | 不做 | Claude Code / Codex 本身不发；agent 状态来自钩子和 ACP |
+| GitHub Issue 面板、在 Folmi 里审别人的 PR | 第二期 | 先把自己的 PR 闭环做完，见 [github.md](design/github.md) |
 | Notion 式笔记数据库（属性、看板、关联） | 不做 | 随手记要的是快，不是整理；数据只在 Markdown 文件里，日期写在行内 |
 
 ## 下一步
 
-- Codex 按轮次接入，和 Claude Code 对齐（单独会话）。
-- App 里的说法往「收下 / 没看的」靠，少用暂存区、工作区这类 Git 词（待定）。
+2026-11-18 定的顺序。四项都服务同一件事：**多个项目同时跑 agent 时，快速找回现场、知道该去验收哪个，再顺手交付出去。**
+
+1. **项目图标 + 项目轨状态角标**（一起做）：自动找项目图标、可自定义；角标显示「等你处理 / 出错了 / 改完待验收 / 正在改」。见 [project-rail-icons.md](design/project-rail-icons.md)、[agent-overview.md](design/agent-overview.md) 第一期。
+2. **终端持久化**：退出、升级 Folmi 后终端继续运行，再打开时接回。见 [terminal-persistence.md](design/terminal-persistence.md)。
+3. **跨项目的会话列表**：「当前项目 / 全部项目」切换，选中直接跳到那个终端或 AI 标签。见 [agent-overview.md](design/agent-overview.md) 第二期，依赖 2。
+4. **GitHub**：推送并建 PR；PR 的评审意见和失败的检查交给 agent。只在用户操作时调用 `gh`。见 [github.md](design/github.md)。
+
+这四项之后再看：
+
+- 工作树按分支验收：agent 在工作树里已经提交了几轮时，按「这个分支 vs 主分支」一处处看，看完合并回去并清理工作树。
+- 没装钩子也能按轮次看：只读解析 `~/.claude/` 和 Codex 的会话记录，还原基本的轮次。装钩子留给整批撤回、提交前自检。
+- 验收页显示这一轮之后的测试 / 类型检查结果。
+- Codex 按轮次接入，和 Claude Code 对齐。
 - 想法，未定：「这一轮做了什么」的总结，按意图而不是按文件分组。
 - 想法，未定：推给开发者以外的角色，先看写文档的人。见 [other-roles.md](design/other-roles.md)。
 

@@ -15,6 +15,7 @@ enum ThemeCatalog {
     static let indigo = ThemeDefinition(
         id: "indigo", title: "琥珀", detail: "Folmi 图标同款琥珀黄配炭黑，圆润温暖，小精灵在状态栏陪你干活",
         style: .amber,
+        projectBadges: [0xF6DCA9, 0xF2CCC2, 0xF3D3AE, 0xDACEF0, 0xCDDCED, 0xC5E0D7, 0xD5E1B8, 0xF0D0DF],
         light: ThemeColors(
             canvas: 0xF0EFEC, card: 0xFFFEFA, header: 0xF7F5EF, editorBackground: 0xFFFEFA, gutter: 0xFFFEFA,
             border: ThemeRGB(0x222429, 0.10), foreground: 0x222429, secondaryText: 0x67665F, tertiaryText: 0x8A887F,
@@ -33,6 +34,7 @@ enum ThemeCatalog {
     static let zinc = ThemeDefinition(
         id: "zinc", title: "锌莓", detail: "锌灰配莓红，精密紧凑：细线分区、等宽数字，每个文件标出增删行数",
         style: .zinc,
+        projectBadges: [0xEBD9B9, 0xECC6D7, 0xD8CDE8, 0xC6D9EA, 0xC7DDD8, 0xD5E2C7, 0xEAD1C8, 0xDADCE7],
         light: ThemeColors(
             canvas: 0xF0F0F1, card: 0xFFFFFF, header: 0xF7F7F8, editorBackground: 0xFFFFFF, gutter: 0xFFFFFF,
             border: ThemeRGB(0x000000, 0.09), foreground: 0x18181B, secondaryText: 0x5F5F68, tertiaryText: 0x94949C,
@@ -54,6 +56,7 @@ enum ThemeCatalog {
     static let pixel = ThemeDefinition(
         id: "pixel", title: "像素", detail: "方角、硬描边、错位投影；暖红金黄配天空蓝，金黄只标待验收，代码区保持安静",
         style: .pixel,
+        projectBadges: [0xFFE198, 0xF9B8AF, 0xECC2FF, 0xB6D7FD, 0xAAE7DE, 0xD2EAA5, 0xFFD2AA, 0xF5B9D8],
         light: ThemeColors(
             canvas: 0xE6EEF8, card: 0xFFFFFF, header: 0xF5F7FA, editorBackground: 0xFFFFFF, gutter: 0xF5F7FA,
             border: 0x242A35, foreground: 0x242A35, secondaryText: 0x4A5568, tertiaryText: 0x687387,
@@ -74,6 +77,7 @@ enum ThemeCatalog {
     static let terrazzo = ThemeDefinition(
         id: "terrazzo", title: "石墨", detail: "中性灰白、细描边和小圆角，项目、文件、编辑和终端各自独立",
         style: .terrazzo,
+        projectBadges: [0xE8DABB, 0xE4CDD3, 0xD9D3E4, 0xCFDDE6, 0xC8DDD8, 0xD8E0CC, 0xE6D2C7, 0xDBDCDD],
         light: ThemeColors(
             canvas: 0xF1F2F3, card: 0xFFFFFF, header: 0xF8F8F9, editorBackground: 0xFFFFFF, gutter: 0xFFFFFF,
             border: ThemeRGB(0x282B30, 0.13), foreground: 0x1B1D20, secondaryText: 0x555A61, tertiaryText: 0x676D75,

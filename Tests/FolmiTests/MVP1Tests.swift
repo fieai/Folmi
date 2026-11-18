@@ -98,10 +98,12 @@ final class HooksInstallerTests: XCTestCase {
         try HooksInstaller.install(root, guarded: true, helper: helper, destination: destination)  // idempotent
         var status = HooksInstaller.status(root)
         XCTAssertTrue(status.installed); XCTAssertTrue(status.guarded)
+        XCTAssertFalse(status.needsUpdate)
         let settings = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: HooksInstaller.settingsURL(root))) as? [String: Any])
         let hooks = try XCTUnwrap(settings["hooks"] as? [String: Any])
         XCTAssertEqual((hooks["Stop"] as? [Any])?.count, 2, "user's Stop hook kept, ours added once")
         XCTAssertEqual((hooks["PreToolUse"] as? [Any])?.count, 2)
+        XCTAssertEqual((hooks["Notification"] as? [Any])?.count, 1)
         XCTAssertNotNil(settings["permissions"])
         try HooksInstaller.uninstall(root)
         status = HooksInstaller.status(root)
@@ -109,6 +111,24 @@ final class HooksInstallerTests: XCTestCase {
         let after = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: HooksInstaller.settingsURL(root))) as? [String: Any])
         XCTAssertEqual(((after["hooks"] as? [String: Any])?["Stop"] as? [Any])?.count, 1)
         XCTAssertNil((after["hooks"] as? [String: Any])?["PreToolUse"])
+    }
+
+    func testOlderProjectOffersUpdateEvenWithSomeoneElsesNotificationHook() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("old-hooks-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for agent in HooksInstaller.Agent.allCases {
+            let settings = HooksInstaller.settingsURL(root, agent: agent)
+            try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let event = agent == .claude ? "Notification" : "PermissionRequest"
+            let old: [String: Any] = ["hooks": [
+                "Stop": [["hooks": [["command": "'/bin/folmi-hook' stop"]]]],
+                event: [["hooks": [["command": "say waiting"]]]],
+            ]]
+            try JSONSerialization.data(withJSONObject: old).write(to: settings)
+            let status = HooksInstaller.status(root, agent: agent)
+            XCTAssertTrue(status.installed)
+            XCTAssertTrue(status.needsUpdate)
+        }
     }
 
     /// A newer App updates the helper that installed hooks run; nothing is installed where there was none.
@@ -167,6 +187,7 @@ final class AIBatchModelTests: XCTestCase {
         try "new\n".write(to: demo.root.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
         let events = [AIEvent(t: Date().timeIntervalSince1970 - 2, kind: .start, session: "s", batch: "b1", prompt: "改 README"),
                       AIEvent(t: Date().timeIntervalSince1970 - 1, kind: .edit, session: "s", batch: "b1", path: "README.md", tool: "Edit"),
+                      AIEvent(t: Date().timeIntervalSince1970 - 0.5, kind: .waiting, session: "s", batch: "", path: "neighbor", message: "允许编辑？"),
                       AIEvent(t: Date().timeIntervalSince1970, kind: .stop, session: "s", batch: "b1")]
         let lines = try events.map { String(data: try JSONEncoder().encode($0), encoding: .utf8)! + "\n" }.joined()
         try lines.write(to: AIEventStore.events(gitDir: gitDir), atomically: true, encoding: .utf8)
@@ -182,6 +203,8 @@ final class AIBatchModelTests: XCTestCase {
         XCTAssertEqual(model.activity.filter { $0.title == "Claude 钩子出错" }.map(\.details), ["没能保存 big.bin 改之前的内容"])
         model.readAIEvents()
         XCTAssertEqual(model.activity.filter { $0.title == "Claude 钩子出错" }.count, 1, "shown once")
+        XCTAssertEqual(model.aiBatches.map(\.id), ["b1"])
+        XCTAssertEqual(model.turnChoices.map(\.id), ["b1"])
         let batch = try XCTUnwrap(model.aiBatches.last)
         XCTAssertEqual(batch.prompt, "改 README"); XCTAssertEqual(Set(batch.restorable), ["README.md", "new.txt"]); XCTAssertTrue(batch.canUndo)
         guard case .finished(let files, _, _)? = model.capsule else { return XCTFail("no finished capsule") }

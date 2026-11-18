@@ -81,7 +81,11 @@ final class AgentSession: Identifiable {
     let gitDir: URL?
     let started: Date
     var transcript = ACPTranscript()
-    var state = State.idle
+    var state = State.idle {
+        didSet {
+            if case .failed = state, state != oldValue { onFailure?() }
+        }
+    }
     var currentModelID: String?
     var availableModels: [ModelOption] = []
     var isSelectingModel = false
@@ -108,6 +112,7 @@ final class AgentSession: Identifiable {
     @ObservationIgnored var onTurnEnded: (() -> Void)?
     /// Called when the agent asks for a permission, so a conversation off screen can say so.
     @ObservationIgnored var onPermission: (() -> Void)?
+    @ObservationIgnored var onFailure: (() -> Void)?
 
     /// Without a host the conversation starts its own adapter and ends it on close (tests, restored transcripts).
     init(agent: AgentKind, root: URL, gitDir: URL?, started: Date = Date(), host: AgentHost? = nil) {
@@ -574,6 +579,9 @@ extension FolmiModel {
     func wire(_ session: AgentSession) {
         session.onTurnEnded = { [weak self, weak session] in
             self?.refreshInBackground()
+            if let session { self?.agentNeedsYou(session, permission: false) }
+        }
+        session.onFailure = { [weak self, weak session] in
             if let session { self?.agentNeedsYou(session, permission: false) }
         }
         session.onPermission = { [weak self, weak session] in

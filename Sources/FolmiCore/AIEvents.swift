@@ -5,7 +5,7 @@ import Foundation
 /// touched it in a turn ("batch") is kept under `batches/<batch>/pre/<path>` (or in sibling `pre-missing/<path>` when absent),
 /// and what those files held when the turn stopped under `batches/<batch>/post/` the same way.
 public struct AIEvent: Codable, Sendable, Equatable {
-    public enum Kind: String, Codable, Sendable { case start, edit, stop }
+    public enum Kind: String, Codable, Sendable { case start, edit, stop, waiting }
     public let t: Double
     public let kind: Kind
     public let session: String
@@ -16,8 +16,9 @@ public struct AIEvent: Codable, Sendable, Equatable {
     public let prompt: String?
     /// Missing for events written by older Claude helpers.
     public let agent: String?
-    public init(t: Double, kind: Kind, session: String, batch: String, path: String? = nil, tool: String? = nil, prompt: String? = nil, agent: String? = nil) {
-        self.t = t; self.kind = kind; self.session = session; self.batch = batch; self.path = path; self.tool = tool; self.prompt = prompt; self.agent = agent
+    public let message: String?
+    public init(t: Double, kind: Kind, session: String, batch: String, path: String? = nil, tool: String? = nil, prompt: String? = nil, agent: String? = nil, message: String? = nil) {
+        self.t = t; self.kind = kind; self.session = session; self.batch = batch; self.path = path; self.tool = tool; self.prompt = prompt; self.agent = agent; self.message = message
     }
 }
 

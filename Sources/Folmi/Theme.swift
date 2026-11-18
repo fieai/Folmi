@@ -229,6 +229,7 @@ struct ThemeDefinition: Sendable {
     let title: String
     let detail: String
     let style: ThemeStyle
+    let projectBadges: [ThemeRGB]
     let light: ThemeColors
     let dark: ThemeColors
     func colors(dark isDark: Bool) -> ThemeColors { isDark ? dark : light }

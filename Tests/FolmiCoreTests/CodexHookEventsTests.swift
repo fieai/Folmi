@@ -35,9 +35,62 @@ final class CodexHookEventsTests: XCTestCase {
 
     func testOldEventsDecodeAndCodexAgentSurvivesRoundTrip() throws {
         let old = Data(#"{"t":1,"kind":"start","session":"s","batch":"b"}"#.utf8)
-        XCTAssertNil(try JSONDecoder().decode(AIEvent.self, from: old).agent)
+        let decoded = try JSONDecoder().decode(AIEvent.self, from: old)
+        XCTAssertNil(decoded.agent)
+        XCTAssertNil(decoded.message)
         let event = AIEvent(t: 1, kind: .start, session: "s", batch: "b", agent: "codex")
         XCTAssertEqual(try JSONDecoder().decode(AIEvent.self, from: JSONEncoder().encode(event)), event)
+        let future = Data(#"{"t":1,"kind":"future","session":"s","batch":"b"}"#.utf8)
+        let mixed = old + Data([10]) + future + Data([10]) + (try JSONEncoder().encode(event)) + Data([10])
+        XCTAssertEqual(AIEventStore.parse(mixed).events, [decoded, event])
+    }
+
+    func testWaitingHooksRecordOnlyAttentionAndNextPromptSupersedesIt() throws {
+        let helper = Bundle(for: Self.self).bundleURL.deletingLastPathComponent().appendingPathComponent("folmi-hook")
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: helper.path))
+        for codex in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("waiting-hook-\(UUID())")
+            let gitDir = root.appendingPathComponent(".git")
+            try FileManager.default.createDirectory(at: gitDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let eventURL = AIEventStore.events(gitDir: gitDir)
+            let message = String(repeating: "🧑🏽‍💻", count: 201)
+            func invoke(_ mode: String, extra: [String: Any] = [:]) throws {
+                let process = Process(), input = Pipe(), output = Pipe()
+                process.executableURL = helper; process.arguments = [mode] + (codex ? ["--agent", "codex"] : [])
+                process.standardInput = input; process.standardOutput = output
+                var payload: [String: Any] = ["session_id": "s", "cwd": root.path]
+                payload.merge(extra) { _, next in next }
+                try process.run()
+                try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: payload))
+                try input.fileHandleForWriting.close()
+                process.waitUntilExit()
+                XCTAssertEqual(process.terminationStatus, 0)
+                XCTAssertTrue(output.fileHandleForReading.readDataToEndOfFile().isEmpty, "the approval hook records only")
+            }
+            if !codex {
+                try invoke("notify", extra: ["notification_type": "auth_success", "message": "Authenticated"])
+                XCTAssertFalse(FileManager.default.fileExists(atPath: eventURL.path))
+            }
+            let extra: [String: Any] = codex
+                ? ["hook_event_name": "PermissionRequest", "tool_input": ["description": message]]
+                : ["notification_type": "permission_prompt", "message": message]
+            try invoke("notify", extra: extra)
+            let waiting = try XCTUnwrap(AIEventStore.parse(Data(contentsOf: eventURL)).events.last)
+            XCTAssertEqual(waiting.kind, .waiting)
+            XCTAssertEqual(waiting.message, String(message.prefix(200)))
+            XCTAssertEqual(waiting.batch, "")
+            let folder = try FileManager.default.contentsOfDirectory(atPath: eventURL.deletingLastPathComponent().path)
+            XCTAssertFalse(folder.contains { $0.hasPrefix("current-") || $0 == "batches" })
+            try invoke("prompt", extra: ["prompt": "Continue"])
+            XCTAssertEqual(try AIEventStore.parse(Data(contentsOf: eventURL)).events.map(\.kind), [.waiting, .start])
+            if !codex {
+                try invoke("stop")
+                let stoppedEvents = try Data(contentsOf: eventURL)
+                try invoke("notify", extra: ["notification_type": "idle_prompt", "message": "Claude is waiting for your input"])
+                XCTAssertEqual(try Data(contentsOf: eventURL), stoppedEvents, "idle prompts must not append a waiting event")
+            }
+        }
     }
 
     func testHelperCapturesMultiFileTurnAndPreservesFirstPreimage() throws {
@@ -110,9 +163,10 @@ final class CodexHookEventsTests: XCTestCase {
         try invoke(["prompt"]); try invoke(["pre"])
         try Data("export function loadOrder(id: string) { return id }\n".utf8).write(to: lib)
         try invoke(["post"])
+        try invoke(["notify"], ["notification_type": "permission_prompt", "message": "Ask to proceed"])
         let git = root.appendingPathComponent(".git")
         let events = { AIEventStore.parse((try? Data(contentsOf: AIEventStore.events(gitDir: git))) ?? Data()).events }
-        let batch = try XCTUnwrap(events().last?.batch)
+        let batch = try XCTUnwrap(events().last { $0.kind != .waiting }?.batch)
 
         // Codex's Interrupt runs `stop` too: never checked, the turn just ends.
         XCTAssertEqual(try invoke(["stop", "--check"], ["hook_event_name": "Interrupt"]), "")

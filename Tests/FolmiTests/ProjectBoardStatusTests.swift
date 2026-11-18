@@ -46,7 +46,8 @@ final class ProjectBoardStatusTests: XCTestCase {
             XCTAssertFalse(row.worktreeNeedsAttention)
             row.ownCommits = 1
             XCTAssertTrue(row.worktreeNeedsAttention)
-            row.ownCommits = 0; row.aiRunning = true
+            row.ownCommits = 0
+            row.hookEvent = AIEvent(t: Date().timeIntervalSince1970, kind: .start, session: "s", batch: "b")
             XCTAssertTrue(row.worktreeNeedsAttention)
         }
     }

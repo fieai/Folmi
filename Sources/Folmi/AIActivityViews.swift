@@ -79,7 +79,7 @@ struct HooksSetupSheet: View {
                 Text(status.installed ? (status.guarded ? "已接入（含拦截）" : "已接入") : "尚未接入").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                 Spacer()
                 if status.installed { Button("移除") { run { try HooksInstaller.uninstall($0) } } }
-                Button(status.installed ? "重新安装" : "接入") { run { try HooksInstaller.install($0, guarded: guarded, checked: checked) } }
+                Button(status.needsUpdate ? "更新钩子" : status.installed ? "重新安装" : "接入") { run { try HooksInstaller.install($0, guarded: guarded, checked: checked) } }
                     .buttonStyle(.folmiProminent)
                 Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
             }

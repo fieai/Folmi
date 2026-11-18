@@ -62,15 +62,21 @@ enum HooksInstaller {
     }
 
     /// `checked`: the Stop hook checks the turn's calls (`stop --check`, see TurnCallCheck).
-    struct Status: Equatable { var installed: Bool; var guarded: Bool; var checked = false }
+    struct Status: Equatable { var installed: Bool; var guarded: Bool; var checked = false; var needsUpdate = false }
     static func status(_ root: URL, agent: Agent = .claude) -> Status {
         guard let hooks = (try? readSettings(root, agent: agent))?["hooks"] as? [String: Any] else { return Status(installed: false, guarded: false) }
-        let commands = hooks.values.compactMap { $0 as? [[String: Any]] }.flatMap { $0 }
-            .compactMap { $0["hooks"] as? [[String: Any]] }.flatMap { $0 }
-            .compactMap { $0["command"] as? String }.compactMap(ourCommand)
-        return Status(installed: !commands.isEmpty, guarded: commands.contains { $0.mode == "guard" },
-                      checked: commands.contains { $0.mode == "stop" && $0.checked })
+        func commands(in groups: [Any]) -> [(mode: String, checked: Bool)] {
+            groups.compactMap { $0 as? [[String: Any]] }.flatMap { $0 }
+                .compactMap { $0["hooks"] as? [[String: Any]] }.flatMap { $0 }
+                .compactMap { $0["command"] as? String }.compactMap(ourCommand)
+        }
+        let installed = commands(in: Array(hooks.values))
+        return Status(installed: !installed.isEmpty, guarded: installed.contains { $0.mode == "guard" },
+                      checked: installed.contains { $0.mode == "stop" && $0.checked },
+                      needsUpdate: !installed.isEmpty && !commands(in: [hooks[waitingHook(agent)] ?? []]).contains { $0.mode == "notify" })
     }
+
+    private static func waitingHook(_ agent: Agent) -> String { agent == .codex ? "PermissionRequest" : "Notification" }
 
     static func install(_ root: URL, agent: Agent = .claude, guarded: Bool, checked: Bool = false, helper: URL? = nil,
                         destination: URL? = nil) throws {
@@ -91,6 +97,7 @@ enum HooksInstaller {
             hooks[event] = (hooks[event] as? [[String: Any]] ?? []) + [group]
         }
         add("UserPromptSubmit", matcher: nil, "prompt")
+        add(waitingHook(agent), matcher: nil, "notify")
         let edits = agent == .codex ? "apply_patch|Edit|Write" : editTools
         add("PreToolUse", matcher: edits, "pre")
         if guarded { add("PreToolUse", matcher: "Bash", "guard") }
@@ -175,7 +182,7 @@ enum HooksInstaller {
         }
         var arguments = remainder.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         guard quote == nil, !escaped, URL(fileURLWithPath: executable).lastPathComponent == marker,
-              let mode = arguments.first, ["prompt", "pre", "post", "stop", "guard"].contains(mode) else { return nil }
+              let mode = arguments.first, ["prompt", "pre", "post", "stop", "notify", "guard"].contains(mode) else { return nil }
         let checked = mode == "stop" && arguments.dropFirst().first == "--check"
         if checked { arguments.remove(at: 1) }
         guard arguments.count == 1 || arguments == [mode, "--agent", "codex"] else { return nil }
@@ -248,10 +255,11 @@ extension FolmiModel {
         guard let data = try? handle.readToEnd() else { return }
         let parsed = AIEventStore.parse(data)
         aiEventOffsets[key] = start + UInt64(parsed.consumed)
-        guard !parsed.events.isEmpty else { return }
+        let turnEvents = parsed.events.filter { $0.kind != .waiting }
+        guard !turnEvents.isEmpty else { return }
         var batches = aiBatchStore[key] ?? []
         var finished: [(id: String, at: Double)] = []
-        for event in parsed.events {
+        for event in turnEvents {
             var index = batches.firstIndex { $0.id == event.batch }
             if index == nil {
                 batches.append(AIBatch(id: event.batch, session: event.session, prompt: event.prompt, started: Date(timeIntervalSince1970: event.t)))
@@ -260,6 +268,7 @@ extension FolmiModel {
             guard let i = index else { continue }
             if let agent = event.agent { batches[i].agent = agent }
             switch event.kind {
+            case .waiting: break
             case .start: if let prompt = event.prompt { batches[i].prompt = prompt }
             case .edit:
                 if event.tool == "Bash" { batches[i].usedShell = true }

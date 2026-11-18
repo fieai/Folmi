@@ -76,6 +76,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     var launchCommands: [LaunchCommand] = []
     /// How many times each start command was run from 服务, by `LaunchCommand.id`; the most used comes first.
     var launchCounts: [String: Int] = [:]
+    var customIcon: ProjectIcon?
 
     init(rootPath: String, name: String, isDemo: Bool = false, environment: [String: String] = [:],
          draftMessage: String = "", amendLast: Bool = false, deliveryProfiles: [DeliveryProfile] = [],
@@ -97,7 +98,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case rootPath, name, isDemo, environment, draftMessage, amendLast, deliveryProfiles, selectedProfileID, lastArea, editorTabs, selectedEditorPath, reviewComments, terminalTabs
         case terminalDirectories, reviewedLines, lastContent, selectedChangePath, largeRepository, largeRepositoryDeclined, reviewWatches
-        case editorColumns, terminalColumns, linkedProjects, launchCommands, launchCounts, lastDeliveryKind
+        case editorColumns, terminalColumns, linkedProjects, launchCommands, launchCounts, lastDeliveryKind, customIcon
     }
 
     init(from decoder: Decoder) throws {
@@ -128,6 +129,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
         linkedProjects = (try? values.decodeIfPresent([String].self, forKey: .linkedProjects)) ?? []
         launchCommands = (try? values.decodeIfPresent([LaunchCommand].self, forKey: .launchCommands)) ?? []
         launchCounts = (try? values.decodeIfPresent([String: Int].self, forKey: .launchCounts)) ?? [:]
+        customIcon = try? values.decodeIfPresent(ProjectIcon.self, forKey: .customIcon)
         lastDeliveryKind = try? values.decodeIfPresent(DeliveryKind.self, forKey: .lastDeliveryKind)
     }
 }

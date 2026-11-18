@@ -1,7 +1,7 @@
 import Foundation
 import FolmiCore
 
-// Called by Claude Code or Codex hooks (installed by Folmi): `folmi-hook prompt|pre|post|stop|guard`, hook JSON on
+// Called by Claude Code or Codex hooks (installed by Folmi): `folmi-hook prompt|pre|post|stop|notify|guard`, hook JSON on
 // stdin. `folmi-hook mcp` is the MCP server instead (see MCPServer). It records what the agent does so the app can show it and take a whole turn back. It never blocks the agent
 // except `guard`, which refuses dangerous git commands (exit 2 tells Claude Code to stop the tool call), and `stop --check`,
 // which keeps the turn going once when it left calls broken (see TurnCallCheck).
@@ -89,6 +89,20 @@ func currentBatch() -> String {
     return batch
 }
 switch mode {
+case "notify":
+    if agent == "claude", let type = json["notification_type"] as? String,
+       !["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"].contains(type) { break }
+    let rawMessage = (json["message"] as? String) ?? (toolInput["description"] as? String) ?? tool
+    var message = rawMessage.map { String($0.prefix(200)) }
+    // Leave room for the envelope so the board can still read emoji-heavy notices from its 4 KiB tail.
+    if var text = message {
+        let encoder = JSONEncoder()
+        while let bytes = try? encoder.encode(text), bytes.count > 3_300 { text.removeLast() }
+        message = text
+    }
+    // A permission request must not create (or change) the current turn.
+    append(AIEvent(t: now, kind: .waiting, session: session, batch: "", agent: agent,
+                   message: message))
 case "prompt":
     let batch = turnBatch ?? "\(session)-\(Int(now * 1000))"
     do { try batch.write(to: currentFile, atomically: true, encoding: .utf8) } catch { note("记录新的一轮失败", error) }

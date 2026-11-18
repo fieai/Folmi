@@ -49,6 +49,9 @@ struct FolmiApp: App {
                         try? await Task.sleep(for: .seconds(115))
                     }
                 }
+                .onChange(of: model.projects.map(\.rootPath)) {
+                    if !model.gitStartupState.blocksGit { model.board.refresh(projects: model.projects) }
+                }
                 // `folmi://` links (MCP show_in_folmi) go to this window, not a new one.
                 // Files and folders passed by macOS arrive here as file URLs.
                 .onOpenURL(perform: model.handleExternalOpen)

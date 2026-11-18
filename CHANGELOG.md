@@ -2,6 +2,13 @@
 
 每个版本改了什么。版本号见 [VERSION](VERSION)，安装包在 [Releases](https://github.com/fieai/Folmi/releases)。
 
+## 未发布
+
+### 新增
+
+- 项目轨会从仓库里找项目图标，找不到时显示彩色缩写。可以拖入图片、从菜单选择图片或使用 Emoji。
+- 项目和工作树的角标会显示 Agent 正在改、等你处理、出错或改完待验收。更新钩子后，Folmi 在后台也能提醒你处理 Claude Code 或 Codex 的请求。
+
 ## 0.17.0 — 2026-11-16
 
 ### 新增

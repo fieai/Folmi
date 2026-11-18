@@ -1,4 +1,5 @@
 import AppKit
+import FolmiCore
 import SwiftUI
 import UserNotifications
 
@@ -9,6 +10,7 @@ final class AINotifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AINotifier()
     weak var model: FolmiModel?
     private var asked = false
+    private var hookNotices = HookNoticeThrottle()
 
     /// UNUserNotificationCenter traps without a bundle (swift run, tests); only the packaged app uses it.
     static var available: Bool { Bundle.main.bundleURL.pathExtension == "app" && Bundle.main.bundleIdentifier != nil }
@@ -30,8 +32,17 @@ final class AINotifier: NSObject, UNUserNotificationCenterDelegate {
         return ("\(batch.agentTitle) 改完了 · \(project)", prompt + what)
     }
 
+    func postHookWaiting(_ event: AIEvent, project: String, name: String) {
+        let date = Date(timeIntervalSince1970: event.t)
+        guard Self.available, Self.shouldNotify(stopped: date, launched: PerfLog.launched, appActive: NSApp?.isActive ?? true),
+              hookNotices.shouldPost(session: event.session, now: Date()) else { return }
+        let agent = event.agent == "codex" ? "Codex" : "Claude"
+        post(title: "\(agent) 在等你处理 · \(name)", body: event.message ?? "",
+             project: project, hookSession: event.session)
+    }
+
     /// `opensAgent`: a click opens the AI tab at the conversation waiting, not 逐个验收.
-    func post(title: String, body: String, project: String, opensAgent: Bool = false) {
+    func post(title: String, body: String, project: String, opensAgent: Bool = false, hookSession: String? = nil) {
         guard Self.available else { return }
         let center = UNUserNotificationCenter.current()
         let send: @Sendable () -> Void = {
@@ -39,8 +50,9 @@ final class AINotifier: NSObject, UNUserNotificationCenterDelegate {
             content.title = title
             content.body = body
             content.sound = .default
-            content.userInfo = ["project": project, "agent": opensAgent]
-            let identifier = (opensAgent ? "agent-permission-" : "ai-finished-") + project
+            content.userInfo = ["project": project, "agent": opensAgent, "opensProject": hookSession != nil]
+            let identifier = hookSession.map { "hook-waiting-" + $0 }
+                ?? ((opensAgent ? "agent-permission-" : "ai-finished-") + project)
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
         }
         if asked { send(); return }
@@ -52,8 +64,14 @@ final class AINotifier: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let project = response.notification.request.content.userInfo["project"] as? String
         let opensAgent = response.notification.request.content.userInfo["agent"] as? Bool ?? false
+        let opensProject = response.notification.request.content.userInfo["opensProject"] as? Bool ?? false
         await MainActor.run {
             NSApp.activate(ignoringOtherApps: true)
+            if opensProject, let model = self.model, let project {
+                if model.projects.contains(where: { $0.rootPath == project }) { model.switchProject(project) }
+                else { model.open(URL(fileURLWithPath: project)) }
+                return
+            }
             if let model = self.model, project == nil || model.repositoryURL?.path == project {
                 if opensAgent {
                     if let waiting = model.agentSessions.first(where: \.needsPermission) { model.selectAgentSession(waiting) }
@@ -68,6 +86,17 @@ final class AINotifier: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([])
+    }
+}
+
+struct HookNoticeThrottle {
+    private var posted: [String: Date] = [:]
+
+    mutating func shouldPost(session: String, now: Date) -> Bool {
+        posted = posted.filter { now.timeIntervalSince($0.value) < 5 * 60 }
+        guard posted[session] == nil else { return false }
+        posted[session] = now
+        return true
     }
 }
 
