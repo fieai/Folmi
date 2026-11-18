@@ -134,31 +134,76 @@ extension FolmiModel {
         else if !paneLayout.closed.contains(.terminal) { paneLayout.close(.terminal) }
     }
 
-    /// Opens this project's terminal tabs the first time: as many as were open last time, with their names.
+    /// Reconciles the background list once, including projects whose terminal card is hidden.
+    func restoreBackgroundTerminals() {
+        guard !restoredBackgroundTerminals, keepTerminalsRunning, let terminalService,
+              projects.isEmpty || projects.contains(where: { !$0.isDemo }) else { return }
+        do {
+            let sessions = try terminalService.sessions()
+            restoredBackgroundTerminals = true
+            let byProject = Dictionary(grouping: sessions, by: \.projectRoot)
+            for project in projects where !project.isDemo && terminals[project.rootPath] == nil {
+                let root = URL(fileURLWithPath: project.rootPath, isDirectory: true)
+                let saved = savedProject(project.rootPath) ?? project
+                let live = byProject[project.rootPath] ?? []
+                if !saved.terminalTabs.isEmpty || !live.isEmpty {
+                    restoreTerminalTabs(root: root, project: saved, live: live, needsTab: false)
+                }
+            }
+            orphanTerminalCount = orphanTerminals(sessions).count
+        } catch {
+            reportTerminalServiceIssue(error)
+        }
+    }
+
     func startTerminal() {
         guard let root = repositoryURL else { return }
-        if terminals[root.path, default: []].isEmpty {
-            let project = savedProject(root.path)
-            let names = terminalTabsCleared.contains(root.path) ? [] : project?.terminalTabs ?? []
-            let directories = terminalTabsCleared.contains(root.path) ? [] : project?.terminalDirectories ?? []
-            terminalTabsCleared.remove(root.path)
-            let sessions = (names.isEmpty ? [""] : names).enumerated().map { index, name in
-                makeTerminal(root: root, name: name, directory: directories.indices.contains(index) ? directories[index] : "")
-            }
-            terminals[root.path] = sessions
-            // Saved columns name tabs by their place in the list; they get this launch's session ids.
-            if !names.isEmpty, let saved = project?.terminalColumns {
-                var layout = saved.mapTabs { Int($0).flatMap { sessions.indices.contains($0) ? sessions[$0].id.uuidString : nil } }
-                layout.keep(sessions.map(\.id.uuidString))
-                terminalColumns[root.path] = layout
-                if let selected = layout.selected.flatMap(UUID.init(uuidString:)) { selectedTerminals[root.path] = selected }
-            } else { terminalColumns[root.path] = nil }
+        restoreBackgroundTerminals()
+        if terminals[root.path, default: []].isEmpty, isDemo || incompatibleTerminalService == nil || !keepTerminalsRunning {
+            restoreTerminalTabs(root: root, project: savedProject(root.path), live: [], needsTab: true)
         }
         syncTerminalTabs()
     }
 
-    func makeTerminal(root: URL, name: String, directory: String = "") -> TerminalSession {
-        let session = TerminalSession(root: root, environment: commandEnvironment, isDemo: isDemo, name: name, directory: directory)
+    private func restoreTerminalTabs(root: URL, project: ProjectPreferences?, live: [PTYProtocol.Session], needsTab: Bool) {
+        let cleared = terminalTabsCleared.remove(root.path) != nil
+        let names = cleared ? [] : project?.terminalTabs ?? []
+        let directories = cleared ? [] : project?.terminalDirectories ?? []
+        let ids = cleared ? [] : project?.terminalSessionIDs ?? []
+        var unclaimed = Set(live.map(\.id))
+        var tabs = names.enumerated().map { index, name in
+            let savedID = ids.indices.contains(index) ? UUID(uuidString: ids[index]) : nil
+            let restoredID = savedID.flatMap { unclaimed.remove($0) }
+            return makeTerminal(root: root, name: name, directory: directories.indices.contains(index) ? directories[index] : "",
+                                project: project, restoredID: restoredID)
+        }
+        for session in live where unclaimed.contains(session.id) {
+            tabs.append(makeTerminal(root: root, name: "", project: project, restoredID: session.id))
+        }
+        if tabs.isEmpty && needsTab { tabs.append(makeTerminal(root: root, name: "", project: project)) }
+        terminals[root.path] = tabs
+        if !names.isEmpty, let saved = project?.terminalColumns {
+            var layout = saved.mapTabs { Int($0).flatMap { tabs.indices.contains($0) ? tabs[$0].id.uuidString : nil } }
+            layout.keep(tabs.map(\.id.uuidString))
+            terminalColumns[root.path] = layout
+            if let selected = layout.selected.flatMap(UUID.init(uuidString:)) { selectedTerminals[root.path] = selected }
+        } else { terminalColumns[root.path] = nil }
+    }
+
+    func makeTerminal(root: URL, name: String, directory: String = "",
+                      project: ProjectPreferences? = nil, restoredID: UUID? = nil) -> TerminalSession {
+        let active = repositoryURL?.path == root.path
+        let environment = active ? commandEnvironment : project?.environment ?? [:]
+        let demo = active ? isDemo : project?.isDemo ?? false
+        let service = keepTerminalsRunning ? terminalService : nil
+        let session = TerminalSession(root: root, environment: environment, isDemo: demo, name: name,
+                                      directory: directory, service: service, restoredID: restoredID)
+        session.onServiceStatus = { [weak self] error in
+            guard let self else { return }
+            if let error { self.reportTerminalServiceIssue(error) }
+            else { self.terminalServiceNotice = nil }
+            self.scheduleSave()
+        }
         session.onOpenLink = { [weak self, weak session] link in self?.openTerminalLink(link, from: session) }
         session.onHoverLink = { [weak self, weak session] link, rect in
             guard let session else { return }
@@ -186,17 +231,27 @@ extension FolmiModel {
     func restartTerminal() {
         guard let root = repositoryURL, let current = terminalSession,
               let index = terminals[root.path]?.firstIndex(where: { $0 === current }) else { startTerminal(); return }
-        current.stop()
+        guard confirmTermination(of: current), endTerminal(current) else { return }
         let replacement = makeTerminal(root: root, name: current.name)
         terminals[root.path]?[index] = replacement
         terminalColumns[root.path]?.replace(current.id.uuidString, with: replacement.id.uuidString)
         selectedTerminals[root.path] = replacement.id
         syncTerminalTabs()
+        scheduleSave()
     }
 
     func newTerminalTab() {
         guard let root = repositoryURL else { return }
-        if !showTerminal { showTerminal = true; startTerminal() }
+        if keepTerminalsRunning && !isDemo && incompatibleTerminalService != nil { showIncompatibleTerminalService(); return }
+        if !showTerminal {
+            showTerminal = true
+            if terminals[root.path]?.isEmpty != false {
+                startTerminal()
+                focusPane(.terminal)
+                scheduleSave()
+                return
+            }
+        }
         let session = makeTerminal(root: root, name: "")
         terminals[root.path, default: []].append(session)
         selectedTerminals[root.path] = session.id
@@ -222,7 +277,9 @@ extension FolmiModel {
     /// Ends the tab's shell. Closing the last tab also collapses the terminal card.
     func closeTerminalTab(_ id: UUID) {
         guard let root = repositoryURL?.path, var tabs = terminals[root], let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-        tabs.remove(at: index).stop()
+        let tab = tabs[index]
+        guard confirmTermination(of: tab), endTerminal(tab) else { return }
+        tabs.remove(at: index)
         terminals[root] = tabs
         if var layout = terminalColumns[root] {
             // The tab beside it in the same column takes its place.

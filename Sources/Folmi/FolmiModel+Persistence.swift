@@ -27,6 +27,7 @@ extension FolmiModel {
                 saved[index].selectedChangePath = previous.selectedChangePath
                 saved[index].editorTabs = previous.editorTabs; saved[index].selectedEditorPath = previous.selectedEditorPath
                 saved[index].terminalTabs = previous.terminalTabs; saved[index].terminalDirectories = previous.terminalDirectories
+                saved[index].terminalSessionIDs = previous.terminalSessionIDs
                 saved[index].editorColumns = previous.editorColumns; saved[index].terminalColumns = previous.terminalColumns
             }
             if path == repositoryURL?.path {
@@ -45,15 +46,18 @@ extension FolmiModel {
             if let tabs = terminals[path], !tabs.isEmpty {
                 saved[index].terminalTabs = tabs.map(\.name)
                 // Both sides resolved: the shell reports /private/var/… while a standardized path may drop /private.
+                saved[index].terminalSessionIDs = tabs.map { $0.backgroundID?.uuidString ?? "" }
                 let base = SnapshotCache.key(path)
                 saved[index].terminalDirectories = tabs.map { tab in
-                    guard let directory = tab.currentDirectory?.resolvingSymlinksInPath().path, directory.hasPrefix(base + "/") else { return "" }
+                    let directory = tab.savedDirectory.resolvingSymlinksInPath().path
+                    guard directory.hasPrefix(base + "/") else { return "" }
                     return String(directory.dropFirst(base.count + 1))
                 }
                 let places = Dictionary(uniqueKeysWithValues: tabs.enumerated().map { ($1.id.uuidString, String($0)) })
                 saved[index].terminalColumns = terminalColumns[path].flatMap { $0.isSplit ? $0.mapTabs { places[$0] } : nil }
             } else if terminalTabsCleared.contains(path) {
                 saved[index].terminalTabs = []; saved[index].terminalDirectories = []; saved[index].terminalColumns = nil
+                saved[index].terminalSessionIDs = []
             }
         }
         preferences.projects = saved
@@ -66,6 +70,7 @@ extension FolmiModel {
         preferences.diffLayout = diffLayout
         preferences.foldWhitespace = foldWhitespace
         preferences.companionMotion = companionMotion
+        preferences.keepTerminalsRunning = keepTerminalsRunning
         preferences.ideaHotKey = ideaHotKey
         preferences.editorFontSize = editorFontSize
         preferences.markdownFontFamily = markdownFontFamily
@@ -131,8 +136,20 @@ extension FolmiModel {
                 do { for editor in editors.values { try editor.saveAll() } } catch { report(error, title: "保存文件失败"); return false }
             }
         }
-        do { try savePreferencesNow() } catch { report(error, title: "保存个人配置失败"); return false }
+        if keepTerminalsRunning { showTerminalQuitNoticeIfNeeded() }
+        do {
+            try savePreferencesNow()
+            if !keepTerminalsRunning { try terminalService?.shutdown() }
+        } catch {
+            if case PTYProtocol.Failure.incompatible = error { reportTerminalServiceIssue(error) }
+            report(error, title: "退出 Folmi 失败")
+            return false
+        }
         cancelProjectSearch()
-        terminals.values.joined().forEach { $0.stop() }; return true
+        for terminal in terminals.values.joined() {
+            if keepTerminalsRunning { terminal.detachForQuit() }
+            else { terminal.stop(endBackground: false) }
+        }
+        return true
     }
 }

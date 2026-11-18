@@ -102,6 +102,7 @@ extension FolmiModel {
                 throw error
             }
             discardRecoveredProjectCaches(oldPath)
+            if restoredBackgroundTerminals && !oldProject.isDemo { refreshTerminalMenu() }
             missingProjectPath = nil; errorMessage = nil
             record("项目已重新定位", "\(oldPath)\n→ \(newPath)")
             return state.root
@@ -156,28 +157,39 @@ extension FolmiModel {
     @discardableResult
     func forgetProject(_ path: String) -> Bool {
         let previousProjects = projects, previousPreferences = preferences, previousComments = reviewComments
+        var wrotePreferences = false
         do {
+            let sessions = try backgroundTerminals(in: path)
+            guard confirmProjectTerminalClosure(path: path, sessions: sessions) else { return false }
+            let pending = (terminals[path] ?? []).compactMap(\.backgroundID)
             projects.removeAll { $0.rootPath == path }
             preferences.projects.removeAll { $0.rootPath == path }
             reviewComments.removeAll { $0.projectPath == path }
             if preferences.selectedProjectPath == path { preferences.selectedProjectPath = nil }
             try savePreferencesNow()
-            discardRecoveredProjectCaches(path)
+            wrotePreferences = true
+            try terminalService?.end(Array(Set(sessions.map(\.id) + pending)))
+            discardRecoveredProjectCaches(path, removed: true)
             editorObservers.removeValue(forKey: path)
             record("已从项目列表移除", path)
             return true
         } catch {
             projects = previousProjects; preferences = previousPreferences; reviewComments = previousComments
             saveTask?.cancel(); saveTask = nil; saveDeadline = nil
+            if wrotePreferences { try? savePreferencesNow() }
+            if case PTYProtocol.Failure.incompatible = error { reportTerminalServiceIssue(error) }
             report(error, title: "移除项目失败")
             return false
         }
     }
 
-    private func discardRecoveredProjectCaches(_ path: String) {
+    private func discardRecoveredProjectCaches(_ path: String, removed: Bool = false) {
         // An inactive project's old cwd and undo history cannot be reused at another filesystem location.
         editors.removeValue(forKey: path)
-        terminals.removeValue(forKey: path)?.forEach { $0.stop() }
+        for terminal in terminals.removeValue(forKey: path) ?? [] {
+            if removed { terminal.stop(endBackground: false) }
+            else { terminal.detachForQuit() }
+        }
         selectedTerminals.removeValue(forKey: path)
         terminalColumns.removeValue(forKey: path)
         terminalTabsCleared.remove(path)

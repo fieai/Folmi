@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "FolmiCore", targets: ["FolmiCore"]),
         .executable(name: "Folmi", targets: ["Folmi"]),
         .executable(name: "folmi-hook", targets: ["FolmiHook"]),
+        .executable(name: "folmi-pty", targets: ["FolmiPTY"]),
         .executable(name: "folmi-cli", targets: ["FolmiCLI"])
     ],
     dependencies: [
@@ -20,10 +21,12 @@ let package = Package(
         .executableTarget(name: "Folmi", dependencies: ["FolmiCore", .product(name: "SwiftTerm", package: "SwiftTerm")],
                           resources: [.copy("Resources/ReaderAssets"), .copy("Resources/Fonts"), .copy("Resources/Brand")]),
         .executableTarget(name: "FolmiHook", dependencies: ["FolmiCore"]),
+        .target(name: "FolmiPTYSpawn"),
+        .executableTarget(name: "FolmiPTY", dependencies: ["FolmiCore", "FolmiPTYSpawn"]),
         .executableTarget(name: "FolmiCLI", dependencies: ["FolmiCore"]),
         // Tests drive AppKit views and fixtures from synchronous XCTest methods; they stay in Swift 5 mode.
         .testTarget(name: "FolmiCoreTests", dependencies: ["FolmiCore"], swiftSettings: [.swiftLanguageMode(.v5)]),
-        .testTarget(name: "FolmiTests", dependencies: ["Folmi", "FolmiCore"], swiftSettings: [.swiftLanguageMode(.v5)])
+        .testTarget(name: "FolmiTests", dependencies: ["Folmi", "FolmiCore", "FolmiPTY"], swiftSettings: [.swiftLanguageMode(.v5)])
     ],
     // The app, Core and the hook build in Swift 6 mode: a possible data race is a compile error, not a warning.
     swiftLanguageModes: [.v6]

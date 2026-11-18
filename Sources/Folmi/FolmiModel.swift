@@ -106,6 +106,12 @@ final class FolmiModel {
     var terminalSession: TerminalSession?
     /// This project's terminal tabs, in order.
     var terminalTabs: [TerminalSession] = []
+    var keepTerminalsRunning = true { didSet { scheduleSave() } }
+    var terminalServiceNotice: String?
+    var incompatibleTerminalService: PTYProtocol.Hello?
+    var orphanTerminalCount = 0
+    @ObservationIgnored var restoredBackgroundTerminals = false
+    let terminalService: TerminalService?
     /// What runs in this project and how to start it (ProjectServicesView.swift).
     let projectServices = ProjectServicesState()
     var showTerminal = false { didSet { syncTerminalPane(); scheduleSave() } }
@@ -362,8 +368,9 @@ final class FolmiModel {
 
     /// `autoRefresh` watches the open repository and re-checks status when the app becomes active; the app turns it on, tests opt in.
     init(store: WorkspaceStore = WorkspaceStore(url: RuntimeOptions.workspaceURL), autoRefresh: Bool = false,
-         checkEnvironmentOnStartup: Bool = false) {
+         checkEnvironmentOnStartup: Bool = false, terminalService: TerminalService? = nil) {
         self.store = store
+        self.terminalService = terminalService
         self.autoRefresh = autoRefresh
         if checkEnvironmentOnStartup { gitStartupState = .checking }
         // Caches, AI settings and ⌘K history sit next to the settings file this model uses (a test's own folder).
@@ -403,6 +410,7 @@ final class FolmiModel {
             reviewComments = projects.flatMap(\.reviewComments)
             paneLayout = preferences.paneLayout
             showTerminal = preferences.showTerminal
+            keepTerminalsRunning = preferences.keepTerminalsRunning
             syncTerminalPane()
             preferencesStatus = "配置已载入"
         } catch {
@@ -523,8 +531,8 @@ final class FolmiModel {
     func restoreStartup() {
         guard snapshot == nil, !busy, let path = preferences.selectedProjectPath,
               let project = projects.first(where: { $0.rootPath == path }) else { return }
-        // Reload saved editor files read-only; a restored real project does not auto-run a login shell.
-        if !project.isDemo { showTerminal = false }
+        // Local-only restores still wait until the user opens the terminal panel.
+        if !project.isDemo && (terminalService == nil || !keepTerminalsRunning) { showTerminal = false }
         switchProject(path)
     }
     func openRepository() {
@@ -698,6 +706,7 @@ final class FolmiModel {
         if let path = settings.selectedChangePath, let change = state.files.first(where: { $0.path == path }) {
             selectedFileIDs = [change.id]; selectedFileID = change.id
         }
+        restoreBackgroundTerminals()
         syncTerminalTabs()
         if showTerminal { startTerminal() }
         // The file tree is read beside the first diff instead of before it.
