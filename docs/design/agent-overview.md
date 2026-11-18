@@ -1,6 +1,6 @@
 # 跨项目的 agent 状态
 
-状态：设计定稿（2026-11-18）。第一期（项目轨角标）待实现，和 [project-rail-icons.md](project-rail-icons.md) 一起做；第二期（全部项目的会话列表）排在 [terminal-persistence.md](terminal-persistence.md) 之后。
+状态：设计定稿（2026-11-18）。第一期（项目轨角标）已实现（2026-11-18），和 [project-rail-icons.md](project-rail-icons.md) 一起做；第二期（全部项目的会话列表）排在 [terminal-persistence.md](terminal-persistence.md) 之后。
 
 ## 要解决什么
 

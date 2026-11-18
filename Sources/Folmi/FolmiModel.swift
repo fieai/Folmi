@@ -92,6 +92,11 @@ final class FolmiModel {
     var profileName = ""
     var selectedProfileID: UUID?
     var deliveryPlan: DeliveryPlan?
+    var githubStatuses: [GitHubTarget: GitHubStatus] = [:]
+    var githubRequests: [GitHubTarget: UUID] = [:]
+    var githubDraft: GitHubDraft?
+    @ObservationIgnored var githubOpenedProjects: Set<URL> = []
+    let locateGitHubCLI: GitHubCLI.Locate
     /// When the target branch has moved on: rebase onto its latest before pushing (on by default).
     var deliveryRebaseFirst = true
     /// A delivery stopped on a rebase conflict, per project: once the rebase is finished the sheet opens again.
@@ -369,11 +374,13 @@ final class FolmiModel {
 
     /// `autoRefresh` watches the open repository and re-checks status when the app becomes active; the app turns it on, tests opt in.
     init(store: WorkspaceStore = WorkspaceStore(url: RuntimeOptions.workspaceURL), autoRefresh: Bool = false,
-         checkEnvironmentOnStartup: Bool = false, terminalService: TerminalService? = nil) {
+         checkEnvironmentOnStartup: Bool = false, terminalService: TerminalService? = nil,
+         locateGitHubCLI: @escaping GitHubCLI.Locate = { await GitHubExecutable.shared.path() }) {
         self.store = store
         projectIcons = ProjectIcons(workspace: store.url)
         self.terminalService = terminalService
         self.autoRefresh = autoRefresh
+        self.locateGitHubCLI = locateGitHubCLI
         if checkEnvironmentOnStartup { gitStartupState = .checking }
         // Caches, AI settings and ⌘K history sit next to the settings file this model uses (a test's own folder).
         AppFiles.directory = store.url.deletingLastPathComponent()
@@ -626,7 +633,7 @@ final class FolmiModel {
         if let profile = settings.deliveryProfiles.first(where: { $0.id == settings.selectedProfileID }) { applyProfile(profile) }
         else {
             selectedProfileID = nil; profileName = ""; deliveryKind = Self.startingDeliveryKind(settings, root: state.root)
-            deliveryRemote = state.remotes.contains("origin") ? "origin" : (state.remotes.first ?? "")
+            deliveryRemote = upstreamTarget?.remote ?? (state.remotes.contains("origin") ? "origin" : (state.remotes.first ?? ""))
             deliveryBranch = ""; scriptPath = ""; scriptArguments = ""
         }
         deliveryPlan = nil

@@ -91,7 +91,8 @@ struct FolmiFailure: LocalizedError {
 
 enum CommandRunner {
     static func run(_ command: DeliveryCommand, at directory: URL,
-                    environment: [String: String] = [:], timeout: TimeInterval = 180) async throws -> CommandResult {
+                    environment: [String: String] = [:], input: Data? = nil,
+                    timeout: TimeInterval = 180, keepStdoutTail: Bool = false) async throws -> CommandResult {
         try await Task.detached(priority: .userInitiated) {
             var env = ProcessInfo.processInfo.environment
             for key in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"] {
@@ -102,8 +103,9 @@ enum CommandRunner {
             env["GIT_PAGER"] = "cat"
             env["LC_ALL"] = "C"
             let result = try ProcessExecutor.run(executable: command.executable, arguments: command.arguments,
-                                                 directory: directory, environment: env, timeout: timeout,
-                                                 stdoutLimit: 4 * 1024 * 1024, stderrLimit: 4 * 1024 * 1024)
+                                                 directory: directory, environment: env, input: input, timeout: timeout,
+                                                 stdoutLimit: 4 * 1024 * 1024, stderrLimit: 4 * 1024 * 1024,
+                                                 keepStdoutTail: keepStdoutTail)
             return CommandResult(output: String(decoding: result.stdout, as: UTF8.self),
                                  error: String(decoding: result.stderr, as: UTF8.self), exitCode: result.status)
         }.value
