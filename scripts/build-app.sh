@@ -27,6 +27,7 @@ if [[ ! -s "$app_icon" ]]; then
 fi
 swift build -c release --arch arm64 --product Folmi
 swift build -c release --arch arm64 --product folmi-hook
+swift build -c release --arch arm64 --product folmi-pty
 swift build -c release --arch arm64 --product folmi-cli
 binary_dir="$(swift build -c release --arch arm64 --show-bin-path)"
 bundle_name="Folmi"
@@ -57,10 +58,11 @@ mkdir -p "$app_dir/Contents/Helpers"
 mkdir -p "$app_dir/Contents/Resources"
 cp "$binary_dir/Folmi" "$app_dir/Contents/MacOS/Folmi"
 cp "$binary_dir/folmi-hook" "$app_dir/Contents/MacOS/folmi-hook"
+cp "$binary_dir/folmi-pty" "$app_dir/Contents/MacOS/folmi-pty"
 cp "$binary_dir/folmi-cli" "$app_dir/Contents/Helpers/folmi"
 # Release binaries keep their local symbols (over half of Folmi's size); crash reports still symbolicate from
 # the .dSYM next to the build products. Strip before signing.
-/usr/bin/strip -x "$app_dir/Contents/MacOS/Folmi" "$app_dir/Contents/MacOS/folmi-hook" "$app_dir/Contents/Helpers/folmi"
+/usr/bin/strip -x "$app_dir/Contents/MacOS/Folmi" "$app_dir/Contents/MacOS/folmi-hook" "$app_dir/Contents/MacOS/folmi-pty" "$app_dir/Contents/Helpers/folmi"
 /usr/bin/install -m 644 "$app_icon" "$app_dir/Contents/Resources/Folmi.icns"
 for resource_bundle in "$binary_dir"/SwiftTerm_*.bundle(N); do
   if [[ -d "$app_dir/${resource_bundle:t}" ]]; then

@@ -1,12 +1,13 @@
 import AppKit
 import Darwin
+import FolmiCore
 import SwiftUI
 import SwiftTerm
 
 /// A project owns this session. Moving its view between SwiftUI layouts never starts another shell.
 @MainActor
-final class TerminalSession: NSObject, ObservableObject, Identifiable, @preconcurrency LocalProcessTerminalViewDelegate {
-    let id = UUID()
+final class TerminalSession: NSObject, ObservableObject, Identifiable {
+    let id: UUID
     let root: URL
     /// What the shell or program set as its title, or the session's state (启动失败, 已退出); empty when neither.
     @Published var title: String
@@ -15,7 +16,11 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, @preconcu
     @Published var isRunning = false
     /// The last part of the shell's current directory, so two tabs read 「docs · zsh」 and 「repository · zsh」.
     @Published private(set) var folder: String
-    var displayTitle: String { !name.isEmpty ? name : (!title.isEmpty ? title : "\(folder) · zsh") }
+    @Published private(set) var status: String?
+    var displayTitle: String {
+        if let status { return name.isEmpty ? status : "\(name) · \(status)" }
+        return !name.isEmpty ? name : (!title.isEmpty ? title : "\(folder) · zsh")
+    }
     private var folderCheckedAt: TimeInterval = 0
     /// ⌘-click on a path or web address in the output.
     var onOpenLink: ((String) -> Void)?
@@ -24,13 +29,22 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, @preconcu
     let terminalView: FolmiTerminalView
     let launchEnvironment: [String: String]
     let shellArguments: [String]
-    private let terminalDelegate: TerminalInteractionDelegate
     private let isolatedHome: URL?
     private var stopped = false
+    private var local = false
+    private var backgroundPID: Int32 = 0
+    private var connection: TerminalConnection?
+    private let service: TerminalService?
+    private(set) var backgroundID: UUID?
+    private let startDirectory: URL
+    var onServiceStatus: ((Error?) -> Void)?
 
     /// `directory`: where the shell starts, relative to `root`; the root itself when empty, missing or outside it.
-    init(root: URL, environment: [String: String], isDemo: Bool, name: String = "", directory: String = "") {
+    init(root: URL, environment: [String: String], isDemo: Bool, name: String = "", directory: String = "",
+         service: TerminalService? = nil, restoredID: UUID? = nil) {
+        self.id = restoredID ?? UUID()
         self.root = root
+        self.service = isDemo ? nil : service
         self.name = name
         title = ""
         folder = root.lastPathComponent
@@ -76,57 +90,200 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, @preconcu
         env["TERM"] = "xterm-256color"
         env["TERM_PROGRAM"] = "Folmi"
         env["COLORTERM"] = "truecolor"
-        env["PWD"] = root.path
+        // A saved directory is relative to the project and may have vanished while Folmi was closed.
+        var start = root.path
+        if !directory.isEmpty, !directory.split(separator: "/").contains(".."), !directory.hasPrefix("/") {
+            let candidate = root.appendingPathComponent(directory).resolvingSymlinksInPath().path
+            let base = root.resolvingSymlinksInPath().path
+            var isFolder: ObjCBool = false
+            if candidate.hasPrefix(base + "/"),
+               FileManager.default.fileExists(atPath: candidate, isDirectory: &isFolder), isFolder.boolValue { start = candidate }
+        }
+        startDirectory = URL(fileURLWithPath: start, isDirectory: true)
+        env["PWD"] = start
         launchEnvironment = env
         isolatedHome = home
         var options = TerminalOptions.default
         options.scrollback = 2_000
         options.kittyImageCacheLimitBytes = 8 * 1024 * 1024
         let view = FolmiTerminalView(frame: NSRect(x: 0, y: 0, width: 900, height: 240),
-                                         font: .monospacedSystemFont(ofSize: 13, weight: .regular), options: options)
+                                     font: .monospacedSystemFont(ofSize: 13, weight: .regular), options: options)
         terminalView = view
-        terminalDelegate = TerminalInteractionDelegate(view: view)
         super.init()
-        view.terminalDelegate = terminalDelegate
-        terminalDelegate.openLink = { [weak self] link in self?.onOpenLink?(link) }
+        view.terminalDelegate = view
+        view.onTitle = { [weak self] title in
+            guard let self, !self.stopped else { return }
+            self.title = String(title.prefix(160))
+        }
+        view.onOpenLink = { [weak self] link in self?.onOpenLink?(link) }
         view.onHoverLink = { [weak self] link, rect in self?.onHoverLink?(link, rect) }
-        view.processDelegate = self
+        view.onExit = { [weak self] _ in self?.didExit(nil) }
+        // A `cd` shows in the next prompt; look at the directory then, at most twice a second.
+        view.onOutput = { [weak self] in self?.refreshFolder() }
         view.applyAppearanceColors()
         view.setAccessibilityIdentifier("embedded-terminal")
         view.setAccessibilityLabel(isDemo ? "演示仓库内嵌终端" : "项目内嵌终端")
-        if let startupError {
-            title = "终端启动失败"
-            view.feed(text: "终端无法启动：\(startupError.localizedDescription)\r\n")
-            return
+        if let startupError, restoredID == nil {
+            showStartupFailure(startupError)
+        } else if let service = self.service {
+            openBackground(service, restoring: restoredID != nil)
+        } else {
+            startLocal()
         }
-        // env -C fails before executing zsh if the directory disappears. SwiftTerm's own
-        // forkpty helper ignores a failed chdir, so passing currentDirectory alone is insufficient.
-        var start = root.path
-        if !directory.isEmpty, !directory.split(separator: "/").contains(".."), !directory.hasPrefix("/") {
-            let candidate = root.appendingPathComponent(directory).standardizedFileURL.path
-            var folder: ObjCBool = false
-            if candidate.hasPrefix(root.standardizedFileURL.path + "/"),
-               FileManager.default.fileExists(atPath: candidate, isDirectory: &folder), folder.boolValue { start = candidate }
-        }
-        view.startProcess(executable: "/usr/bin/env", args: ["-C", start, "/bin/zsh"] + shellArguments,
-                          environment: env.keys.sorted().map { "\($0)=\(env[$0]!)" },
-                          currentDirectory: start)
-        isRunning = view.process.running
-        if !isRunning { title = "终端启动失败" }
-        // A `cd` shows in the shell's output (the next prompt); look at the directory then, at most twice a second.
-        view.onOutput = { [weak self] in self?.refreshFolder() }
     }
 
-    func stop() {
+    private func showStartupFailure(_ error: Error) {
+        title = "终端启动失败"
+        status = title
+        terminalView.feed(text: "终端无法启动：\(error.localizedDescription)\r\n")
+    }
+
+    private func startLocal() {
+        local = true
+        status = nil
+        let view = terminalView
+        view.onInput = { [weak view] data in view?.process.send(data: data) }
+        view.onResize = { [weak view] in
+            guard let view, view.process.running else { return }
+            var size = view.getWindowSize()
+            _ = ioctl(view.process.childfd, TIOCSWINSZ, &size)
+        }
+        // SwiftTerm's own helper can ignore a failed chdir. env -C refuses to run in the wrong directory.
+        view.process.startProcess(executable: "/usr/bin/env",
+                                  args: ["-C", startDirectory.path, "/bin/zsh"] + shellArguments,
+                                  environment: launchEnvironment.map { "\($0.key)=\($0.value)" },
+                                  currentDirectory: startDirectory.path)
+        isRunning = view.process.running
+        if !isRunning { title = "终端启动失败"; status = title }
+    }
+
+    private func openBackground(_ service: TerminalService, restoring: Bool) {
+        backgroundID = id
+        status = restoring ? "正在接回终端…" : "正在启动终端…"
+        let size = terminalView.getWindowSize()
+        let request = PTYProtocol.Create(id: id, projectRoot: root.path, cwd: startDirectory.path, env: launchEnvironment,
+                                         argv: ["/bin/zsh"] + shellArguments, cols: size.ws_col, rows: size.ws_row)
+        service.open(request, restoring: restoring) { [weak self] result in
+            guard let self, !self.stopped else { return }
+            switch result {
+            case .success(let opened):
+                self.onServiceStatus?(nil)
+                self.connect(opened)
+            case .failure(.unavailable(let error)):
+                self.backgroundID = nil
+                self.onServiceStatus?(error)
+                self.startLocal()
+            case .failure(.uncertain(let error)):
+                self.showStartupFailure(error)
+                self.onServiceStatus?(error)
+            case .failure(.rejected(let error)):
+                self.showStartupFailure(error)
+                if case PTYProtocol.Failure.incompatible = error {
+                    self.onServiceStatus?(error)
+                } else {
+                    self.backgroundID = nil
+                }
+            }
+        }
+    }
+
+    private func connect(_ opened: TerminalService.Opened) {
+        backgroundPID = opened.info.hasExited ? 0 : opened.info.shellPid
+        let connection = TerminalConnection(opened.stream)
+        self.connection = connection
+        connection.onFrame = { [weak self] frame in self?.receive(frame) }
+        connection.onDisconnect = { [weak self] _ in self?.connectionLost() }
+        terminalView.onInput = { [weak self] data in
+            guard let self, self.isRunning else { return }
+            // Keep large pastes within the wire frame limit.
+            var rest = data
+            while !rest.isEmpty {
+                self.connection?.send(.bytes(.input, id: self.id, data: Data(rest.prefix(32 * 1_024))))
+                rest = rest.dropFirst(32 * 1_024)
+            }
+        }
+        terminalView.onResize = { [weak self] in self?.resizeBackground() }
+        sendControl(.attach, id)
+    }
+
+    private func receive(_ frame: PTYProtocol.Frame) {
+        switch frame.kind {
+        case .replay, .output:
+            guard let bytes = try? frame.bytes(), bytes.id == id else { return }
+            if frame.kind == .replay {
+                // Replay may contain terminal queries; their historical replies must not reach the running shell.
+                terminalView.getTerminal().resetToInitialState()
+                terminalView.receiveOutput(bytes.data)
+                status = nil
+                isRunning = backgroundPID > 0
+                refreshFolder(force: true)
+                resizeBackground()
+            } else {
+                terminalView.receiveOutput(bytes.data)
+            }
+        case .exited:
+            guard let exit = try? frame.decode(PTYProtocol.Exit.self), exit.id == id else { return }
+            didExit(exit.exitCode)
+            connection?.disconnect()
+            connection = nil
+        case .displaced:
+            connectionLost("终端已在另一个窗口接回")
+        case .failure:
+            connectionLost((try? frame.decode(String.self)) ?? "后台终端连接已断开")
+        default: break
+        }
+    }
+
+    private func resizeBackground() {
+        guard isRunning else { return }
+        let size = terminalView.getWindowSize()
+        sendControl(.resize, PTYProtocol.Resize(id: id, cols: size.ws_col, rows: size.ws_row))
+    }
+
+    private func sendControl(_ kind: PTYProtocol.Kind, _ value: some Encodable) {
+        if let frame = try? PTYProtocol.Frame.json(kind, value) { connection?.send(frame) }
+    }
+
+    private func didExit(_ code: Int32?) {
+        isRunning = false
+        backgroundPID = 0
+        if !stopped {
+            title = code.map { "已退出（退出码 \($0)）" } ?? "终端已退出"
+            status = title
+        }
+    }
+
+    private func connectionLost(_ message: String = "后台终端连接已断开") {
+        connection?.disconnect()
+        connection = nil
+        isRunning = false
+        backgroundPID = 0
+        if !stopped { status = message }
+    }
+
+    func detachForQuit() {
+        guard backgroundID != nil else { stop(); return }
+        stopped = true
+        sendControl(.detach, id)
+        connection?.disconnect()
+        connection = nil
+    }
+
+    func stop(endBackground: Bool = true) {
         guard !stopped else { return }
         stopped = true
         isRunning = false
         title = "终端已关闭"
-        if terminalView.process.running {
+        status = title
+        if let backgroundID, endBackground { try? service?.end([backgroundID]) }
+        backgroundID = nil
+        connection?.disconnect()
+        connection = nil
+        if local && terminalView.process.running {
             let ownedPID = terminalView.process.shellPid
             // Signal only the shell created by this session. Closing the PTY also hangs up its jobs.
             if ownedPID > 0 { Darwin.kill(ownedPID, SIGHUP) }
-            terminalView.terminate()
+            terminalView.process.terminate()
             if ownedPID > 0 {
                 // SwiftTerm cancels its exit monitor on terminate; reap our child without blocking AppKit.
                 DispatchQueue.global(qos: .utility).async {
@@ -158,9 +315,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, @preconcu
     /// Where relative paths in the output start from: the foreground program's working directory, else the shell's.
     var currentDirectory: URL? {
         guard isRunning else { return nil }
-        let shell = terminalView.process.shellPid
-        let foreground = tcgetpgrp(terminalView.process.childfd)
-        for pid in [foreground, shell] where pid > 0 {
+        for pid in [foregroundPID, shellPID] where pid > 0 {
             var info = proc_vnodepathinfo()
             let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
             guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { continue }
@@ -169,18 +324,37 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, @preconcu
         }
         return nil
     }
-    var shellPID: Int32 { isRunning ? terminalView.process.shellPid : 0 }
-    /// A program is running in the tab (a dev server, Claude Code) rather than the shell waiting at its prompt.
+    var savedDirectory: URL { currentDirectory ?? lastDirectory ?? startDirectory }
+    private var lastDirectory: URL?
+    var shellPID: Int32 { local ? (isRunning ? terminalView.process.shellPid : 0) : backgroundPID }
+
+    private var foregroundPID: Int32 {
+        guard shellPID > 0 else { return 0 }
+        if local { return tcgetpgrp(terminalView.process.childfd) }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(shellPID, PROC_PIDTBSDINFO, 0, &info, size) == size else { return 0 }
+        return Int32(bitPattern: info.e_tpgid)
+    }
+
     var runsProgram: Bool {
-        guard isRunning else { return false }
-        let foreground = tcgetpgrp(terminalView.process.childfd)
-        return foreground > 0 && foreground != terminalView.process.shellPid
+        let foreground = foregroundPID
+        return foreground > 0 && foreground != shellPID
+    }
+
+    var runningProgram: String? {
+        let shell = shellPID
+        guard shell > 0 else { return nil }
+        let foreground = foregroundPID
+        if foreground > 0 && foreground != shell { return PTYProcess.name(of: foreground) ?? "程序" }
+        return PTYProcess.backgroundJob(in: shell)
     }
     func refreshFolder(force: Bool = false) {
         let now = ProcessInfo.processInfo.systemUptime
         guard force || now - folderCheckedAt > 0.5 else { return }
         folderCheckedAt = now
         guard let directory = currentDirectory else { return }
+        lastDirectory = directory
         let next = directory.lastPathComponent.isEmpty ? "/" : directory.lastPathComponent
         if folder != next { folder = next }
     }
@@ -195,56 +369,46 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable, @preconcu
             return seen[title] == 1 ? title : "\(title) \(seen[title]!)"
         }
     }
-
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        guard !stopped else { return }
-        self.title = String(title.prefix(160))
-    }
-    func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {}
-    func processTerminated(source: SwiftTerm.TerminalView, exitCode: Int32?) {
-        isRunning = false
-        if !stopped { title = "终端已退出" }
-    }
 }
 
-/// Default keyboard copy/paste remains user initiated. OSC 52 cannot read or replace the clipboard.
-/// Links open only on ⌘-click, and only through the session's handler.
-/// SwiftTerm calls its delegate on the main thread; the conformance says so and checks it at run time.
-@MainActor
-private final class TerminalInteractionDelegate: @preconcurrency TerminalViewDelegate {
-    weak var view: LocalProcessTerminalView?
-    var openLink: ((String) -> Void)?
-    init(view: LocalProcessTerminalView) { self.view = view }
-    func sizeChanged(source: SwiftTerm.TerminalView, newCols: Int, newRows: Int) {
-        view?.sizeChanged(source: source, newCols: newCols, newRows: newRows)
-    }
-    func setTerminalTitle(source: SwiftTerm.TerminalView, title: String) {
-        view?.setTerminalTitle(source: source, title: title)
-    }
-    func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {
-        view?.hostCurrentDirectoryUpdate(source: source, directory: directory)
-    }
-    func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) { view?.send(source: source, data: data) }
-    func scrolled(source: SwiftTerm.TerminalView, position: Double) { view?.scrolled(source: source, position: position) }
-    func rangeChanged(source: SwiftTerm.TerminalView, startY: Int, endY: Int) {
-        view?.rangeChanged(source: source, startY: startY, endY: endY)
-    }
-    func clipboardCopy(source: SwiftTerm.TerminalView, content: Data) {}
-    func clipboardRead(source: SwiftTerm.TerminalView) -> Data? { nil }
-    /// SwiftTerm reports a ⌘-click on an OSC 8 link or on a URL or path it found in the text.
-    func requestOpenLink(source: SwiftTerm.TerminalView, link: String, params: [String: String]) { openLink?(link) }
-}
-
-final class FolmiTerminalView: LocalProcessTerminalView {
+/// Both backends use the same SwiftTerm view and interaction policy, including blocking OSC 52 clipboard access.
+final class FolmiTerminalView: SwiftTerm.TerminalView, @preconcurrency TerminalViewDelegate, @preconcurrency LocalProcessDelegate {
+    lazy var process = LocalProcess(delegate: self)
+    var onInput: ((ArraySlice<UInt8>) -> Void)?
+    var onResize: (() -> Void)?
+    var onTitle: ((String) -> Void)?
+    var onOpenLink: ((String) -> Void)?
+    var onExit: ((Int32?) -> Void)?
     /// Optional observer used by PTY integration tests; regular sessions retain no output transcript.
     var outputObserver: ((ArraySlice<UInt8>) -> Void)?
-    /// Told when output arrives (no bytes kept), for the tab's folder name.
     var onOutput: (() -> Void)?
-    override func dataReceived(slice: ArraySlice<UInt8>) {
-        super.dataReceived(slice: slice)
+
+    func sizeChanged(source: SwiftTerm.TerminalView, newCols: Int, newRows: Int) { onResize?() }
+    func setTerminalTitle(source: SwiftTerm.TerminalView, title: String) { onTitle?(title) }
+    func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {}
+    func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) { onInput?(data) }
+    func scrolled(source: SwiftTerm.TerminalView, position: Double) {}
+    func rangeChanged(source: SwiftTerm.TerminalView, startY: Int, endY: Int) {}
+    func clipboardCopy(source: SwiftTerm.TerminalView, content: Data) {}
+    func clipboardRead(source: SwiftTerm.TerminalView) -> Data? { nil }
+    func requestOpenLink(source: SwiftTerm.TerminalView, link: String, params: [String: String]) { onOpenLink?(link) }
+
+    func processTerminated(_ source: LocalProcess, exitCode: Int32?) { onExit?(exitCode) }
+    func dataReceived(slice: ArraySlice<UInt8>) {
+        feed(byteArray: slice)
         outputObserver?(slice)
         onOutput?()
+    }
+
+    func receiveOutput(_ data: Data) { dataReceived(slice: Array(data)[...]) }
+
+    func getWindowSize() -> winsize {
+        let core = getTerminal()
+        let cell = cellSize() ?? .zero
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        return winsize(ws_row: UInt16(clamping: max(1, core.rows)), ws_col: UInt16(clamping: max(1, core.cols)),
+                       ws_xpixel: UInt16(clamping: Int(cell.width * CGFloat(core.cols) * scale)),
+                       ws_ypixel: UInt16(clamping: Int(cell.height * CGFloat(core.rows) * scale)))
     }
 
     /// SwiftTerm stores the dynamic system colors as-is, and the layer and the text then resolve them under different
@@ -353,22 +517,35 @@ struct TerminalTabButton: View {
     var move: ((Bool) -> Void)?
     var body: some View {
         let _ = PerfLog.body("TerminalTabButton")
-        PaneTab(title: title, italic: !session.isRunning, selected: selected, action: select)
-            .frame(maxWidth: 200)
-            .simultaneousGesture(TapGesture(count: 2).onEnded(rename))
-            .contextMenu {
-                Button("重命名…", action: rename)
-                Button("关闭这个终端", action: close)
-                if let split {
-                    Divider()
-                    Button("向左拆分") { split(false) }.disabled(!canSplit)
-                    Button("向右拆分（⌘\\）") { split(true) }.disabled(!canSplit)
-                }
-                if let move, canMoveLeft { Button("移到左边一栏") { move(false) } }
-                if let move, canMoveRight { Button("移到右边一栏") { move(true) } }
+        let currentTitle = session.displayTitle
+        let visibleTitle = title.hasPrefix(currentTitle + " ") ? title : currentTitle
+        HStack(spacing: 0) {
+            PaneTab(title: visibleTitle, italic: !session.isRunning, selected: selected, action: select)
+                .simultaneousGesture(TapGesture(count: 2).onEnded(rename))
+            Button(action: close) {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .semibold))
+                    .frame(width: 18, height: 20)
+                    .contentShape(Rectangle())
             }
-            .help(title + "\n当前目录：\(session.currentDirectory?.path ?? session.root.path)")
-            .accessibilityLabel("终端 \(title)")
+            .buttonStyle(.pressable)
+            .foregroundStyle(.secondary)
+            .help("关闭这个终端")
+            .accessibilityLabel("关闭终端 \(session.displayTitle)")
+        }
+        .frame(maxWidth: 200)
+        .contextMenu {
+            Button("重命名…", action: rename)
+            Button("关闭这个终端", action: close)
+            if let split {
+                Divider()
+                Button("向左拆分") { split(false) }.disabled(!canSplit)
+                Button("向右拆分（⌘\\）") { split(true) }.disabled(!canSplit)
+            }
+            if let move, canMoveLeft { Button("移到左边一栏") { move(false) } }
+            if let move, canMoveRight { Button("移到右边一栏") { move(true) } }
+        }
+        .help(visibleTitle + "\n当前目录：\(session.currentDirectory?.path ?? session.root.path)")
+        .accessibilityLabel("终端 \(visibleTitle)")
     }
 }
 

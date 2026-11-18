@@ -39,6 +39,16 @@ struct FolmiSettingsSheet: View {
                 settingsFooter
             }.padding(20).tabItem { Label("编辑器", systemImage: "textformat") }
 
+            VStack(alignment: .leading, spacing: 18) {
+                Text("终端").font(.title2.weight(.semibold))
+                Form {
+                    Toggle("退出 Folmi 后终端继续运行", isOn: $model.keepTerminalsRunning)
+                    Text("关掉后，退出 Folmi 会结束所有终端。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.formStyle(.grouped)
+                settingsFooter
+            }.padding(20).tabItem { Label("终端", systemImage: "terminal") }
+
             AISettingsSheet(model: model).tabItem { Label("AI", systemImage: "sparkles") }
         }
         .padding(12).frame(width: 680).frame(minHeight: 560, idealHeight: 640, maxHeight: 760)
@@ -46,7 +56,7 @@ struct FolmiSettingsSheet: View {
 
     private var settingsFooter: some View {
         HStack {
-            Text("外观与编辑偏好自动保存；AI 设置需点保存。").font(.caption).foregroundStyle(.secondary)
+            Text("偏好自动保存。AI 设置需点保存。").font(.caption).foregroundStyle(.secondary)
             Spacer()
             Button("完成") { dismiss() }.keyboardShortcut(.cancelAction)
         }

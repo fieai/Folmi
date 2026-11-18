@@ -16,7 +16,9 @@ final class FolmiAppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct FolmiApp: App {
     @NSApplicationDelegateAdaptor(FolmiAppDelegate.self) private var delegate
-    @State private var model = FolmiModel(autoRefresh: true, checkEnvironmentOnStartup: true)
+    @State private var model = FolmiModel(autoRefresh: true, checkEnvironmentOnStartup: true,
+        terminalService: TerminalService(settingsDirectory: RuntimeOptions.workspaceURL.deletingLastPathComponent(),
+                                         helper: TerminalService.bundledHelper))
 
     var body: some Scene {
         WindowGroup("Folmi") {
@@ -33,6 +35,8 @@ struct FolmiApp: App {
                     NSApplication.shared.setActivationPolicy(.regular)
                     NSApplication.shared.activate(ignoringOtherApps: true)
                     if !model.startupResumed { await model.checkGitEnvironment() }
+                    model.restoreBackgroundTerminals()
+                    model.syncTerminalTabs()
                     if let sheet = RuntimeOptions.present, !model.gitStartupState.blocksGit {
                         while model.snapshot == nil || model.busy { try? await Task.sleep(for: .milliseconds(100)) }
                         try? await Task.sleep(for: .seconds(1))
@@ -171,6 +175,19 @@ struct FolmiCommands: Commands {
                 .disabled(!model.hasSnapshot)
             Divider()
             Button("快捷键一览（按住 ⌘ 也能看）", action: model.toggleShortcuts).keyboardShortcut("/")
+        }
+        CommandMenu("终端") {
+            if let reason = model.terminalServiceNotice {
+                Text("后台终端不可用：\(reason)")
+            }
+            if model.incompatibleTerminalService != nil {
+                Button("重启后台终端服务…", action: model.showIncompatibleTerminalService)
+            }
+            if model.orphanTerminalCount > 0 {
+                Text("\(model.orphanTerminalCount) 个后台终端不属于任何已打开的项目")
+                Button("结束这些后台终端…") { model.endBackgroundTerminals(orphansOnly: true) }
+            }
+            Button("结束所有后台终端…") { model.endBackgroundTerminals(orphansOnly: false) }
         }
         CommandMenu("编辑显示") {
             Button("回到上一个位置") { model.navigateEditor(back: true) }

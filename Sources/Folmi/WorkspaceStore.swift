@@ -54,6 +54,8 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
     var terminalTabs: [String] = []
     /// Each terminal tab's working directory last time, relative to the project ("" for the project root).
     var terminalDirectories: [String] = []
+    /// One ID per tab; an empty slot belongs to a local terminal.
+    var terminalSessionIDs: [String] = []
     /// Review progress: content keys of the changed lines already looked at (see `ReviewProgress`).
     var reviewedLines: [String] = []
     /// The editor card's page last time (差异 / 编辑 / 全部改动 / 历史) and the change that was selected.
@@ -97,7 +99,7 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, name, isDemo, environment, draftMessage, amendLast, deliveryProfiles, selectedProfileID, lastArea, editorTabs, selectedEditorPath, reviewComments, terminalTabs
-        case terminalDirectories, reviewedLines, lastContent, selectedChangePath, largeRepository, largeRepositoryDeclined, reviewWatches
+        case terminalDirectories, terminalSessionIDs, reviewedLines, lastContent, selectedChangePath, largeRepository, largeRepositoryDeclined, reviewWatches
         case editorColumns, terminalColumns, linkedProjects, launchCommands, launchCounts, lastDeliveryKind, customIcon
     }
 
@@ -116,8 +118,9 @@ struct ProjectPreferences: Codable, Identifiable, Equatable {
         selectedEditorPath = try values.decodeIfPresent(String.self, forKey: .selectedEditorPath)
         // Notes from a newer format are dropped rather than failing the whole file.
         reviewComments = (try? values.decodeIfPresent([ReviewComment].self, forKey: .reviewComments)) ?? []
-        terminalTabs = Array(((try? values.decodeIfPresent([String].self, forKey: .terminalTabs)) ?? []).prefix(12))
-        terminalDirectories = Array(((try? values.decodeIfPresent([String].self, forKey: .terminalDirectories)) ?? []).prefix(12))
+        terminalTabs = Array(((try? values.decodeIfPresent([String].self, forKey: .terminalTabs)) ?? []).prefix(PTYProtocol.sessionLimit))
+        terminalDirectories = Array(((try? values.decodeIfPresent([String].self, forKey: .terminalDirectories)) ?? []).prefix(PTYProtocol.sessionLimit))
+        terminalSessionIDs = Array(((try? values.decodeIfPresent([String].self, forKey: .terminalSessionIDs)) ?? []).prefix(PTYProtocol.sessionLimit))
         reviewedLines = Array(((try? values.decodeIfPresent([String].self, forKey: .reviewedLines)) ?? []).suffix(ReviewProgress.limit))
         lastContent = try? values.decodeIfPresent(String.self, forKey: .lastContent)
         selectedChangePath = try? values.decodeIfPresent(String.self, forKey: .selectedChangePath)
@@ -139,6 +142,8 @@ struct WorkspacePreferences: Codable, Equatable {
     var projects: [ProjectPreferences] = []
     var selectedProjectPath: String?
     var showTerminal: Bool = false
+    var keepTerminalsRunning = true
+    var terminalQuitNoticeSuppressed = false
     var editorFontSize: Double = 13
     var appearance: FolmiAppearance = .system
     var editorFontFamily: String = "JetBrains Mono"
@@ -172,7 +177,7 @@ struct WorkspacePreferences: Codable, Equatable {
     /// The global shortcut that opens 随手记.
     var ideaHotKey: IdeaHotKey = .standard
 
-    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, editorLineBlame, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, diffLayout, foldWhitespace, companionMotion, ideaHotKey }
+    private enum CodingKeys: String, CodingKey { case version, projects, selectedProjectPath, showTerminal, keepTerminalsRunning, terminalQuitNoticeSuppressed, editorFontSize, appearance, editorFontFamily, editorLineHeight, editorTabSize, editorWrapLines, editorLineBlame, markdownOutline, paneLayout, theme, glassSurfaces, markdownFontFamily, markdownFontSize, markdownReadingWidth, markdownOutlineWidth, markdownReading, markdownDiffRendered, unifiedDiff, diffLayout, foldWhitespace, companionMotion, ideaHotKey }
 
     init(version: Int = 1, projects: [ProjectPreferences] = [], selectedProjectPath: String? = nil,
          showTerminal: Bool = false, editorFontSize: Double = 13, appearance: FolmiAppearance = .system,
@@ -196,6 +201,8 @@ struct WorkspacePreferences: Codable, Equatable {
         projects = try values.decodeIfPresent([ProjectPreferences].self, forKey: .projects) ?? []
         selectedProjectPath = try values.decodeIfPresent(String.self, forKey: .selectedProjectPath)
         showTerminal = try values.decodeIfPresent(Bool.self, forKey: .showTerminal) ?? false
+        keepTerminalsRunning = (try? values.decodeIfPresent(Bool.self, forKey: .keepTerminalsRunning)) ?? true
+        terminalQuitNoticeSuppressed = (try? values.decodeIfPresent(Bool.self, forKey: .terminalQuitNoticeSuppressed)) ?? false
         editorFontSize = try values.decodeIfPresent(Double.self, forKey: .editorFontSize) ?? 13
         appearance = try values.decodeIfPresent(FolmiAppearance.self, forKey: .appearance) ?? .system
         editorFontFamily = try values.decodeIfPresent(String.self, forKey: .editorFontFamily) ?? "JetBrains Mono"
