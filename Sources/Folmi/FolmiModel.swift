@@ -113,6 +113,7 @@ final class FolmiModel {
     var terminalTabs: [TerminalSession] = []
     var keepTerminalsRunning = true { didSet { scheduleSave() } }
     var terminalServiceNotice: String?
+    var terminalServiceSharesCoalition = false
     var incompatibleTerminalService: PTYProtocol.Hello?
     var orphanTerminalCount = 0
     @ObservationIgnored var restoredBackgroundTerminals = false

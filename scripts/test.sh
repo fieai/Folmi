@@ -5,15 +5,17 @@ set -euo pipefail
 cd "${0:A:h:h}"
 limit="${TEST_TIMEOUT:-900}"
 
-mkdir -p .build
-export FOLMI_PTY_TEST_DIRECTORY="$(mktemp -d "$(pwd -P)/.build/pty-tests.XXXXXX")"
+# A LaunchServices helper has its own permissions. Avoid protected folders such as Documents.
+test_parent="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+FOLMI_PTY_TEST_DIRECTORY="$(mktemp -d "$test_parent/folmi-pty-tests.XXXXXX")"
+export FOLMI_PTY_TEST_DIRECTORY
 function test_pty_pids() {
   # Scope this check to this invocation, including when other worktrees run App tests at the same time.
   /bin/ps -ww -axo pid=,args= | LC_ALL=C /usr/bin/awk -v root="$FOLMI_PTY_TEST_DIRECTORY/" '
     {
       pid = $1
       sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "")
-      if (index($0, root) == 1 && /\/folmi-pty-[0-9a-f]+ serve --socket / && index($0, " --run-directory " root)) print pid
+      if (index($0, root) == 1 && /\/(folmi-pty-[0-9a-f]+|FolmiTerminal-[0-9a-f]+\.app\/Contents\/MacOS\/folmi-pty) serve --socket / && index($0, " --run-directory " root)) print pid
     }'
 }
 function check_test_ptys() {

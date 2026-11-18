@@ -1,3 +1,4 @@
+import AppKit
 import FolmiCore
 import Foundation
 
@@ -25,8 +26,23 @@ final class TerminalService: Sendable {
 
     static var bundledHelper: URL? {
         guard let app = Bundle.main.executableURL else { return nil }
-        let candidate = app.deletingLastPathComponent().appendingPathComponent("folmi-pty")
-        return FileManager.default.isExecutableFile(atPath: candidate.path) ? candidate : nil
+        let candidate = app.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Library/Helpers/FolmiTerminal.app", isDirectory: true)
+        let executable = candidate.appendingPathComponent("Contents/MacOS/folmi-pty")
+        return FileManager.default.isExecutableFile(atPath: executable.path) ? candidate : nil
+    }
+
+    static let launchApplication: PTYEndpoint.ApplicationLauncher = { helper, arguments, onFailure in
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        configuration.createsNewApplicationInstance = true
+        configuration.promptsUserIfNeeded = false
+        configuration.arguments = arguments
+        configuration.environment = ProcessInfo.processInfo.environment
+        NSWorkspace.shared.openApplication(at: helper, configuration: configuration) { _, error in
+            if error != nil { onFailure() }
+        }
     }
 
     func open(_ request: PTYProtocol.Create, restoring: Bool,
@@ -40,7 +56,7 @@ final class TerminalService: Sendable {
     private func open(_ request: PTYProtocol.Create, restoring: Bool) -> Result<Opened, OpenFailure> {
         var peer: PTYPeer
         do {
-            peer = PTYPeer(try endpoint.connectOrLaunch(helper: helper))
+            peer = PTYPeer(try endpoint.connectOrLaunch(helper: helper, launchApplication: Self.launchApplication))
         } catch {
             return .failure(.unavailable(error))
         }
@@ -67,11 +83,15 @@ final class TerminalService: Sendable {
     }
 
     func sessions() throws -> [PTYProtocol.Session] {
+        try sessionStatus().sessions
+    }
+
+    func sessionStatus() throws -> (sessions: [PTYProtocol.Session], sharesCoalition: Bool) {
         try queue.sync {
-            guard let stream = try endpoint.connect() else { return [] }
+            guard let stream = try endpoint.connect() else { return ([], false) }
             var peer = PTYPeer(stream)
             try peer.hello().requireCompatibility()
-            return try list(&peer)
+            return (try list(&peer), stream.peerSharesResourceCoalition)
         }
     }
 

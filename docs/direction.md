@@ -65,7 +65,7 @@ AI 改完 → 通知 / 顶部胶囊 → 逐个验收（空格看下一处，⏎ 
 
 1. **项目图标 + 项目轨状态角标**（一起做）：自动找项目图标、可自定义；角标显示「等你处理 / 出错了 / 改完待验收 / 正在改」。见 [project-rail-icons.md](design/project-rail-icons.md)、[agent-overview.md](design/agent-overview.md) 第一期。
 2. **终端持久化**：退出、升级 Folmi 后终端继续运行，再打开时接回。见 [terminal-persistence.md](design/terminal-persistence.md)。
-3. **跨项目的会话列表**：「当前项目 / 全部项目」切换，选中直接跳到那个终端或 AI 标签。见 [agent-overview.md](design/agent-overview.md) 第二期，依赖 2。
+3. **跨项目的会话列表**：「当前项目 / 全部项目」切换，选中直接跳到那个终端或 AI 标签。见 [agent-overview.md](design/agent-overview.md) 第二期，依赖 2。第一步是「全部终端」列表，见 [all-terminals.md](design/all-terminals.md)。
 4. **GitHub**：推送并建 PR；PR 的评审意见和失败的检查交给 agent。只在用户操作时调用 `gh`。见 [github.md](design/github.md)。
 
 这四项之后再看：

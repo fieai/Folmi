@@ -53,16 +53,18 @@ app_destination="$app_root/dist/$bundle_name.app"
 staging_root="$(mktemp -d "$app_root/dist/.folmi-build.XXXXXX")"
 trap '/bin/rm -rf "$staging_root"' EXIT
 app_dir="$staging_root/$bundle_name.app"
+terminal_bundle="$app_dir/Contents/Library/Helpers/FolmiTerminal.app"
 mkdir -p "$app_dir/Contents/MacOS"
 mkdir -p "$app_dir/Contents/Helpers"
 mkdir -p "$app_dir/Contents/Resources"
+mkdir -p "$terminal_bundle/Contents/MacOS"
 cp "$binary_dir/Folmi" "$app_dir/Contents/MacOS/Folmi"
 cp "$binary_dir/folmi-hook" "$app_dir/Contents/MacOS/folmi-hook"
-cp "$binary_dir/folmi-pty" "$app_dir/Contents/MacOS/folmi-pty"
+cp "$binary_dir/folmi-pty" "$terminal_bundle/Contents/MacOS/folmi-pty"
 cp "$binary_dir/folmi-cli" "$app_dir/Contents/Helpers/folmi"
 # Release binaries keep their local symbols (over half of Folmi's size); crash reports still symbolicate from
 # the .dSYM next to the build products. Strip before signing.
-/usr/bin/strip -x "$app_dir/Contents/MacOS/Folmi" "$app_dir/Contents/MacOS/folmi-hook" "$app_dir/Contents/MacOS/folmi-pty" "$app_dir/Contents/Helpers/folmi"
+/usr/bin/strip -x "$app_dir/Contents/MacOS/Folmi" "$app_dir/Contents/MacOS/folmi-hook" "$terminal_bundle/Contents/MacOS/folmi-pty" "$app_dir/Contents/Helpers/folmi"
 /usr/bin/install -m 644 "$app_icon" "$app_dir/Contents/Resources/Folmi.icns"
 for resource_bundle in "$binary_dir"/SwiftTerm_*.bundle(N); do
   if [[ -d "$app_dir/${resource_bundle:t}" ]]; then
@@ -148,6 +150,21 @@ version="$(<"$app_root/VERSION")"
 if [[ "$bundle_title" != Folmi ]]; then
   /usr/libexec/PlistBuddy -c "Set :NSServices:0:NSMenuItem:default 用 ${bundle_title} 打开" "$app_dir/Contents/Info.plist"
 fi
+cat > "$terminal_bundle/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleExecutable</key><string>folmi-pty</string>
+  <key>CFBundleIdentifier</key><string>$bundle_id.terminal</string>
+  <key>CFBundleName</key><string>$bundle_title 终端</string>
+  <key>CFBundleDisplayName</key><string>$bundle_title 终端</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>${version//./}</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSBackgroundOnly</key><true/>
+</dict></plist>
+PLIST
 # Ad-hoc signatures are pinned to the cdhash, so macOS forgets folder-access grants on every rebuild.
 # Prefer a stable Apple Development identity; set FOLMI_SIGN_IDENTITY=- to force ad-hoc.
 sign_identity="${FOLMI_SIGN_IDENTITY:-$(/usr/bin/security find-identity -v -p codesigning | /usr/bin/awk '/"Apple Development:/ { print $2; exit }')}"
@@ -175,7 +192,13 @@ while IFS= read -r -d '' code_file; do
     /usr/bin/codesign --force --sign "$sign_identity" "$code_file"
   fi
 done < <(/usr/bin/find "$app_dir/Contents" -path "$app_dir/Contents/PlugIns" -prune -o -type f -print0)
+/usr/bin/codesign --force --sign "$sign_identity" "$terminal_bundle"
 /usr/bin/codesign --force --sign "$sign_identity" "$app_dir"
+if [[ ! -x "$terminal_bundle/Contents/MacOS/folmi-pty" ]] ||
+   [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSBackgroundOnly' "$terminal_bundle/Contents/Info.plist")" != true ]]; then
+  print -u2 "后台终端 App 缺少可执行文件或 LSBackgroundOnly 未启用：$terminal_bundle"; exit 1
+fi
+/usr/bin/codesign --verify --deep --strict "$terminal_bundle"
 /usr/bin/codesign --verify --deep --strict "$app_dir"
 # Replace the whole generated bundle so obsolete executables/resources cannot survive a rename.
 if [[ -e "$app_destination" ]]; then

@@ -1,6 +1,14 @@
 import Darwin
 
 public enum PTYProcess {
+    public static func resourceCoalition(of pid: pid_t) -> UInt64? {
+        // PROC_PIDCOALITIONINFO is private to XNU. The first UInt64 is the resource coalition ID.
+        var info = (UInt64(0), UInt64(0), UInt64(0), UInt64(0), UInt64(0), UInt64(0))
+        let count = proc_pidinfo(pid, 20, 0, &info, Int32(MemoryLayout.size(ofValue: info)))
+        guard count >= MemoryLayout<UInt64>.size, info.0 != 0 else { return nil }
+        return info.0
+    }
+
     public static func name(of pid: pid_t) -> String? {
         var bytes = [CChar](repeating: 0, count: 256)
         guard proc_name(pid, &bytes, UInt32(bytes.count)) > 0 else { return nil }

@@ -3,6 +3,8 @@ import Darwin
 import Foundation
 
 public struct PTYEndpoint: Sendable {
+    public typealias ApplicationLauncher = @Sendable (URL, [String], @escaping @Sendable () -> Void) -> Void
+
     public let runDirectory: URL
     public var locator: URL { runDirectory.appendingPathComponent("pty.path") }
     private let fallbackName: String
@@ -46,12 +48,26 @@ public struct PTYEndpoint: Sendable {
 
     public func connect() throws -> PTYStream? { try PTYStream.connect(socketPath) }
 
-    public func connectOrLaunch(helper: URL?, idleMilliseconds: Int? = nil) throws -> PTYStream {
+    public func connectOrLaunch(helper: URL?, idleMilliseconds: Int? = nil,
+                                launchApplication: ApplicationLauncher? = nil) throws -> PTYStream {
         if let existing = try connect() { return existing }
         guard let helper else { throw PTYProtocol.Failure.service("找不到 folmi-pty") }
         let installed = try install(helper)
         try prepareRunDirectory()
-        let pid = try spawn(installed, idleMilliseconds: idleMilliseconds)
+        var arguments = ["serve", "--socket", launchSocketPath, "--run-directory", runDirectory.path]
+        if let idleMilliseconds { arguments += ["--idle-ms", String(idleMilliseconds)] }
+        if let launchApplication, installed.pathExtension == "app" {
+            let failed = DispatchSemaphore(value: 0)
+            let deadline = DispatchTime.now() + .seconds(3)
+            launchApplication(installed, arguments) { failed.signal() }
+            // LaunchServices reports failures asynchronously. The socket, not the callback, signals readiness.
+            while DispatchTime.now() < deadline {
+                if let stream = try connect() { return stream }
+                if failed.wait(timeout: min(deadline, .now() + .milliseconds(20))) == .success { break }
+            }
+            if let stream = try connect() { return stream }
+        }
+        let pid = try spawn(Self.executable(in: installed), arguments: arguments)
         // The helper outlives the App; reap it if it happens to finish while the App is still open.
         DispatchQueue.global(qos: .utility).async {
             var status: Int32 = 0
@@ -79,21 +95,42 @@ public struct PTYEndpoint: Sendable {
         SHA256.hash(data: data).prefix(6).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func install(_ source: URL) throws -> URL {
-        let data = try Data(contentsOf: source, options: .mappedIfSafe)
+    private static func executable(in helper: URL) -> URL {
+        helper.pathExtension == "app" ? helper.appendingPathComponent("Contents/MacOS/folmi-pty") : helper
+    }
+
+    func install(_ source: URL) throws -> URL {
+        let isApp = source.pathExtension == "app"
+        var data = try Data(contentsOf: Self.executable(in: source), options: .mappedIfSafe)
+        if isApp { data.append(try Data(contentsOf: source.appendingPathComponent("Contents/Info.plist"))) }
+        let digest = Self.digest(data)
         let bin = runDirectory.deletingLastPathComponent().appendingPathComponent("bin", isDirectory: true)
-        let destination = bin.appendingPathComponent("folmi-pty-" + Self.digest(data))
+        let destination = bin.appendingPathComponent(isApp ? "FolmiTerminal-\(digest).app" : "folmi-pty-\(digest)")
         let manager = FileManager.default
-        if manager.isExecutableFile(atPath: destination.path) { return destination }
+        let executable = Self.executable(in: destination)
+        if manager.isExecutableFile(atPath: executable.path) { return destination }
         try manager.createDirectory(at: bin, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let staging = bin.appendingPathComponent(".folmi-pty-" + UUID().uuidString)
         defer { try? manager.removeItem(at: staging) }
         try manager.copyItem(at: source, to: staging)
-        guard rename(staging.path, destination.path) == 0 else { throw PTYStream.systemError() }
+        if isApp {
+            // ditto --noqtn can still copy the raw quarantine attribute on some macOS versions.
+            let xattr = Process()
+            xattr.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+            xattr.arguments = ["-drs", "com.apple.quarantine", staging.path]
+            try xattr.run()
+            xattr.waitUntilExit()
+            guard xattr.terminationStatus == 0 else { throw PTYProtocol.Failure.service("无法安装后台终端") }
+        }
+        if rename(staging.path, destination.path) != 0 {
+            let error = PTYStream.systemError()
+            // Another instance may have installed the same bundle during the copy.
+            guard manager.isExecutableFile(atPath: executable.path) else { throw error }
+        }
         return destination
     }
 
-    private func spawn(_ executable: URL, idleMilliseconds: Int?) throws -> pid_t {
+    private func spawn(_ executable: URL, arguments: [String]) throws -> pid_t {
         var actions: posix_spawn_file_actions_t?
         var attrs: posix_spawnattr_t?
         try Self.check(posix_spawn_file_actions_init(&actions))
@@ -105,9 +142,7 @@ public struct PTYEndpoint: Sendable {
         for (fd, mode) in [(STDIN_FILENO, O_RDONLY), (STDOUT_FILENO, O_WRONLY), (STDERR_FILENO, O_WRONLY)] {
             try Self.check(posix_spawn_file_actions_addopen(&actions, fd, "/dev/null", mode, 0))
         }
-        var arguments = [executable.path, "serve", "--socket", launchSocketPath, "--run-directory", runDirectory.path]
-        if let idleMilliseconds { arguments += ["--idle-ms", String(idleMilliseconds)] }
-        var argv = arguments.map { strdup($0) } + [nil]
+        var argv = ([executable.path] + arguments).map { strdup($0) } + [nil]
         var envp = ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
         guard argv.dropLast().allSatisfy({ $0 != nil }), envp.dropLast().allSatisfy({ $0 != nil }) else {
@@ -128,6 +163,19 @@ public final class PTYStream: Sendable {
     public let descriptor: Int32
     public init(owning descriptor: Int32) { self.descriptor = descriptor }
     deinit { close(descriptor) }
+
+    public var peerPID: pid_t? {
+        var pid: pid_t = 0
+        let size = socklen_t(MemoryLayout<pid_t>.size)
+        var length = size
+        guard getsockopt(descriptor, SOL_LOCAL, LOCAL_PEERPID, &pid, &length) == 0, length == size, pid > 0 else { return nil }
+        return pid
+    }
+
+    public var peerSharesResourceCoalition: Bool {
+        guard let peerPID, let ownCoalition = PTYProcess.resourceCoalition(of: getpid()) else { return false }
+        return PTYProcess.resourceCoalition(of: peerPID) == ownCoalition
+    }
 
     public static func systemError(_ code: Int32 = errno) -> POSIXError {
         POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)

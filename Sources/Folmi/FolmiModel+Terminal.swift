@@ -139,7 +139,8 @@ extension FolmiModel {
         guard !restoredBackgroundTerminals, keepTerminalsRunning, let terminalService,
               projects.isEmpty || projects.contains(where: { !$0.isDemo }) else { return }
         do {
-            let sessions = try terminalService.sessions()
+            let (sessions, sharesCoalition) = try terminalService.sessionStatus()
+            terminalServiceSharesCoalition = sharesCoalition
             restoredBackgroundTerminals = true
             let byProject = Dictionary(grouping: sessions, by: \.projectRoot)
             for project in projects where !project.isDemo && terminals[project.rootPath] == nil {
@@ -198,10 +199,15 @@ extension FolmiModel {
         let service = keepTerminalsRunning ? terminalService : nil
         let session = TerminalSession(root: root, environment: environment, isDemo: demo, name: name,
                                       directory: directory, service: service, restoredID: restoredID)
-        session.onServiceStatus = { [weak self] error in
+        session.onServiceStatus = { [weak self] result in
             guard let self else { return }
-            if let error { self.reportTerminalServiceIssue(error) }
-            else { self.terminalServiceNotice = nil }
+            switch result {
+            case .success(let sharesCoalition):
+                self.terminalServiceNotice = nil
+                self.terminalServiceSharesCoalition = sharesCoalition
+            case .failure(let error):
+                self.reportTerminalServiceIssue(error)
+            }
             self.scheduleSave()
         }
         session.onOpenLink = { [weak self, weak session] link in self?.openTerminalLink(link, from: session) }

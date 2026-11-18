@@ -1,32 +1,89 @@
 import Darwin
-import FolmiCore
 import Foundation
 import XCTest
+@testable import Folmi
+@testable import FolmiCore
 
 final class PTYIntegrationTests: XCTestCase {
     func testDetachedSessionReplaysAndCanBeKilled() throws {
         try withService { endpoint, helper in
-            let id = UUID()
-            var peer: PTYPeer? = try Self.connect(endpoint, helper)
-            let info = try Self.create(id, command: "printf hello; sleep 30", at: endpoint, peer: &peer!)
-            try peer!.send(.json(.attach, id))
-            let replay = try peer!.receive(.replay).bytes().data
-            let output = try replay.isEmpty ? peer!.receive(.output).bytes().data : replay
-            XCTAssertTrue(String(decoding: output, as: UTF8.self).contains("hello"))
-            try peer!.send(.json(.detach, id))
-            peer = nil
-
-            var resumed = try Self.connect(endpoint, helper)
-            try resumed.send(.init(.list))
-            let listed = try resumed.receive(.sessions).decode([PTYProtocol.Session].self)
-            XCTAssertEqual(listed.map(\.shellPid), [info.shellPid])
-            try resumed.send(.json(.attach, id))
-            let restored = try resumed.receive(.replay).bytes()
-            XCTAssertEqual(restored.id, id)
-            XCTAssertTrue(String(decoding: restored.data, as: UTF8.self).contains("hello"))
-            try resumed.send(.json(.kill, id))
-            XCTAssertEqual(try resumed.receive(.exited, timeout: .seconds(3)).decode(PTYProtocol.Exit.self).id, id)
+            try Self.verifyDetachedSession(endpoint: endpoint) {
+                let stream = try endpoint.connectOrLaunch(helper: helper)
+                XCTAssertTrue(stream.peerSharesResourceCoalition)
+                return stream
+            }
         }
+    }
+
+    func testBackgroundApplicationUsesSeparateCoalitionAndReplays() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            DispatchQueue(label: "Folmi.tests.terminal-application").async {
+                continuation.resume(with: Result {
+                    let fixture = try PTYTestFixture()
+                    let endpoint = fixture.endpoint
+                    var installed: URL?
+                    defer { fixture.cleanUp(unregistering: installed) }
+                    let helper = try fixture.makeApplication()
+                    installed = try endpoint.install(helper)
+                    try Self.verifyDetachedSession(endpoint: endpoint) {
+                        let stream = try endpoint.connectOrLaunch(helper: helper, idleMilliseconds: 5_000,
+                                                                  launchApplication: TerminalService.launchApplication)
+                        let pid = try XCTUnwrap(stream.peerPID)
+                        let ownCoalition = try XCTUnwrap(PTYProcess.resourceCoalition(of: getpid()))
+                        let serviceCoalition = try XCTUnwrap(PTYProcess.resourceCoalition(of: pid))
+                        XCTAssertNotEqual(serviceCoalition, ownCoalition)
+                        return stream
+                    }
+                })
+            }
+        }
+    }
+
+    func testFailedApplicationLaunchFallsBackToSpawningBundledExecutable() throws {
+        let fixture = try PTYTestFixture()
+        defer { fixture.cleanUp() }
+        let helper = try fixture.makeApplication()
+        let stream = try fixture.endpoint.connectOrLaunch(helper: helper) { app, _, onFailure in
+            XCTAssertEqual(app.pathExtension, "app")
+            onFailure()
+        }
+        XCTAssertTrue(stream.peerSharesResourceCoalition)
+        var peer = PTYPeer(stream)
+        try peer.hello().requireCompatibility()
+    }
+
+    private static func verifyDetachedSession(endpoint: PTYEndpoint, connect: () throws -> PTYStream) throws {
+        let id = UUID()
+        let info: PTYProtocol.Session
+        do {
+            let stream = try connect()
+            var peer = PTYPeer(stream)
+            try peer.hello().requireCompatibility()
+            info = try create(id, command: "printf hello; sleep 30", at: endpoint, peer: &peer)
+            let servicePID = try XCTUnwrap(stream.peerPID)
+            XCTAssertEqual(try XCTUnwrap(PTYProcess.resourceCoalition(of: info.shellPid)),
+                           try XCTUnwrap(PTYProcess.resourceCoalition(of: servicePID)))
+            try peer.send(.json(.attach, id))
+            var output = try peer.receive(.replay).bytes().data
+            while !String(decoding: output, as: UTF8.self).contains("hello") {
+                output.append(try peer.receive(.output).bytes().data)
+            }
+            try peer.send(.json(.detach, id))
+            // A reply on the same connection confirms detach was processed before the next attach.
+            try peer.send(.init(.list))
+            _ = try peer.receive(.sessions)
+        }
+        var resumed = PTYPeer(try XCTUnwrap(endpoint.connect()))
+        try resumed.hello().requireCompatibility()
+        try resumed.send(.init(.list))
+        let listed = try resumed.receive(.sessions).decode([PTYProtocol.Session].self)
+        XCTAssertEqual(listed.map(\.shellPid), [info.shellPid])
+        try resumed.send(.json(.attach, id))
+        let restored = try resumed.receive(.replay).bytes()
+        XCTAssertEqual(restored.id, id)
+        XCTAssertTrue(String(decoding: restored.data, as: UTF8.self).contains("hello"))
+        try resumed.send(.json(.kill, id))
+        XCTAssertEqual(try resumed.receive(.exited, timeout: .seconds(3)).decode(PTYProtocol.Exit.self).id, id)
     }
 
     func testNaturalExitPreservesOutputAndStatusAndNewAttachmentTakesOver() throws {
@@ -280,7 +337,33 @@ struct PTYTestFixture {
                           "找不到测试构建的 folmi-pty：\(helper.path)")
     }
 
-    func cleanUp() {
+    func makeApplication() throws -> URL {
+        let app = settings.appendingPathComponent("FolmiTerminal.app", isDirectory: true)
+        let executable = app.appendingPathComponent("Contents/MacOS/folmi-pty")
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: helper, to: executable)
+        let plist = try PropertyListSerialization.data(fromPropertyList: [
+            "CFBundleExecutable": "folmi-pty",
+            "CFBundleIdentifier": "local.folmi.pty-tests.\(UUID().uuidString).terminal",
+            "CFBundleName": "Folmi 测试 终端",
+            "CFBundleDisplayName": "Folmi 测试 终端",
+            "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "1.0.0",
+            "CFBundleVersion": "100",
+            "LSMinimumSystemVersion": "14.0",
+            "LSBackgroundOnly": true
+        ], format: .xml, options: 0)
+        try plist.write(to: app.appendingPathComponent("Contents/Info.plist"))
+        let sign = Process()
+        sign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        sign.arguments = ["-s", "-", "--force", app.path]
+        try sign.run()
+        sign.waitUntilExit()
+        guard sign.terminationStatus == 0 else { throw PTYProtocol.Failure.service("测试后台 App 签名失败") }
+        return app
+    }
+
+    func cleanUp(unregistering application: URL? = nil) {
         do {
             if let stream = try endpoint.connect() {
                 var peer = PTYPeer(stream)
@@ -290,6 +373,18 @@ struct PTYTestFixture {
             XCTAssertTrue(PTYIntegrationTests.waitForExit(endpoint), "测试结束后 folmi-pty 仍在运行")
         } catch {
             XCTFail("无法清理测试后台终端：\(error)")
+        }
+        if let application {
+            do {
+                let unregister = Process()
+                unregister.executableURL = URL(fileURLWithPath: "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+                unregister.arguments = ["-u", application.path]
+                try unregister.run()
+                unregister.waitUntilExit()
+                XCTAssertEqual(unregister.terminationStatus, 0)
+            } catch {
+                XCTFail("无法注销测试后台 App：\(error)")
+            }
         }
         try? FileManager.default.removeItem(at: settings.deletingLastPathComponent())
     }

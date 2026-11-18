@@ -20,7 +20,7 @@
 | 演示仓库 | 不进后台，随 Folmi 一起关（和现在一样） |
 
 - 设置项默认打开。
-- 第一次在有终端运行的情况下退出时，在退出前给一次说明（「终端会在后台继续运行，下次打开 Folmi 接回」，带「不再提示」），之后不再打扰。
+- 第一次在有终端运行的情况下退出时，在退出前给一次说明（「终端会在后台继续运行，下次打开 Folmi 接回。要结束它们，打开 Folmi 从「终端」菜单选「结束所有后台终端」」，带「不再提示」），之后不再打扰。
 - 退出 Folmi 后终端里的程序自己结束了：下次打开那个标签显示「已退出（退出码 N）」和最后的输出，和现在的「已退出」一样。
 
 ## 架构
@@ -34,12 +34,39 @@ Folmi.app ──(unix socket: <设置目录>/run/pty.sock)── folmi-pty ─�
 ### 拉起和存活
 
 - Folmi 需要开终端时连套接字；连不上就拉起 `folmi-pty serve --socket <路径>`，等它就绪（最多 2 秒），再连。
-- 拉起方式：`posix_spawn` 加 `POSIX_SPAWN_SETSID`，标准输入输出接 `/dev/null`，日志写到设置目录的 `run/pty.log`（滚动，最多 1 MB）。这样它不在 Folmi 的进程组和会话里，Folmi 退出或崩溃它都不受影响。不用 launchd（不装 plist，不需要用户授权）。
-- 程序文件：像 `folmi-hook` 一样，先把包里的 `folmi-pty` 复制到设置目录的 `bin/folmi-pty-<内容哈希前 12 位>` 再运行。升级替换 App 包时，正在运行的后台程序不受影响。
+- 拉起方式：以独立的后台小 App「Folmi 终端」运行，由 LaunchServices 启动，见下面「独立的后台小 App」。启动不了时退回 `posix_spawn` 加 `POSIX_SPAWN_SETSID`。标准输入输出接 `/dev/null`，日志写到设置目录的 `run/pty.log`（滚动，最多 1 MB）。不用 launchd（不装 plist，不需要用户授权）。
+- 程序文件：先把包里的小 App 复制到设置目录的 `bin/FolmiTerminal-<内容哈希前 12 位>.app` 再运行。升级替换 App 包时，正在运行的后台程序不受影响。
 - 同时只允许一个：启动时对 `run/pty.lock` 加 `flock`，拿不到就退出。
 - **没有会话、也没有客户端连着时，10 秒后自己退出。** 平时没有常驻进程。
 - 套接字目录权限 0700，套接字 0600；每个连接用 `getpeereid` 确认是同一个用户。
 - 套接字路径超过 `sun_path` 上限（104 字节，测试的临时目录可能超）时，改用 `$TMPDIR/folmi-<设置目录哈希前 12 位>.sock`，路径写进 `run/pty.path` 让 App 找到。
+
+### 独立的后台小 App
+
+**问题**（2026-11-18 发现）：macOS 把一个 App 和它启动的所有进程算作一个 coalition。`setsid` 只换会话和进程组，不换 coalition，所以 `folmi-pty`、所有 shell 和终端里的程序都算 Folmi 的。⌘Q 之后 Folmi 还有进程在跑，`lsappinfo` 记为 `exited-with-subordinates`，程序坞右键出现「退出后台运行」；点了它，终端里的程序（开发服务器、gitstatusd 等）全部被结束，只剩忽略 SIGTERM 的交互式 zsh。即使没有终端，Folmi 留下的 `git fsmonitor--daemon` 和 ssh 连接复用进程也会让这一项出现，用户很容易点到。
+
+**做法**：后台服务作为单独的 App 启动。LaunchServices 启动的每个 App 都有自己的 coalition，它的子进程也留在里面（已用原型验证：`open -g -n` 启动的 `LSBackgroundOnly` App 得到独立的 coalition，参数照常传入）。这样「退出后台运行」只结束 Folmi 自己的进程，碰不到终端。
+
+- **打包**：`Folmi.app/Contents/Library/Helpers/FolmiTerminal.app`，可执行文件就是 `folmi-pty`，代码不变。
+  - `Info.plist`：`LSBackgroundOnly = true`（不进程序坞，也不进「强制退出」窗口）。bundle id 是主 App 的加 `.terminal`；显示名是主 App 名加「 终端」，正式版是「Folmi 终端」。版本号和主 App 一致。
+  - 文件夹名用 ASCII；显示名会出现在系统的文件访问授权提示里，比如「“Folmi 终端”想访问“文稿”文件夹中的文件」。
+- **安装**：整个小 App 按内容哈希复制到 `bin/FolmiTerminal-<哈希>.app`。哈希算可执行文件加 `Info.plist`。先复制到临时名再 `rename`，和现在一样。复制时不带 `com.apple.quarantine`（`ditto --noqtn`）：这是用户已经打开过的 Folmi 里同一份签名代码，带着隔离标记启动会再弹一次「从互联网下载」的确认。
+- **启动**：`NSWorkspace.openApplication(at:configuration:)`。
+  - `activates = false`、`addsToRecentItems = false`、`createsNewApplicationInstance = true`。
+  - 参数 `serve --socket … --run-directory …`；`environment` 传 Folmi 自己的环境，和现在 `posix_spawn` 一样。
+  - 等套接字就绪最多 3 秒（现在 2 秒）。实测：新路径第一次启动约 0.6 秒（系统登记新 App），之后约 50 毫秒；直接拉起约 6 毫秒。只有服务没在跑时才启动，接回已有终端不受影响。
+  - `FolmiCore` 不依赖 AppKit：启动方式由 App 层以闭包传给 `PTYEndpoint`，Core 保留 `posix_spawn`，测试和兜底用它。
+- **兜底**：LaunchServices 启动失败时退回 `posix_spawn`，终端照常可用。
+- **判断是否和 Folmi 同组**：连上服务后用 `getsockopt(LOCAL_PEERPID)` 拿到服务的 pid，再用 `proc_pidinfo(PROC_PIDCOALITIONINFO)` 比较它和 Folmi 自己的 coalition。相同（兜底启动的）时，在「终端」菜单里写一行：「后台终端和 Folmi 在同一组：在程序坞里选「退出后台运行」会结束终端」。不改协议。
+- **已经在跑的旧服务**：协议不变，照常连接，不迁移。它的 coalition 属于启动它的那个 Folmi；那个 Folmi 退出并且被系统收尾后，「退出后台运行」就没有对象了，所以旧服务在新版 Folmi 退出时同样安全。
+- **签名**：嵌套的 App 要先作为 bundle 签名，再签外层。
+  - `build-app.sh` 现在逐个签 Mach-O 文件再签外层，要在外层之前加一步签 `FolmiTerminal.app`；`codesign --verify --deep --strict` 必须通过。
+  - 发版机器上的 `release.sh`、`beta.sh`（不进仓库）同样要加，并带 `--options runtime --timestamp`。
+- **不选的做法**：
+  - launchd（`launchctl bootstrap`、`SMAppService`）：要 plist，可能进「登录项」并弹「已添加后台项目」通知。
+  - 再 fork 一次或 `setsid`：不改变 coalition。
+  - 让服务忽略结束信号：保不住终端里的程序。
+- **不处理**：git fsmonitor 和 ssh 连接复用进程仍会让 Folmi 显示「退出后台运行」。它们来自用户自己的 git 和 ssh 配置，被结束也没有影响。
 
 ### 协议
 
@@ -99,6 +126,9 @@ Folmi.app ──(unix socket: <设置目录>/run/pty.sock)── folmi-pty ─�
 - **每个测试收尾都发 `shutdown`，测试结束不能留下 `folmi-pty` 进程**；`test.sh` 结束后检查一次，有残留就算失败。
 - 旧配置（没有 `terminalSessionIDs`）能读，恢复时开新 shell。
 - 演示仓库不连后台程序。
+- 独立的后台小 App：在临时目录拼一个包着刚编译的 `folmi-pty` 的小 App（ad-hoc 签名），用 App 层的启动方式拉起，断言服务的 coalition 和测试进程不同、协议能正常创建和接回终端，最后 `shutdown`，并从 LaunchServices 注销这个临时 App（`lsregister -u`）。
+- `test.sh` 的残留进程检查要同时认出两种路径：`folmi-pty-<哈希>` 和 `FolmiTerminal-<哈希>.app/Contents/MacOS/folmi-pty`。
+- `build-app.sh` 打包后检查：小 App 存在、`LSBackgroundOnly` 为真、`codesign --verify --deep --strict` 通过。
 
 ## 分期
 
@@ -121,3 +151,6 @@ Folmi.app ──(unix socket: <设置目录>/run/pty.sock)── folmi-pty ─�
 - 结束会话时也清理同一 PTY 会话里的后台进程组，例如在提示符后面继续跑的开发服务器。
 - 没有项目认领的会话可从「终端」菜单结束。重新定位项目后，原路径上的后台终端归入未认领会话，可从同一菜单处理。
 - 测试脚本用本次运行的独立设置路径识别并清理残留进程，避免影响其他工作树的并行测试和用户的实际会话。
+- 独立小 App 安装时，`ditto --noqtn` 在本机仍会带上隔离属性，所以复制到临时名后用 `xattr -drs com.apple.quarantine` 递归移除，再原子改名。
+- 小 App 有自己的文件访问权限，测试目录从仓库的 `.build` 移到系统临时目录，避免测试时触发「文稿」文件夹的授权提示。
+- LaunchServices 启动后 3 秒内套接字没就绪、或系统报告启动失败，退回 `posix_spawn`；两个服务同时起来时，后起的拿不到 `run/pty.lock` 会自己退出。

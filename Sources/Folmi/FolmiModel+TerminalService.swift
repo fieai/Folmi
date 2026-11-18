@@ -30,6 +30,7 @@ extension FolmiModel {
             }
             incompatibleTerminalService = nil
             terminalServiceNotice = nil
+            terminalServiceSharesCoalition = false
             restoredBackgroundTerminals = false
             restoreBackgroundTerminals()
             if showTerminal { startTerminal() } else { syncTerminalTabs() }
@@ -47,7 +48,7 @@ extension FolmiModel {
         guard running || preserved else { return }
         let alert = NSAlert()
         alert.messageText = "终端会在后台继续运行"
-        alert.informativeText = "下次打开 Folmi 时会接回原来的终端。"
+        alert.informativeText = "下次打开 Folmi 时会接回原来的终端。要结束它们，打开 Folmi 从「终端」菜单选「结束所有后台终端」。"
         alert.showsSuppressionButton = true
         alert.suppressionButton?.title = "不再提示"
         alert.suppressionButton?.state = .on
@@ -94,14 +95,18 @@ extension FolmiModel {
 
     func refreshTerminalMenu() {
         guard let terminalService else { return }
-        do { orphanTerminalCount = orphanTerminals(try terminalService.sessions()).count }
-        catch { reportTerminalServiceIssue(error) }
+        do {
+            let (sessions, sharesCoalition) = try terminalService.sessionStatus()
+            orphanTerminalCount = orphanTerminals(sessions).count
+            terminalServiceSharesCoalition = sharesCoalition
+        } catch { reportTerminalServiceIssue(error) }
     }
 
     func endBackgroundTerminals(orphansOnly: Bool) {
         guard let terminalService else { return }
         do {
-            let all = try terminalService.sessions()
+            let (all, sharesCoalition) = try terminalService.sessionStatus()
+            terminalServiceSharesCoalition = sharesCoalition
             let sessions = orphansOnly ? orphanTerminals(all) : all
             orphanTerminalCount = orphanTerminals(all).count
             guard !sessions.isEmpty else {

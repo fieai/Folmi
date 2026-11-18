@@ -180,6 +180,9 @@ struct FolmiCommands: Commands {
             if let reason = model.terminalServiceNotice {
                 Text("后台终端不可用：\(reason)")
             }
+            if model.terminalServiceSharesCoalition {
+                Text("后台终端和 Folmi 在同一组：在程序坞里选「退出后台运行」会结束终端")
+            }
             if model.incompatibleTerminalService != nil {
                 Button("重启后台终端服务…", action: model.showIncompatibleTerminalService)
             }

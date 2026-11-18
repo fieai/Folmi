@@ -37,7 +37,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     private let service: TerminalService?
     private(set) var backgroundID: UUID?
     private let startDirectory: URL
-    var onServiceStatus: ((Error?) -> Void)?
+    var onServiceStatus: ((Result<Bool, Error>) -> Void)?
 
     /// `directory`: where the shell starts, relative to `root`; the root itself when empty, missing or outside it.
     init(root: URL, environment: [String: String], isDemo: Bool, name: String = "", directory: String = "",
@@ -167,19 +167,19 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
             guard let self, !self.stopped else { return }
             switch result {
             case .success(let opened):
-                self.onServiceStatus?(nil)
+                self.onServiceStatus?(.success(opened.stream.peerSharesResourceCoalition))
                 self.connect(opened)
             case .failure(.unavailable(let error)):
                 self.backgroundID = nil
-                self.onServiceStatus?(error)
+                self.onServiceStatus?(.failure(error))
                 self.startLocal()
             case .failure(.uncertain(let error)):
                 self.showStartupFailure(error)
-                self.onServiceStatus?(error)
+                self.onServiceStatus?(.failure(error))
             case .failure(.rejected(let error)):
                 self.showStartupFailure(error)
                 if case PTYProtocol.Failure.incompatible = error {
-                    self.onServiceStatus?(error)
+                    self.onServiceStatus?(.failure(error))
                 } else {
                     self.backgroundID = nil
                 }
