@@ -88,6 +88,7 @@ extension FolmiModel {
                 if let index = projects.firstIndex(where: { $0.rootPath == oldPath }) {
                     var relocated = savedProject(oldPath) ?? oldProject
                     relocated.rootPath = newPath
+                    if newPath != oldPath { relocated.terminalSessionIDs = [] }
                     relocated.customIcon = relocatedIcon
                     relocated.reviewComments = relocated.reviewComments.map { $0.relocated(to: newPath) }
                     projects[index] = relocated
@@ -176,6 +177,7 @@ extension FolmiModel {
             // After the terminals are gone: a failure above puts the project, and so its icon, back in the list.
             projectIcons.remove(path, icon: previousProjects.first { $0.rootPath == path }?.customIcon)
             discardRecoveredProjectCaches(path, removed: true)
+            terminalsDidEnd(Set(sessions.map(\.id) + pending))
             editorObservers.removeValue(forKey: path)
             record("已从项目列表移除", path)
             return true

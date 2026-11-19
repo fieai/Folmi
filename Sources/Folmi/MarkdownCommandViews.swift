@@ -224,6 +224,9 @@ final class MarkdownOverlays {
     private var codeHost: NSHostingView<AnyView>?
     private var formatTarget: (selection: NSRange, text: String, revision: UInt64)?
     private var formatWork: DispatchWorkItem?
+    /// Whether a mouse button is down right now (the real hardware state); tests replace it so a click elsewhere
+    /// on the machine cannot change what they see.
+    var mouseButtonDown: () -> Bool = { NSEvent.pressedMouseButtons != 0 }
     private(set) var revision: UInt64 = 0
 
     // `/` menu state.
@@ -266,7 +269,7 @@ final class MarkdownOverlays {
         // Wait for a mouse drag or a run of Shift-arrow presses to settle before showing the bar.
         let work = DispatchWorkItem { [weak self] in self?.showFormatBarIfNeeded() }
         formatWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + (NSEvent.pressedMouseButtons == 0 ? 0.25 : 0.05), execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + (mouseButtonDown() ? 0.05 : 0.25), execute: work)
     }
 
     func mouseUp() {
@@ -284,7 +287,7 @@ final class MarkdownOverlays {
     /// Selected by the mouse: only then do the AI buttons show, so selecting with the keyboard stays quiet.
     private func showFormatBarIfNeeded(byMouse: Bool = false) {
         guard let editor, editor.isEditable, !editor.hasMarkedText(), editor.window != nil,
-              editor.selectedRanges.count == 1, NSEvent.pressedMouseButtons == 0 else { return }
+              editor.selectedRanges.count == 1, !mouseButtonDown() else { return }
         let selection = editor.selectedRange()
         guard selection.length > 0, NSMaxRange(selection) <= (editor.string as NSString).length else { return }
         let text = editor.string

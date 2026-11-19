@@ -9,6 +9,7 @@ import SwiftTerm
 final class TerminalSession: NSObject, ObservableObject, Identifiable {
     let id: UUID
     let root: URL
+    let createdAt = Date()
     /// What the shell or program set as its title, or the session's state (启动失败, 已退出); empty when neither.
     @Published var title: String
     /// The name the user gave this tab; empty shows the program's title, else the folder the shell is in.
@@ -17,6 +18,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     /// The last part of the shell's current directory, so two tabs read 「docs · zsh」 and 「repository · zsh」.
     @Published private(set) var folder: String
     @Published private(set) var status: String?
+    private(set) var hasExited = false
+    private(set) var exitCode: Int32?
     var displayTitle: String {
         if let status { return name.isEmpty ? status : "\(name) · \(status)" }
         return !name.isEmpty ? name : (!title.isEmpty ? title : "\(folder) · zsh")
@@ -41,8 +44,8 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
 
     /// `directory`: where the shell starts, relative to `root`; the root itself when empty, missing or outside it.
     init(root: URL, environment: [String: String], isDemo: Bool, name: String = "", directory: String = "",
-         service: TerminalService? = nil, restoredID: UUID? = nil) {
-        self.id = restoredID ?? UUID()
+         service: TerminalService? = nil, restoredID: UUID? = nil, opened: TerminalService.Opened? = nil) {
+        self.id = opened?.info.id ?? restoredID ?? UUID()
         self.root = root
         self.service = isDemo ? nil : service
         self.name = name
@@ -117,13 +120,24 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         }
         view.onOpenLink = { [weak self] link in self?.onOpenLink?(link) }
         view.onHoverLink = { [weak self] link, rect in self?.onHoverLink?(link, rect) }
-        view.onExit = { [weak self] _ in self?.didExit(nil) }
+        view.onExit = { [weak self] status in
+            // The local SwiftTerm forkpty backend reports waitpid's raw status.
+            let code = status.map { raw in
+                let signal = raw & 0x7f
+                return signal == 0 ? (raw >> 8) & 0xff : 128 + signal
+            }
+            self?.didExit(code, showsCode: false)
+        }
         // A `cd` shows in the next prompt; look at the directory then, at most twice a second.
         view.onOutput = { [weak self] in self?.refreshFolder() }
         view.applyAppearanceColors()
         view.setAccessibilityIdentifier("embedded-terminal")
         view.setAccessibilityLabel(isDemo ? "演示仓库内嵌终端" : "项目内嵌终端")
-        if let startupError, restoredID == nil {
+        if let opened {
+            backgroundID = id
+            status = "正在接回终端…"
+            connect(opened)
+        } else if let startupError, restoredID == nil {
             showStartupFailure(startupError)
         } else if let service = self.service {
             openBackground(service, restoring: restoredID != nil)
@@ -244,11 +258,13 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
         if let frame = try? PTYProtocol.Frame.json(kind, value) { connection?.send(frame) }
     }
 
-    private func didExit(_ code: Int32?) {
+    private func didExit(_ code: Int32?, showsCode: Bool = true) {
+        hasExited = true
+        exitCode = code
         isRunning = false
         backgroundPID = 0
         if !stopped {
-            title = code.map { "已退出（退出码 \($0)）" } ?? "终端已退出"
+            title = showsCode ? code.map { "已退出（退出码 \($0)）" } ?? "终端已退出" : "终端已退出"
             status = title
         }
     }
@@ -316,11 +332,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     var currentDirectory: URL? {
         guard isRunning else { return nil }
         for pid in [foregroundPID, shellPID] where pid > 0 {
-            var info = proc_vnodepathinfo()
-            let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
-            guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { continue }
-            let path = withUnsafeBytes(of: info.pvi_cdir.vip_path) { String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self) }
-            if !path.isEmpty { return URL(fileURLWithPath: path, isDirectory: true) }
+            if let path = ServiceScanner.workingDirectory(pid) { return URL(fileURLWithPath: path, isDirectory: true) }
         }
         return nil
     }
@@ -328,7 +340,7 @@ final class TerminalSession: NSObject, ObservableObject, Identifiable {
     private var lastDirectory: URL?
     var shellPID: Int32 { local ? (isRunning ? terminalView.process.shellPid : 0) : backgroundPID }
 
-    private var foregroundPID: Int32 {
+    var foregroundPID: Int32 {
         guard shellPID > 0 else { return 0 }
         if local { return tcgetpgrp(terminalView.process.childfd) }
         var info = proc_bsdinfo()

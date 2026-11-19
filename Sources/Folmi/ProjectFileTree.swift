@@ -320,6 +320,8 @@ struct ProjectFileTreeView: View {
     var root: URL?
     /// Right-click actions the window provides: show a changed file's diff, cd the terminal there, paste the path.
     var onShowChanges: ((String) -> Void)?
+    /// The history page, filtered to the commits that changed this file.
+    var onShowHistory: ((String) -> Void)?
     var onTerminalHere: ((String, Bool) -> Void)?
     var onSendPath: ((String) -> Void)?
     /// 忽略: adds the path to the root .gitignore (true for a folder).
@@ -346,6 +348,7 @@ struct ProjectFileTreeView: View {
         if !node.isDirectory {
             Button("打开") { onOpen(node.path) }
             if changed, let onShowChanges { Button("看改动") { onShowChanges(node.path) } }
+            if let onShowHistory { Button("看这个文件的提交历史") { onShowHistory(node.path) } }
             if let root { Button("快速查看") { QuickLookPreview.shared.toggle(root.appendingPathComponent(node.path)) } }
             Divider()
         }

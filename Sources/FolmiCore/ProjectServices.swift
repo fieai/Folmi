@@ -92,7 +92,7 @@ public enum ServiceScanner {
         return count > 0 ? Array(pids.prefix(Int(count))) : []
     }
 
-    static func workingDirectory(_ pid: Int32) -> String? {
+    public static func workingDirectory(_ pid: Int32) -> String? {
         var info = proc_vnodepathinfo()
         let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
         guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
@@ -146,7 +146,7 @@ public enum ServiceScanner {
     }
 
     /// argv from KERN_PROCARGS2: argc, the executable path, padding, then the arguments.
-    static func arguments(_ pid: Int32) -> [String] {
+    public static func arguments(_ pid: Int32) -> [String] {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }

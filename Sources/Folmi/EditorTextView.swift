@@ -183,7 +183,9 @@ class EditorTextView: NSTextView {
     override func cancelOperation(_ sender: Any?) {
         if markdownEditing, overlays.isSlashOpen { overlays.dismissSlash(); return }
         if markdownEditing || selectionAI != nil, overlays.isFormatBarShown { overlays.hideAll(); return }
-        super.cancelOperation(sender)
+        // NSTextView does not implement cancelOperation: (calling super raised "unrecognized selector" and crashed
+        // on Esc); pass it up the responder chain, as it goes when the text view does not handle it.
+        _ = nextResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: sender)
     }
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil { overlays.hideAll() }

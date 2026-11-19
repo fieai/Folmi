@@ -14,7 +14,7 @@ extension FolmiModel {
         defer { if historyRequest == request { historyLoading = false } }
         do {
             let requestedLimit = historyRequestedLimit
-            let loaded = try await repository.history(limit: requestedLimit + 1)
+            let loaded = try await repository.history(limit: requestedLimit + 1, path: historyPath)
             let commits = Array(loaded.prefix(requestedLimit))
             let rows = await Task.detached(priority: .userInitiated) { CommitGraph.layout(commits) }.value
             guard historyRequest == request, repositoryURL == root else { return }
@@ -50,7 +50,9 @@ extension FolmiModel {
             guard commitRequest == request, repositoryURL == root else { return }
             commitDetail = detail
             selectedCommitAbilities = abilities
-            let file = detail.files.first { $0.path == previousFile } ?? detail.files.first
+            // Filtered to one file: open that file in each commit (under its old name too, when it was renamed later).
+            let file = historyPath.flatMap { path in detail.files.first { $0.path == path } }
+                ?? detail.files.first { $0.path == previousFile } ?? detail.files.first
             selectedCommitFile = file?.path
             commitFileDiff = nil
             if let file { await loadCommitFile(file, request: request) }

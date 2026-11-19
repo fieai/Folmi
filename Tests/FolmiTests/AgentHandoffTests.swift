@@ -107,6 +107,7 @@ final class AgentHandoffTests: XCTestCase {
         editor.string = "let answer = compute(42)\nprint(answer)\n"
         var actions: [EditorSelectionAction] = []
         editor.selectionAI = { action, _ in actions.append(action) }
+        editor.overlays.mouseButtonDown = { false }
         editor.layoutManager?.ensureLayout(for: editor.textContainer!)
 
         editor.setSelectedRange(NSRange(location: 4, length: 6))
@@ -122,6 +123,8 @@ final class AgentHandoffTests: XCTestCase {
         editor.overlays.mouseUp()
         editor.cancelOperation(nil)
         XCTAssertFalse(editor.overlays.isFormatBarShown, "Esc hides it")
+        // Nothing left to hide: Esc goes up the responder chain instead of crashing.
+        editor.cancelOperation(nil)
         XCTAssertTrue(actions.isEmpty)
     }
 

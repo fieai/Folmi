@@ -183,12 +183,12 @@ extension GitRepository {
         return nil
     }
 
-    private func conflictedFiles(_ git: GitProcess) throws -> [String] {
+    func conflictedFiles(_ git: GitProcess) throws -> [String] {
         try git.run(["diff", "--name-only", "--diff-filter=U", "-z"]).text.components(separatedBy: "\0").filter { !$0.isEmpty }
     }
 
     /// Git commands that would open an editor (rebase --continue, merge messages) take the prepared text instead.
-    private func editorless() throws -> GitProcess {
+    func editorless() throws -> GitProcess {
         let git = try runner()
         var env = git.environment
         env["GIT_EDITOR"] = "true"; env["GIT_SEQUENCE_EDITOR"] = "true"

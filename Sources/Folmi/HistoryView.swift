@@ -9,6 +9,7 @@ struct HistoryView: View {
     @Environment(\.folmiTheme) private var theme
     @State private var rewording: CommitDetail?
     @State private var rewordText = ""
+    @State private var squashText = ""
     @State private var branchFrom: CommitNode?
     @State private var branchName = ""
     @State private var historyQuery = ""
@@ -34,6 +35,15 @@ struct HistoryView: View {
             RewordSheet(text: $rewordText, onCancel: { rewording = nil },
                         onSave: { model.rewordCommit(detail.id, message: rewordText); rewording = nil })
                 .sheetEntrance()
+        }
+        .sheet(item: $model.squashPrompt) { plan in
+            RewordSheet(text: $squashText, title: "把 \(plan.count) 个提交合并成一个",
+                        note: "从 \(plan.oldest.prefix(7)) 到最新的提交合成一个，内容不变；工作区和暂存区的改动不受影响。下面是合并后的说明，可以修改。⌥⌘Z 可以拆回原来的提交。",
+                        saveTitle: "合并提交",
+                        onCancel: { model.squashPrompt = nil },
+                        onSave: { model.squash(plan, message: squashText) })
+                .sheetEntrance()
+                .onAppear { squashText = plan.suggestedMessage }
         }
         .alert("从这个提交新建分支", isPresented: Binding(get: { branchFrom != nil }, set: { if !$0 { branchFrom = nil } })) {
             TextField("分支名，例如 fix/login", text: $branchName)
@@ -68,21 +78,35 @@ struct HistoryView: View {
 
     private var graphList: some View {
         let filtered = filteredHistory
-        let filtering = !historyQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // A path filter skips commits, so the lanes would not connect: the graph is left out, as when filtering.
+        let querying = !historyQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let filtering = querying || model.historyPath != nil
         let lanes = min(HistoryGraphMetrics.maximumLanes, model.historyRows.map(\.width).max() ?? 1)
         let graphWidth = filtering ? 0 : HistoryGraphMetrics.width(lanes: lanes)
         let rowsByID = Dictionary(uniqueKeysWithValues: zip(model.history.map(\.id), model.historyRows))
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text("\(model.history.count) 个提交").themedFont(.caption.weight(.medium), points: 10)
-                if filtering {
+                if querying {
                     Text("筛选到 \(filtered.count) 个").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                 }
                 if model.historyLoading { ProgressView().controlSize(.mini) }
                 Spacer()
-                Text("j/k 上下 · 包含本地、远程分支和标签").themedFont(.caption2, points: 10).foregroundStyle(.secondary)
+                Text(model.historyPath == nil ? "j/k 上下 · 包含本地、远程分支和标签" : "j/k 上下 · 当前分支上改过这个文件的提交（含改名前）")
+                    .themedFont(.caption2, points: 10).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12).frame(height: 28)
+            if let path = model.historyPath {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.text").foregroundStyle(.secondary)
+                    Text("只看 ").foregroundStyle(.secondary) + Text(path).font(.system(size: 12, design: .monospaced))
+                    Spacer(minLength: 0)
+                    QuietButton(title: "看全部提交", action: model.clearFileHistory)
+                }
+                .themedFont(.system(size: 12), points: 12).lineLimit(1).truncationMode(.middle)
+                .padding(.horizontal, 12).padding(.top, 2)
+                .accessibilityIdentifier("history-path-filter")
+            }
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("筛选已加载的提交：编号、标题、作者、分支或标签", text: $historyQuery)
@@ -100,7 +124,7 @@ struct HistoryView: View {
                 .help("筛选当前已加载提交的编号、标题、作者、邮箱及分支/标签名称；继续加载可搜索更早记录。")
             Divider()
             if filtered.isEmpty && !model.historyLoading {
-                Text(filtering ? "已加载记录中没有匹配提交，可清除筛选或继续加载" : "还没有提交记录").themedFont(.caption, points: 10).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text(querying ? "已加载记录中没有匹配提交，可清除筛选或继续加载" : (model.historyPath != nil ? "当前分支上没有改过这个文件的提交" : "还没有提交记录")).themedFont(.caption, points: 10).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -174,6 +198,9 @@ struct HistoryView: View {
         if commit.id == model.snapshot?.head, let parent = commit.parents.first {
             Button("撤销这次提交…") { model.prepareRollback(to: parent) }.disabled(model.busy)
         }
+        if let head = model.snapshot?.head, commit.id != head, model.history.first(where: { $0.id == head }) != nil {
+            Button("从这里到最新合并成一个提交…") { model.prepareSquash(from: commit.id) }.disabled(model.busy)
+        }
         Divider()
         Button("复制提交编号") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(commit.id, forType: .string) }
         Button("复制提交标题") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(commit.subject, forType: .string) }
@@ -214,6 +241,9 @@ struct HistoryView: View {
                             }
                             .tag(file.path)
                             .contextMenu {
+                                if model.historyPath != file.path {
+                                    Button("只看这个文件的提交历史") { model.showFileHistory(file.path) }
+                                }
                                 if model.compareBaseID == nil || model.compareBaseID == detail.id {
                                     Button("恢复成这次提交后的样子") { model.restoreFile(file.path, from: detail.id, side: .after) }.disabled(model.busy)
                                     Button("恢复成这次提交前的样子") { model.restoreFile(file.path, from: detail.id, side: .before) }.disabled(model.busy)
@@ -467,6 +497,12 @@ private struct CommitActionBar: View {
                            perform: { model.prepareRollback(to: commit.id) })
                 }
             }
+            if ability?.onCurrentBranch == true, ability?.isHead == false {
+                let pushed = ability?.pushed ?? false
+                action("合并到最新", symbol: "arrow.triangle.merge", enabled: !pushed && !busy,
+                       help: pushed ? "已推送到远端，合并后会和远端分叉" : "把从这里到最新的提交合成一个，内容不变（⌥⌘Z 可撤销）",
+                       perform: { model.prepareSquash(from: commit.id) })
+            }
             action("新建分支", symbol: "arrow.triangle.branch", enabled: !busy, help: "从这个提交新建分支，不会切换过去", perform: onBranch)
             action("对比", symbol: "arrow.left.arrow.right", enabled: true,
                    help: "设为对比起点，再选另一个提交就能看两者之间的差异", perform: { model.setCompareBase(commit.id) })
@@ -532,19 +568,22 @@ private struct CompareBanner: View {
 
 private struct RewordSheet: View {
     @Binding var text: String
+    var title = "修改提交说明"
+    var note = "只改说明，不改内容；暂存区里的改动不会被带进这个提交。⌥⌘Z 可以撤销。"
+    var saveTitle = "保存说明"
     let onCancel: () -> Void
     let onSave: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("修改提交说明").themedFont(.headline, points: 13)
-            Text("只改说明，不改内容；暂存区里的改动不会被带进这个提交。⌥⌘Z 可以撤销。").themedFont(.caption, points: 10).foregroundStyle(.secondary)
+            Text(title).themedFont(.headline, points: 13)
+            Text(note).themedFont(.caption, points: 10).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $text).themedFont(.system(size: 12, design: .monospaced), points: 12)
                 .frame(minWidth: 460, minHeight: 160)
                 .themedEditorFrame()
             HStack {
                 Spacer()
                 Button("取消", role: .cancel, action: onCancel).keyboardShortcut(.cancelAction)
-                Button("保存说明", action: onSave).buttonStyle(.folmiProminent).keyboardShortcut(.return, modifiers: .command)
+                Button(saveTitle, action: onSave).buttonStyle(.folmiProminent).keyboardShortcut(.return, modifiers: .command)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }

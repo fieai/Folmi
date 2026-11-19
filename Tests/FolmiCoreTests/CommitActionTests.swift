@@ -538,3 +538,108 @@ final class WorktreeStatusTests: XCTestCase {
     }
 
 }
+
+final class BranchMergeTests: XCTestCase {
+    private func rev(_ f: ActionFixture, _ name: String = "HEAD") throws -> String {
+        try f.git(["rev-parse", name]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private func fingerprint(_ f: ActionFixture) async throws -> String { try await f.repo.load().fingerprint }
+
+    func testMergePlanPredictsConflictsAndMergeBringsTheBranchIn() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.git(["switch", "-q", "-c", "feature"])
+        try f.write("feature.txt", "new\n"); try f.git(["add", "feature.txt"]); try f.git(["commit", "-qm", "Feature"])
+        try f.git(["switch", "-q", "main"])
+        try f.write("main.txt", "main\n"); try f.git(["add", "main.txt"]); try f.git(["commit", "-qm", "Main"])
+        let plan = try await f.repo.mergePlan("feature")
+        XCTAssertEqual(plan.incoming, 1); XCTAssertFalse(plan.fastForward); XCTAssertEqual(plan.conflicts, []); XCTAssertNil(plan.blocked)
+        // Uncommitted tracked changes block a real merge, so aborting a conflict could not lose them.
+        try f.write("sample.txt", "dirty\n")
+        let dirty = try await f.repo.mergePlan("feature")
+        XCTAssertNotNil(dirty.blocked)
+        try f.git(["checkout", "--", "sample.txt"])
+        let before = try rev(f)
+        guard case let .done(start, after) = try await f.repo.merge(try await f.repo.mergePlan("feature")) else { return XCTFail("应当直接合并") }
+        XCTAssertEqual(start, before)
+        XCTAssertEqual(try f.git(["rev-list", "--parents", "-n", "1", after]).split(separator: " ").count, 3)
+        XCTAssertEqual(try f.read("feature.txt"), "new\n")
+        let again = try await f.repo.mergePlan("feature")
+        XCTAssertNotNil(again.blocked, "已经合并过，没有要合并的")
+    }
+
+    func testMergePlanListsConflictingFilesAndMergeStopsOnThem() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.git(["switch", "-q", "-c", "feature"])
+        try f.write("sample.txt", "feature\n"); try f.git(["commit", "-qam", "Feature edit"])
+        try f.git(["switch", "-q", "main"])
+        try f.write("sample.txt", "main\n"); try f.git(["commit", "-qam", "Main edit"])
+        let plan = try await f.repo.mergePlan("feature")
+        XCTAssertEqual(plan.conflicts, ["sample.txt"])
+        guard case let .conflict(operation, files) = try await f.repo.merge(plan) else { return XCTFail("应当停在冲突上") }
+        XCTAssertEqual(operation, .merge); XCTAssertEqual(files, ["sample.txt"])
+        _ = try await f.repo.abortOperation()
+        XCTAssertEqual(try f.read("sample.txt"), "main\n")
+    }
+
+    func testMergeFastForwardsWhenTheCurrentBranchHasNothingOfItsOwn() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.git(["switch", "-q", "-c", "feature"])
+        try f.write("feature.txt", "new\n"); try f.git(["add", "feature.txt"]); try f.git(["commit", "-qm", "Feature"])
+        let tip = try rev(f)
+        try f.git(["switch", "-q", "main"])
+        let plan = try await f.repo.mergePlan("feature")
+        XCTAssertTrue(plan.fastForward)
+        guard case let .done(_, after) = try await f.repo.merge(plan) else { return XCTFail("应当快进") }
+        XCTAssertEqual(after, tip)
+    }
+
+    func testSquashFoldsUnpushedCommitsKeepingTreeAndUncommittedWork() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let base = try rev(f)
+        try f.write("a.txt", "a\n"); try f.git(["add", "a.txt"]); try f.git(["commit", "-qm", "Add a\n\nWhy a.\n\nChange-Id: I111\nCo-Authored-By: Bot <bot@example.invalid>"])
+        let oldest = try rev(f)
+        try f.write("b.txt", "b\n"); try f.git(["add", "b.txt"]); try f.git(["commit", "-qm", "Add b\n\nChange-Id: I222"])
+        try f.write("c.txt", "c\n"); try f.git(["add", "c.txt"]); try f.git(["commit", "-qm", "Add c"])
+        let head = try rev(f), tree = try rev(f, "HEAD^{tree}")
+        // Uncommitted work, staged and not, is left exactly as it is.
+        try f.write("sample.txt", "dirty\n"); try f.write("staged.txt", "s\n"); try f.git(["add", "staged.txt"])
+        let plan = try await f.repo.squashPlan(from: oldest)
+        XCTAssertEqual(plan.count, 3); XCTAssertEqual(plan.base, base)
+        XCTAssertEqual(plan.suggestedMessage, "Add a\n\nWhy a.\n\n- Add b\n- Add c\n\nChange-Id: I111\nCo-Authored-By: Bot <bot@example.invalid>\n")
+        let step = try await f.repo.squash(plan, message: plan.suggestedMessage, expectedFingerprint: try await fingerprint(f))
+        XCTAssertEqual(try rev(f, "HEAD^"), base)
+        XCTAssertEqual(try rev(f, "HEAD^{tree}"), tree)
+        XCTAssertEqual(try f.read("sample.txt"), "dirty\n")
+        XCTAssertEqual(try f.git(["diff", "--cached", "--name-only"]).trimmingCharacters(in: .whitespacesAndNewlines), "staged.txt")
+        _ = try await f.repo.undo(step)
+        XCTAssertEqual(try rev(f), head)
+    }
+
+    func testSquashRefusesPushedCommitsAndTheLatestAlone() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        let first = try rev(f)
+        try f.write("a.txt", "a\n"); try f.git(["add", "a.txt"]); try f.git(["commit", "-qm", "Add a"])
+        let remote = f.directory.deletingLastPathComponent().appendingPathComponent("remote.git")
+        try f.git(["init", "--bare", "--template=", remote.path])
+        try f.git(["remote", "add", "origin", remote.path]); try f.git(["push", "-q", "origin", "main"]); try f.git(["fetch", "-q", "origin"])
+        try f.write("b.txt", "b\n"); try f.git(["add", "b.txt"]); try f.git(["commit", "-qm", "Add b"])
+        do { _ = try await f.repo.squashPlan(from: first); XCTFail("含已推送的提交") } catch {}
+        do { _ = try await f.repo.squashPlan(from: try rev(f)); XCTFail("只有最新一个") } catch {}
+        // "Add a" is on the remote: folding it with "Add b" would rewrite a pushed commit.
+        do { _ = try await f.repo.squashPlan(from: try rev(f, "HEAD~1")); XCTFail("Add a 已推送") } catch {}
+    }
+
+    func testHistoryForOnePathFollowsRenames() async throws {
+        let f = try ActionFixture()
+        try f.initial()
+        try f.write("other.txt", "x\n"); try f.git(["add", "other.txt"]); try f.git(["commit", "-qm", "Other"])
+        try f.git(["mv", "sample.txt", "renamed.txt"]); try f.git(["commit", "-qm", "Rename"])
+        let commits = try await f.repo.history(path: "renamed.txt")
+        XCTAssertEqual(commits.map(\.subject), ["Rename", "Initial"])
+    }
+}

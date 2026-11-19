@@ -34,6 +34,7 @@ extension FolmiModel {
             PaletteCommand(id: "turn", title: "只看 AI 最近一轮的改动", keywords: "replay claude codex ai 回放 轮次 每一轮 批次 turn", enabled: open && !turnChoices.isEmpty) { [weak self] in self?.showTurn(self?.turnChoices.first?.id) },
             PaletteCommand(id: "tasks", title: "待办", keywords: "tasks todo 待办 任务 日期 截止 全项目待办", enabled: open) { [weak self] in self?.showContent(.tasks) },
             PaletteCommand(id: "terminal", title: "显示 / 隐藏终端", keywords: "terminal 终端 shell", enabled: open) { [weak self] in self?.toggleTerminal() },
+            PaletteCommand(id: "allTerminals", title: "全部终端", keywords: "terminal 终端 shell 后台", enabled: true) { [weak self] in self?.showAllTerminals = true },
             PaletteCommand(id: "newTerminal", title: "新建终端标签", keywords: "terminal new 终端", enabled: open) { [weak self] in self?.newTerminalTab() },
             PaletteCommand(id: "hooks", title: "接入 agent（hooks / MCP）", keywords: "claude codex hooks mcp 接入 活动 撤回 guardrails 评论", enabled: open) { [weak self] in self?.showHooksSetup = true },
             PaletteCommand(id: "worktrees", title: "工作树", keywords: "worktree worktrees codex claude 工作树 文件夹 清理", enabled: open) { [weak self] in self?.showWorktrees = true },

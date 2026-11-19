@@ -5,6 +5,8 @@ import FolmiCore
 struct PullStart {
     let head: String
     let branch: String?
+    /// Names the step in the undo list: a pull, or merging a branch in.
+    var title = "拉取"
 }
 
 /// Fetching and pulling. Fetches run in the background (on open and every few minutes), never prompt and never
@@ -109,7 +111,7 @@ extension FolmiModel {
         let next = operation == .rebase
             ? "在编辑器里解决冲突、暂存这些文件，然后点改动列表上方的「继续变基」。"
             : "在编辑器里解决冲突、暂存这些文件，然后照常提交，就完成了合并。"
-        return "\(operation.title)时这些文件有冲突：\n\(list)\n\n\(next)\n不想继续的话，点「放弃\(operation.title)」，分支和文件会回到拉取前。"
+        return "\(operation.title)时这些文件有冲突：\n\(list)\n\n\(next)\n不想继续的话，点「放弃\(operation.title)」，分支和文件会回到开始前。"
     }
 
     /// Goes on with a rebase whose conflicts are resolved and staged.

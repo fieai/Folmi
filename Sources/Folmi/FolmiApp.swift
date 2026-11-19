@@ -132,6 +132,8 @@ struct FolmiCommands: Commands {
             Button("项目总览", action: { model.showOverview = true }).keyboardShortcut("o", modifiers: [.command, .shift])
             Button("这份文档的演变史", action: { model.showDocHistory = true }).keyboardShortcut("y", modifiers: [.command, .shift])
                 .disabled(!model.isMarkdownDocument)
+            Button("这个文件的提交历史") { if let path = model.editorChrome?.selected { model.showFileHistory(path) } }
+                .disabled(!model.hasSnapshot || model.editorChrome?.selected == nil)
             Button("随手记…（\(model.ideaHotKey.title)）") { InboxPanel.shared.show(model: model) }
             Divider()
             Button("快速打开文件…", action: model.openQuickOpen).keyboardShortcut("p")
@@ -177,6 +179,9 @@ struct FolmiCommands: Commands {
             Button("快捷键一览（按住 ⌘ 也能看）", action: model.toggleShortcuts).keyboardShortcut("/")
         }
         CommandMenu("终端") {
+            Button("全部终端…") { model.showAllTerminals = true }
+                .keyboardShortcut("t", modifiers: [.control, .option])
+            Divider()
             if let reason = model.terminalServiceNotice {
                 Text("后台终端不可用：\(reason)")
             }

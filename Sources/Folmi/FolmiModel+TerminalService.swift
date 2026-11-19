@@ -58,7 +58,11 @@ extension FolmiModel {
     }
 
     func confirmTermination(of tab: TerminalSession) -> Bool {
-        guard let command = tab.runningProgram else { return true }
+        confirmTermination(program: tab.runningProgram)
+    }
+
+    func confirmTermination(program: String?) -> Bool {
+        guard let command = program else { return true }
         return confirmTerminalAction("关闭这个终端？", detail: "「\(command)」还在运行，关闭会结束它。", button: "关闭终端")
     }
 
@@ -75,7 +79,8 @@ extension FolmiModel {
 
     func backgroundTerminals(in path: String) throws -> [PTYProtocol.Session] {
         guard let terminalService, savedProject(path)?.isDemo != true else { return [] }
-        return try terminalService.sessions().filter { $0.projectRoot == path }
+        let owners = terminalOwners()
+        return try terminalService.sessions().filter { terminalOwner($0, owners: owners) == path }
     }
 
     func confirmProjectTerminalClosure(path: String, sessions: [PTYProtocol.Session]) -> Bool {
@@ -89,15 +94,15 @@ extension FolmiModel {
     }
 
     func orphanTerminals(_ sessions: [PTYProtocol.Session]) -> [PTYProtocol.Session] {
-        let roots = Set(projects.filter { !$0.isDemo }.map(\.rootPath))
-        return sessions.filter { !roots.contains($0.projectRoot) }
+        let owners = terminalOwners()
+        return sessions.filter { terminalOwner($0, owners: owners) == nil }
     }
 
     func refreshTerminalMenu() {
         guard let terminalService else { return }
         do {
             let (sessions, sharesCoalition) = try terminalService.sessionStatus()
-            orphanTerminalCount = orphanTerminals(sessions).count
+            noteBackgroundTerminals(sessions)
             terminalServiceSharesCoalition = sharesCoalition
         } catch { reportTerminalServiceIssue(error) }
     }
@@ -108,27 +113,31 @@ extension FolmiModel {
             let (all, sharesCoalition) = try terminalService.sessionStatus()
             terminalServiceSharesCoalition = sharesCoalition
             let sessions = orphansOnly ? orphanTerminals(all) : all
-            orphanTerminalCount = orphanTerminals(all).count
+            noteBackgroundTerminals(all)
             guard !sessions.isEmpty else {
                 _ = confirmTerminalAction("没有后台终端", detail: "", button: "好", canCancel: false)
                 return
             }
             let title = orphansOnly ? "结束不属于项目的后台终端？" : "结束所有后台终端？"
             guard confirmTerminalAction(title, detail: "将结束 \(sessions.count) 个后台终端及其中的程序。", button: "结束终端") else { return }
-            if orphansOnly {
-                try terminalService.end(sessions.map(\.id))
-            } else {
-                try terminalService.shutdown()
-                for tab in terminals.values.joined() where tab.backgroundID != nil { tab.stop(endBackground: false) }
-                scheduleSave()
+            let owners = terminalOwners()
+            if orphansOnly { try terminalService.end(sessions.map(\.id)) }
+            else { try terminalService.shutdown() }
+            var closed = sessions.map { ($0.id, terminalOwner($0, owners: owners)) }
+            if !orphansOnly {
+                let listed = Set(sessions.map(\.id))
+                closed += terminals.flatMap { path, tabs in
+                    tabs.compactMap { tab in tab.backgroundID != nil && !listed.contains(tab.id) ? (tab.id, Optional(path)) : nil }
+                }
+                terminalServiceSharesCoalition = false
             }
-            refreshTerminalMenu()
+            applyTerminalClosures(closed)
         } catch {
             reportTerminalServiceIssue(error)
         }
     }
 
-    private func confirmTerminalAction(_ title: String, detail: String, button: String, canCancel: Bool = true) -> Bool {
+    func confirmTerminalAction(_ title: String, detail: String, button: String, canCancel: Bool = true) -> Bool {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = detail

@@ -5,6 +5,7 @@ struct ProjectRailIcon: View {
     let project: ProjectPreferences
     let model: FolmiModel
     let help: String
+    var allowsDrop = true
     @State private var targeted = false
 
     var body: some View {
@@ -17,8 +18,10 @@ struct ProjectRailIcon: View {
                     .padding(1)
             }
             .overlay {
-                ProjectIconDropTarget(targeted: $targeted, help: help) { png in model.setProjectImage(png, path: project.rootPath) }
-                    .accessibilityHidden(true)
+                if allowsDrop {
+                    ProjectIconDropTarget(targeted: $targeted, help: help) { png in model.setProjectImage(png, path: project.rootPath) }
+                        .accessibilityHidden(true)
+                }
             }
             .task { model.projectIcons.load(project) }
     }

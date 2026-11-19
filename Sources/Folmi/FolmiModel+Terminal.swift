@@ -142,7 +142,8 @@ extension FolmiModel {
             let (sessions, sharesCoalition) = try terminalService.sessionStatus()
             terminalServiceSharesCoalition = sharesCoalition
             restoredBackgroundTerminals = true
-            let byProject = Dictionary(grouping: sessions, by: \.projectRoot)
+            let owners = terminalOwners()
+            let byProject = Dictionary(grouping: sessions) { terminalOwner($0, owners: owners) }
             for project in projects where !project.isDemo && terminals[project.rootPath] == nil {
                 let root = URL(fileURLWithPath: project.rootPath, isDirectory: true)
                 let saved = savedProject(project.rootPath) ?? project
@@ -151,7 +152,7 @@ extension FolmiModel {
                     restoreTerminalTabs(root: root, project: saved, live: live, needsTab: false)
                 }
             }
-            orphanTerminalCount = orphanTerminals(sessions).count
+            noteBackgroundTerminals(sessions)
         } catch {
             reportTerminalServiceIssue(error)
         }
@@ -166,7 +167,7 @@ extension FolmiModel {
         syncTerminalTabs()
     }
 
-    private func restoreTerminalTabs(root: URL, project: ProjectPreferences?, live: [PTYProtocol.Session], needsTab: Bool) {
+    func restoreTerminalTabs(root: URL, project: ProjectPreferences?, live: [PTYProtocol.Session], needsTab: Bool) {
         let cleared = terminalTabsCleared.remove(root.path) != nil
         let names = cleared ? [] : project?.terminalTabs ?? []
         let directories = cleared ? [] : project?.terminalDirectories ?? []
@@ -192,13 +193,13 @@ extension FolmiModel {
     }
 
     func makeTerminal(root: URL, name: String, directory: String = "",
-                      project: ProjectPreferences? = nil, restoredID: UUID? = nil) -> TerminalSession {
+                      project: ProjectPreferences? = nil, restoredID: UUID? = nil, opened: TerminalService.Opened? = nil) -> TerminalSession {
         let active = repositoryURL?.path == root.path
         let environment = active ? commandEnvironment : project?.environment ?? [:]
         let demo = active ? isDemo : project?.isDemo ?? false
-        let service = keepTerminalsRunning ? terminalService : nil
+        let service = keepTerminalsRunning || restoredID != nil || opened != nil ? terminalService : nil
         let session = TerminalSession(root: root, environment: environment, isDemo: demo, name: name,
-                                      directory: directory, service: service, restoredID: restoredID)
+                                      directory: directory, service: service, restoredID: restoredID, opened: opened)
         session.onServiceStatus = { [weak self] result in
             guard let self else { return }
             switch result {
@@ -208,6 +209,7 @@ extension FolmiModel {
             case .failure(let error):
                 self.reportTerminalServiceIssue(error)
             }
+            self.updateAllTerminalCount()
             self.scheduleSave()
         }
         session.onOpenLink = { [weak self, weak session] link in self?.openTerminalLink(link, from: session) }
@@ -219,6 +221,7 @@ extension FolmiModel {
     }
 
     func syncTerminalTabs() {
+        defer { updateAllTerminalCount() }
         guard let root = repositoryURL?.path else { terminalTabs = []; terminalSession = nil; return }
         let tabs = terminals[root] ?? []
         if terminalTabs.map(\.id) != tabs.map(\.id) { terminalTabs = tabs }
@@ -243,7 +246,7 @@ extension FolmiModel {
         terminalColumns[root.path]?.replace(current.id.uuidString, with: replacement.id.uuidString)
         selectedTerminals[root.path] = replacement.id
         syncTerminalTabs()
-        scheduleSave()
+        terminalsDidEnd([current.id])
     }
 
     func newTerminalTab() {
@@ -282,23 +285,54 @@ extension FolmiModel {
 
     /// Ends the tab's shell. Closing the last tab also collapses the terminal card.
     func closeTerminalTab(_ id: UUID) {
-        guard let root = repositoryURL?.path, var tabs = terminals[root], let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-        let tab = tabs[index]
+        guard let root = repositoryURL?.path, let tab = terminals[root]?.first(where: { $0.id == id }) else { return }
         guard confirmTermination(of: tab), endTerminal(tab) else { return }
-        tabs.remove(at: index)
+        removeEndedTerminalTabs([id], in: root)
+        terminalsDidEnd([id])
+    }
+
+    /// All terminal close actions share tab selection, layout and persistence handling.
+    func removeEndedTerminalTabs(_ ids: Set<UUID>, in root: String) {
+        guard var tabs = terminals[root] else {
+            removeSavedTerminalTabs(ids, in: root)
+            return
+        }
+        let selected = selectedTerminals[root]
+        let selectedIndex = tabs.firstIndex { $0.id == selected }
+        let removed = tabs.filter { ids.contains($0.id) }
+        for tab in removed { tab.stop(endBackground: false) }
+        tabs.removeAll { ids.contains($0.id) }
         terminals[root] = tabs
         if var layout = terminalColumns[root] {
             // The tab beside it in the same column takes its place.
-            layout.remove(id.uuidString)
+            for tab in removed { layout.remove(tab.id.uuidString) }
             terminalColumns[root] = layout
             selectedTerminals[root] = layout.selected.flatMap(UUID.init(uuidString:)) ?? tabs.first?.id
-        } else if selectedTerminals[root] == id { selectedTerminals[root] = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id }
-        syncTerminalTabs()
+        } else if let selected, let selectedIndex, ids.contains(selected) {
+            selectedTerminals[root] = tabs.isEmpty ? nil : tabs[min(selectedIndex, tabs.count - 1)].id
+        }
         if tabs.isEmpty {
             // Reopening starts one fresh tab rather than last session's set.
             terminalTabsCleared.insert(root)
-            showTerminal = false
+            if root == repositoryURL?.path { showTerminal = false }
         }
-        scheduleSave()
+        if root == repositoryURL?.path { syncTerminalTabs() }
+    }
+
+    private func removeSavedTerminalTabs(_ ids: Set<UUID>, in root: String) {
+        guard let index = preferences.projects.firstIndex(where: { $0.rootPath == root }) else { return }
+        var project = preferences.projects[index]
+        let kept = project.terminalTabs.indices.filter { index in
+            guard project.terminalSessionIDs.indices.contains(index),
+                  let id = UUID(uuidString: project.terminalSessionIDs[index]) else { return true }
+            return !ids.contains(id)
+        }
+        guard kept.count != project.terminalTabs.count else { return }
+        project.terminalTabs = kept.map { project.terminalTabs[$0] }
+        project.terminalDirectories = kept.map { project.terminalDirectories.indices.contains($0) ? project.terminalDirectories[$0] : "" }
+        project.terminalSessionIDs = kept.map { project.terminalSessionIDs.indices.contains($0) ? project.terminalSessionIDs[$0] : "" }
+        let positions = Dictionary(uniqueKeysWithValues: kept.enumerated().map { (String($1), String($0)) })
+        project.terminalColumns = project.terminalColumns?.mapTabs { positions[$0] }
+        preferences.projects[index] = project
     }
 }

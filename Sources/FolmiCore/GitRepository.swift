@@ -536,11 +536,16 @@ public actor GitRepository {
     // MARK: History
 
     /// Commits reachable from HEAD, local and remote branches and tags, newest first with children before parents.
-    public func history(limit: Int = 500) async throws -> [CommitNode] {
+    /// With `path`, only the current branch's commits that changed that file, following renames.
+    public func history(limit: Int = 500, path: String? = nil) async throws -> [CommitNode] {
         let git = try runner()
         guard try git.run(["rev-parse", "--verify", "--quiet", "HEAD"], allowFailure: true).status == 0 else { return [] }
-        let text = try git.run(["log", "-z", "--topo-order", "--decorate=short", "-n", String(max(1, limit)),
-                                "--format=%H%x00%P%x00%h%x00%an%x00%ae%x00%at%x00%D%x00%s",
+        let format = "--format=%H%x00%P%x00%h%x00%an%x00%ae%x00%at%x00%D%x00%s"
+        if let path {
+            let text = try git.run(["log", "-z", "--follow", "--decorate=short", "-n", String(max(1, limit)), format, "HEAD", "--", path]).text
+            return CommitNode.parse(text)
+        }
+        let text = try git.run(["log", "-z", "--topo-order", "--decorate=short", "-n", String(max(1, limit)), format,
                                 "HEAD", "--branches", "--remotes", "--tags", "--"]).text
         return CommitNode.parse(text)
     }

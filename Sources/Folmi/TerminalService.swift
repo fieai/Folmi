@@ -15,6 +15,12 @@ final class TerminalService: Sendable {
         let info: PTYProtocol.Session
     }
 
+    struct ListedSession: Sendable {
+        let info: PTYProtocol.Session
+        let directory: String?
+        let commandLine: String?
+    }
+
     let endpoint: PTYEndpoint
     private let helper: URL?
     private let queue = DispatchQueue(label: "Folmi.terminal-service", qos: .userInitiated)
@@ -69,7 +75,8 @@ final class TerminalService: Sendable {
             return .failure(restoring ? .uncertain(error) : .unavailable(error))
         }
         do {
-            if restoring, let existing = try list(&peer).first(where: { $0.id == request.id && $0.projectRoot == request.projectRoot }) {
+            // A claimed terminal keeps its original service root. Its saved UUID identifies the shell to attach.
+            if restoring, let existing = try list(&peer).first(where: { $0.id == request.id }) {
                 return .success(Opened(stream: peer.stream, info: existing))
             }
             try peer.send(.json(.create, request))
@@ -87,12 +94,50 @@ final class TerminalService: Sendable {
     }
 
     func sessionStatus() throws -> (sessions: [PTYProtocol.Session], sharesCoalition: Bool) {
-        try queue.sync {
-            guard let stream = try endpoint.connect() else { return ([], false) }
+        try queue.sync { try readSessionStatus() }
+    }
+
+    func listedSessions() async throws -> (sessions: [ListedSession], sharesCoalition: Bool) {
+        try await onQueue {
+            let (sessions, sharesCoalition) = try self.readSessionStatus()
+            return (sessions.map { info in
+                let directory = info.hasExited ? nil : ServiceScanner.workingDirectory(info.shellPid)
+                return ListedSession(info: info, directory: directory, commandLine: Self.commandLine(info.foregroundPid))
+            }, sharesCoalition)
+        }
+    }
+
+    func openExisting(_ id: UUID) async throws -> Opened? {
+        try await onQueue {
+            guard let stream = try self.endpoint.connect() else { return nil }
             var peer = PTYPeer(stream)
             try peer.hello().requireCompatibility()
-            return (try list(&peer), stream.peerSharesResourceCoalition)
+            guard let info = try self.list(&peer).first(where: { $0.id == id }) else { return nil }
+            return Opened(stream: stream, info: info)
         }
+    }
+
+    private func readSessionStatus() throws -> (sessions: [PTYProtocol.Session], sharesCoalition: Bool) {
+        guard let stream = try endpoint.connect() else { return ([], false) }
+        var peer = PTYPeer(stream)
+        try peer.hello().requireCompatibility()
+        return (try list(&peer), stream.peerSharesResourceCoalition)
+    }
+
+    private func onQueue<T: Sendable>(_ read: @escaping @Sendable () throws -> T) async throws -> T {
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async { continuation.resume(with: Result { try read() }) }
+        }
+    }
+
+    static func commandLine(_ pid: Int32?) -> String? {
+        guard let pid else { return nil }
+        let arguments = ServiceScanner.arguments(pid)
+        guard arguments.count > 1, let executable = arguments.first, !executable.isEmpty else { return nil }
+        let command = ([(executable as NSString).lastPathComponent] + arguments.dropFirst()).joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return command.count > 60 ? String(command.prefix(59)) + "…" : command
     }
 
     func end(_ ids: [UUID]) throws {

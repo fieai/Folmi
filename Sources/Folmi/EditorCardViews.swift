@@ -293,6 +293,18 @@ struct TerminalCard: View {
                     }
                 }
             } accessory: {
+                // Always shown so the list is reachable without the shortcut; the count appears only when
+                // terminals run outside this project, since then there is something here you can't already see.
+                if let count = model.allTerminalCountOutsideProject {
+                    Button { model.showAllTerminals = true } label: {
+                        Label("\(count)", systemImage: "rectangle.stack").themedFont(.caption, points: 11)
+                    }
+                    .buttonStyle(.pressable)
+                    .help("全部终端（⌃⌥T）")
+                    .accessibilityLabel("全部终端，\(count) 个")
+                } else {
+                    PaneIconButton(symbol: "rectangle.stack", help: "全部终端（⌃⌥T）") { model.showAllTerminals = true }
+                }
                 SplitMenu(reason: model.splitBlockedReason(.terminal)) { model.splitTerminal(toRight: $0) }
                 PaneIconButton(symbol: "text.bubble", help: "说人话：把终端里选中的内容讲明白") {
                     if let text = model.terminalSelection, !text.isEmpty { model.assist(.plain, text: text, source: "终端选中内容") }

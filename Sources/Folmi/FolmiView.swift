@@ -75,7 +75,20 @@ struct FolmiView: View {
         .sheet(isPresented: $model.showWorktrees) { WorktreesSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showRemotes) { RemotesSheet(model: model).sheetEntrance() }
         .sheet(isPresented: $model.showOverview) { ProjectOverviewSheet(model: model).sheetEntrance() }
+        .sheet(isPresented: $model.showAllTerminals, onDismiss: model.jumpToListedTerminal) {
+            AllTerminalsSheet(model: model).sheetEntrance()
+        }
         .sheet(isPresented: $model.showDocHistory) { DocHistorySheet(model: model).sheetEntrance() }
+        .confirmationDialog(model.mergePrompt.map { "把「\($0.source)」合并进「\($0.branch)」？" } ?? "",
+                            isPresented: Binding(get: { model.mergePrompt != nil }, set: { if !$0 { model.mergePrompt = nil } }),
+                            presenting: model.mergePrompt) { plan in
+            if plan.blocked == nil {
+                Button(plan.conflicts.isEmpty ? "合并" : "合并，之后解决冲突") { model.runMerge(plan) }
+            }
+            Button(plan.blocked == nil ? "取消" : "好", role: .cancel) { model.mergePrompt = nil }
+        } message: { plan in
+            Text(FolmiModel.mergeMessage(plan))
+        }
         .modifier(RefPrompts(model: model))
         .sheet(item: $model.readerCommentDraft) { draft in
             ReviewCommentComposer(title: "\(draft.reference) · 「\(draft.quote.prefix(40))\(draft.quote.count > 40 ? "…" : "")」",
@@ -180,6 +193,10 @@ private struct BranchMenu: View {
                         ForEach(others, id: \.self) { branch in Button(branch) { model.askDeleteBranch(branch) } }
                     }
                     .disabled(others.isEmpty)
+                    Menu("合并到「\(snapshot.branch)」") {
+                        ForEach(others, id: \.self) { branch in Button(branch) { model.prepareMerge(branch) } }
+                    }
+                    .disabled(others.isEmpty || snapshot.operation != nil)
                 }
                 Divider()
                 Button(snapshot.remotes.isEmpty ? "添加远端…" : "远端（\(snapshot.remotes.count)）…") { model.showRemotes = true }

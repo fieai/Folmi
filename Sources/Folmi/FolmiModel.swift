@@ -116,6 +116,11 @@ final class FolmiModel {
     var terminalServiceSharesCoalition = false
     var incompatibleTerminalService: PTYProtocol.Hello?
     var orphanTerminalCount = 0
+    var showAllTerminals = false
+    var allTerminalCountOutsideProject: Int?
+    var allTerminalsRevision = 0
+    @ObservationIgnored var knownBackgroundTerminals: [PTYProtocol.Session] = []
+    @ObservationIgnored var terminalJump: AllTerminalRow?
     @ObservationIgnored var restoredBackgroundTerminals = false
     let terminalService: TerminalService?
     /// What runs in this project and how to start it (ProjectServicesView.swift).
@@ -179,6 +184,12 @@ final class FolmiModel {
     var selectedCommitAbilities: GitRepository.CommitAbilities?
     /// A rollback waiting for the user to pick how (keep the changes staged, or put the files back too).
     var rollbackPrompt: GitRepository.RollbackPlan?
+    /// Merging another branch into the current one, waiting for the user's go-ahead.
+    var mergePrompt: GitRepository.MergePlan?
+    /// Folding commits into one, waiting for the message.
+    var squashPrompt: GitRepository.SquashPlan?
+    /// The history page shows only the commits that changed this file.
+    var historyPath: String?
     /// The open repository's working trees (main checkout first) and what each holds, for the rail's notice, the
     /// worktree sheet and the branch menu.
     var worktrees: [WorktreeStatus] = []
@@ -567,7 +578,7 @@ final class FolmiModel {
             busy = false
         }
     }
-    func open(_ url: URL, environment: [String: String] = [:], demo: Bool = false) {
+    func open(_ url: URL, environment: [String: String] = [:], demo: Bool = false, afterOpen: (() -> Void)? = nil) {
         guard !busy, !gitStartupState.blocksGit else { return }
         guard projectPathIsAvailable(url) else { return }
         PerfLog.mark("launch.openCalled")
@@ -579,7 +590,7 @@ final class FolmiModel {
         Task {
             PerfLog.mark("launch.taskStarted")
             do {
-                try await installRepository(url, environment: environment, demo: demo, cached: cached)
+                try await installRepository(url, environment: environment, demo: demo, cached: cached, afterOpen: afterOpen)
                 try savePreferencesNow()
                 finishPendingRemoval()
                 await loadWorktrees()
@@ -591,12 +602,13 @@ final class FolmiModel {
             if cached != nil { refreshInBackground(reportingErrors: true) }
         }
     }
-    func switchProject(_ path: String) {
+    func switchProject(_ path: String, afterOpen: (() -> Void)? = nil) {
         guard !busy, !gitStartupState.blocksGit, path != repositoryURL?.path, let project = projects.first(where: { $0.rootPath == path }) else { return }
         lastReject = nil; lastAccept = nil; reviewFocusAfterUndo = nil
-        open(URL(fileURLWithPath: path), environment: project.environment, demo: project.isDemo)
+        open(URL(fileURLWithPath: path), environment: project.environment, demo: project.isDemo, afterOpen: afterOpen)
     }
-    private func installRepository(_ url: URL, environment: [String: String], demo: Bool, cached: RepositorySnapshot? = nil) async throws {
+    private func installRepository(_ url: URL, environment: [String: String], demo: Bool, cached: RepositorySnapshot? = nil,
+                                   afterOpen: (() -> Void)? = nil) async throws {
         // Set at creation: an `await` on the new actor here would hand the main thread to queued work (WebKit's
         // warm-up) before the first diff, ~150 ms at launch.
         let key = SnapshotCache.key(url.path)
@@ -704,7 +716,7 @@ final class FolmiModel {
         allChangesRequest = UUID(); allChanges = []; allChangesNotice = nil; allChangesSelection = [:]
         reviewFileJump = nil; reviewBrowsingFileKey = nil
         historyRequest = UUID(); commitRequest = UUID(); history = []; historyRows = []
-        historyRequestedLimit = Self.historyLimit; historyHasMore = false
+        historyRequestedLimit = Self.historyLimit; historyHasMore = false; historyPath = nil
         showCommitComposer = false
         selectedCommitID = nil; commitDetail = nil; selectedCommitFile = nil; commitFileDiff = nil; compareBaseID = nil
         loadReviewLedger(); syncUndoLabels()
@@ -719,6 +731,7 @@ final class FolmiModel {
         }
         restoreBackgroundTerminals()
         syncTerminalTabs()
+        afterOpen?()
         if showTerminal { startTerminal() }
         // The file tree is read beside the first diff instead of before it.
         PerfLog.spend("project.install", since: installStart)
@@ -860,7 +873,7 @@ final class FolmiModel {
     /// A click on the window outside an open sheet closes it, like a popover.
     func dismissSheets() {
         showDelivery = false; showPull = false; showStashes = false; showActivity = false; showAISettings = false; showPalette = false; showHooksSetup = false; showMemory = false; showWorktrees = false; showRemotes = false
-        showOverview = false; showDocHistory = false; readerCommentDraft = nil; showQuickOpen = false; showProjectSearch = false; showSettings = false
+        showOverview = false; showAllTerminals = false; showDocHistory = false; readerCommentDraft = nil; showQuickOpen = false; showProjectSearch = false; showSettings = false
     }
     /// The file tree's 看改动: the change's diff, in the area that has it.
     func showChanges(ofPath path: String) {
@@ -1061,7 +1074,7 @@ final class FolmiModel {
             await MainActor.run {
                 if let pullStart {
                     self?.pullStartHeads[state.root.path] = nil
-                    self?.pushUndo("拉取（合并 \(head.prefix(7))）", .reset(restore: pullStart.head, current: head, branch: pullStart.branch))
+                    self?.pushUndo("\(pullStart.title)（合并 \(head.prefix(7))）", .reset(restore: pullStart.head, current: head, branch: pullStart.branch))
                 } else {
                     self?.pushUndo("\(title) \(head.prefix(7)) \(subject.prefix(30))", .head(restore: before, current: head, branch: branch))
                 }
