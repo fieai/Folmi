@@ -87,6 +87,7 @@ extension FolmiModel {
     func showFileHistory(_ path: String) {
         guard !busy else { return }
         historyPath = path
+        historySearch = nil
         compareBaseID = nil
         historyRequestedLimit = Self.historyLimit
         selectedCommitID = nil

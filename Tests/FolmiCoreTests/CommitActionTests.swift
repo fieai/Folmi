@@ -271,6 +271,10 @@ final class ConflictTests: XCTestCase {
         _ = try? f.git(["merge", "feature"])
         let file = try await f.repo.conflictFile("a.txt")!
         XCTAssertEqual(file.blocks.count, 1)
+        let ancestor = try await f.repo.conflictAncestor("a.txt")
+        XCTAssertEqual(ancestor, "one\n")
+        XCTAssertEqual(file.blocks[0].alignedSides.first?.old?.line.text, "main")
+        XCTAssertEqual(file.blocks[0].alignedSides.first?.new?.line.text, "feature")
         do { try await f.repo.markResolved("a.txt"); XCTFail("还有冲突") } catch {}
         try await f.repo.resolveConflict("a.txt", block: 0, choice: .theirsThenOurs, expected: file)
         XCTAssertEqual(try f.read("a.txt"), "feature\nmain\n")

@@ -218,6 +218,7 @@ struct FileEditorPane: View {
 struct EditorTabStrip: View {
     @ObservedObject var workspace: EditorWorkspace
     var onSave: () -> Void
+    var onShowHistory: (String) -> Void
     /// The column whose tabs these are; nil for the active column.
     var column: UUID?
     /// 向左拆分 / 向右拆分 and 移到左边一栏 / 右边一栏 from a tab's menu, handled by the model.
@@ -244,6 +245,7 @@ struct EditorTabStrip: View {
                                         },
                                         onCloseTabs: { workspace.closeTabs($0, around: document.id, in: columnID) },
                                         fileURL: workspace.root.appendingPathComponent(document.path),
+                                        onShowHistory: { onShowHistory(document.path) },
                                         canSplit: workspace.columns.canSplit && onSplit != nil,
                                         canMoveLeft: canMove(toRight: false), canMoveRight: canMove(toRight: true),
                                         onSplit: { onSplit?(document.id, $0) }, onMove: { onMove?(document.id, $0) })
@@ -314,6 +316,7 @@ private struct EditorTabButton: View, Equatable {
     let onClose: () -> Void
     let onCloseTabs: (EditorWorkspace.TabCloseScope) -> Void
     let fileURL: URL
+    let onShowHistory: () -> Void
     var canSplit = false
     var canMoveLeft = false
     var canMoveRight = false
@@ -377,6 +380,7 @@ private struct EditorTabButton: View, Equatable {
             Button("向右拆分（⌘\\）") { onSplit(true) }.disabled(!canSplit)
             if canMoveLeft { Button("移到左边一栏") { onMove(false) } }
             if canMoveRight { Button("移到右边一栏") { onMove(true) } }
+            Button("只看这个文件的提交历史", action: onShowHistory)
             Divider()
             FileActionsMenu(url: fileURL, relativePath: path)
         }

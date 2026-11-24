@@ -37,6 +37,177 @@ private final class UndoFixture {
 
 
 final class UndoStepTests: XCTestCase {
+    func testDiscardFilesRestoresIndexVersionsAndUndoRestoresBytesModesAndLinks() async throws {
+        let f = try UndoFixture()
+        let long = (1...2100).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        try f.initial("long.txt", long)
+        try f.write("delete.txt", "keep in Git\n")
+        try f.write("mode.sh", "#!/bin/sh\n")
+        let binary = f.directory.appendingPathComponent("blob.bin")
+        try Data([0, 1, 2]).write(to: binary)
+        try f.git(["add", "."]); try f.git(["commit", "-m", "Files"])
+
+        let staged = long.replacingOccurrences(of: "line 2000", with: "staged")
+        try f.write("long.txt", staged); try f.git(["add", "long.txt"])
+        try f.write("long.txt", staged + "work\n")
+        try Data([0, 3, 4]).write(to: binary)
+        try FileManager.default.removeItem(at: f.directory.appendingPathComponent("delete.txt"))
+        let mode = f.directory.appendingPathComponent("mode.sh")
+        try FileManager.default.setAttributes([.posixPermissions: 0o751], ofItemAtPath: mode.path)
+        let link = f.directory.appendingPathComponent("new.link")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "missing")
+
+        let before = try await f.repo.load()
+        let undo = try await f.repo.discardFiles(before.files.filter(\.hasWorking), expectedFingerprint: before.fingerprint)
+        let after = try await f.repo.load()
+        XCTAssertEqual(after.files.map(\.path), ["long.txt"])
+        XCTAssertEqual(try f.read("long.txt"), staged)
+        XCTAssertEqual(try f.index("long.txt"), staged)
+        XCTAssertEqual(try Data(contentsOf: binary), Data([0, 1, 2]))
+        XCTAssertEqual(try f.read("delete.txt"), "keep in Git\n")
+        XCTAssertThrowsError(try FileManager.default.destinationOfSymbolicLink(atPath: link.path))
+
+        _ = try await f.repo.undo(undo)
+        XCTAssertEqual(try f.read("long.txt"), staged + "work\n")
+        XCTAssertEqual(try Data(contentsOf: binary), Data([0, 3, 4]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("delete.txt").path))
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: mode.path)[.posixPermissions] as? Int, 0o751)
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: link.path), "missing")
+    }
+
+    func testDiscardFilesRejectsChangesMadeAfterConfirmationWasRequested() async throws {
+        let f = try UndoFixture(); try f.initial()
+        try f.write("sample.txt", "discard\n"); try f.write("new.txt", "original\n")
+        let snapshot = try await f.repo.load()
+        try f.write("new.txt", "changed again\n")
+        do {
+            _ = try await f.repo.discardFiles(snapshot.files, expectedFingerprint: snapshot.fingerprint)
+            XCTFail("discarded changes added after the preview")
+        } catch FolmiError.staleSnapshot {}
+        XCTAssertEqual(try f.read("sample.txt"), "discard\n")
+        XCTAssertEqual(try f.read("new.txt"), "changed again\n")
+    }
+
+    func testDiscardLargeBinaryAndUndoRestoresIt() async throws {
+        let f = try UndoFixture()
+        try f.initial("asset.bin", "small baseline\n")
+        let path = f.directory.appendingPathComponent("asset.bin")
+        let size = 33 * 1024 * 1024
+        let handle = try FileHandle(forWritingTo: path)
+        try handle.truncate(atOffset: UInt64(size))
+        try handle.seek(toOffset: 0)
+        try handle.write(contentsOf: Data([7, 0, 9]))
+        try handle.close()
+        let snapshot = try await f.repo.load()
+        let undo = try await f.repo.discardFiles(snapshot.files, expectedFingerprint: snapshot.fingerprint)
+        XCTAssertEqual(try f.read("asset.bin"), "small baseline\n")
+        let redo = try await f.repo.undo(undo)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: path.path)[.size] as? Int, size)
+        let restored = try FileHandle(forReadingFrom: path)
+        XCTAssertEqual(try restored.read(upToCount: 3), Data([7, 0, 9]))
+        try restored.close()
+        _ = try await f.repo.undo(redo)
+        XCTAssertEqual(try f.read("asset.bin"), "small baseline\n")
+    }
+
+    func testDiscardWorkingRenameRestoresIndexPathAndUndoRestoresIntentToAdd() async throws {
+        let f = try UndoFixture(); try f.initial()
+        let source = f.directory.appendingPathComponent("sample.txt"), destination = f.directory.appendingPathComponent("moved.txt")
+        try FileManager.default.moveItem(at: source, to: destination)
+        try f.git(["add", "-N", "moved.txt"])
+        let before = try await f.repo.load()
+        let rename = try XCTUnwrap(before.files.first)
+        XCTAssertEqual(rename.worktreeCode, "R")
+        let undo = try await f.repo.discardFiles([rename], expectedFingerprint: before.fingerprint)
+        let discarded = try await f.repo.load()
+        XCTAssertTrue(discarded.files.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        let redo = try await f.repo.undo(undo)
+        let restored = try await f.repo.load()
+        XCTAssertEqual(restored.files, before.files)
+        _ = try await f.repo.undo(redo)
+        let redone = try await f.repo.load()
+        XCTAssertTrue(redone.files.isEmpty)
+    }
+
+    func testStopTrackingAddsLiteralIgnoreRuleAndUndoPreservesWorktree() async throws {
+        let f = try UndoFixture(), path = "cache[1].txt"
+        try f.initial(path, "committed\n")
+        try f.write(path, "in progress\n")
+        let before = try await f.repo.load()
+        let undo = try await f.repo.stopTracking(path, expectedFingerprint: before.fingerprint)
+        let after = try await f.repo.load()
+        XCTAssertEqual(after.files.first { $0.path == path }?.indexCode, "D")
+        XCTAssertEqual(try f.read(path), "in progress\n")
+        let ignored = ["ls-files", "--others", "--ignored", "--exclude-standard", "--", path]
+        XCTAssertEqual(try f.git(ignored), path + "\n")
+        let redo = try await f.repo.undo(undo)
+        XCTAssertEqual(try f.index(path), "committed\n")
+        XCTAssertEqual(try f.read(path), "in progress\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent(".gitignore").path))
+        _ = try await f.repo.undo(redo)
+        XCTAssertEqual(try f.git(ignored), path + "\n")
+    }
+
+    func testSwitchCreatesTrackingBranchAndUndoRestoresPreviousPosition() async throws {
+        let f = try UndoFixture(); try f.initial()
+        try f.git(["remote", "add", "origin", "unused-local-remote"])
+        try f.git(["update-ref", "refs/remotes/origin/team/topic", "HEAD"])
+        try f.git(["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/team/topic"])
+        try f.write("sample.txt", "local work\n")
+        let before = try await f.repo.load()
+        XCTAssertEqual(before.remoteBranches?.map(\.id), ["origin/team/topic"])
+        let remote = try XCTUnwrap(before.remoteBranches?.first)
+        let plan = try await f.repo.prepareBranchSwitch(.remote(remote, name: remote.name), expectedFingerprint: before.fingerprint)
+        XCTAssertNil(plan.blocker)
+        let undo = try await f.repo.checkout(plan)
+        let after = try await f.repo.load()
+        XCTAssertEqual(after.branch, "team/topic")
+        XCTAssertEqual(after.upstream, remote.id)
+        XCTAssertEqual(try f.read("sample.txt"), "local work\n")
+        let redo = try await f.repo.undo(undo)
+        let restored = try await f.repo.load()
+        XCTAssertEqual(restored.branch, "main")
+        XCTAssertEqual(restored.branches, ["main"])
+        _ = try await f.repo.undo(redo)
+        let redone = try await f.repo.load()
+        XCTAssertEqual(redone.upstream, remote.id)
+    }
+
+    func testBranchSwitchPreviewsConflictAndWorksOnceChangesAreStashed() async throws {
+        let f = try UndoFixture(); try f.initial()
+        try f.git(["switch", "-c", "topic"])
+        try f.write("sample.txt", "topic\n"); try f.git(["commit", "-am", "Topic"])
+        try f.git(["switch", "main"]); try f.write("sample.txt", "draft\n")
+        let before = try await f.repo.load()
+        let plan = try await f.repo.prepareBranchSwitch(.local("topic"), expectedFingerprint: before.fingerprint)
+        XCTAssertTrue(plan.canStash)
+        XCTAssertTrue(plan.blocker?.contains("sample.txt") == true)
+        XCTAssertEqual(try f.read("sample.txt"), "draft\n")
+        let entry = try await f.repo.stashAll(message: "draft", expectedFingerprint: before.fingerprint)
+        let clean = try await f.repo.load()
+        let switchUndo = try await f.repo.checkout(plan, afterStashing: clean.fingerprint)
+        XCTAssertEqual(try f.read("sample.txt"), "topic\n")
+        _ = try await f.repo.undo(switchUndo)
+        _ = try await f.repo.undo(.stash(.pop(object: entry.id)))
+        XCTAssertEqual(try f.read("sample.txt"), "draft\n")
+    }
+
+    func testHistorySearchFindsOlderCommitBodiesInOtherBranches() async throws {
+        let f = try UndoFixture(); try f.initial()
+        try f.git(["switch", "-c", "topic"])
+        try f.git(["commit", "--allow-empty", "-m", "Details", "-m", "Rare [TOKEN]"])
+        try f.git(["commit", "--allow-empty", "-m", "Newer tip"])
+        try f.git(["switch", "main"])
+        let initial = try await f.repo.history(limit: 1)
+        XCTAssertFalse(initial.contains { $0.subject == "Details" })
+        let all = try await f.repo.history(limit: 1, search: "[token]")
+        XCTAssertEqual(all.map(\.subject), ["Details"])
+        let current = try await f.repo.history(scope: .currentBranch, search: "[token]")
+        XCTAssertTrue(current.isEmpty)
+    }
+
     func testDiscardHunkRemovesOnlyThatHunkAndUndoBringsItBack() async throws {
         let f = try UndoFixture()
         try f.initial("sample.txt", (1...30).map { "line \($0)" }.joined(separator: "\n") + "\n")

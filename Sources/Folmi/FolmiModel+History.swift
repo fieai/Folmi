@@ -14,10 +14,11 @@ extension FolmiModel {
         defer { if historyRequest == request { historyLoading = false } }
         do {
             let requestedLimit = historyRequestedLimit
-            let loaded = try await repository.history(limit: requestedLimit + 1, path: historyPath)
+            let path = historyPath, scope = historyScope, search = historySearch
+            let loaded = try await repository.history(limit: requestedLimit + 1, path: path, scope: scope, search: search)
             let commits = Array(loaded.prefix(requestedLimit))
-            let rows = await Task.detached(priority: .userInitiated) { CommitGraph.layout(commits) }.value
-            guard historyRequest == request, repositoryURL == root else { return }
+            let rows = path != nil || search != nil ? [] : await Task.detached(priority: .userInitiated) { CommitGraph.layout(commits) }.value
+            guard historyRequest == request, repositoryURL == root, historyPath == path, historyScope == scope, historySearch == search else { return }
             history = commits; historyRows = rows
             historyHasMore = loaded.count > requestedLimit
             let keep = selectedCommitID.flatMap { id in commits.contains { $0.id == id } ? id : nil }
@@ -25,6 +26,22 @@ extension FolmiModel {
                 if target != selectedCommitID || commitDetail == nil { await selectCommit(target) }
             } else { selectedCommitID = nil; commitDetail = nil; selectedCommitFile = nil; commitFileDiff = nil }
         } catch { if historyRequest == request { report(error, title: "读取提交历史失败") } }
+    }
+
+    func setHistoryScope(_ scope: GitRepository.HistoryScope) {
+        guard scope != historyScope else { return }
+        historyScope = scope
+        historyRequestedLimit = Self.historyLimit
+        Task { await loadHistory() }
+    }
+
+    func searchHistory(_ query: String) {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let search = term.isEmpty ? nil : term
+        guard historySearch != search else { return }
+        historySearch = search
+        historyRequestedLimit = Self.historyLimit
+        Task { await loadHistory() }
     }
 
     /// Expands the current graph without changing the selected commit.

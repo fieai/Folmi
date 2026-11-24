@@ -91,13 +91,16 @@ final class StashFlowTests: XCTestCase {
         try await eventually("放回出冲突") { !model.busy && model.snapshot?.files.contains(where: \.isConflict) == true }
         XCTAssertNotNil(model.conflictedRestores[model.repositoryURL?.path ?? ""])
         XCTAssertTrue(FileManager.default.fileExists(atPath: demo.root.appendingPathComponent("Notes.txt").path))
+        let unrelated = demo.root.appendingPathComponent("docs/changes.md")
+        try "另一份工作草稿\n".write(to: unrelated, atomically: true, encoding: .utf8)
         model.errorMessage = nil
 
         model.undoConflictedRestore()
-        try await eventually("撤销放回") { !model.busy && model.snapshot?.files.isEmpty == true }
+        try await eventually("撤销放回") { !model.busy && model.snapshot?.files.map(\.path) == ["docs/changes.md"] }
         XCTAssertNil(model.errorMessage)
         XCTAssertEqual(model.snapshot?.head, head)
         XCTAssertEqual(try String(contentsOf: greeting, encoding: .utf8), committed)
+        XCTAssertEqual(try String(contentsOf: unrelated, encoding: .utf8), "另一份工作草稿\n")
         XCTAssertFalse(FileManager.default.fileExists(atPath: demo.root.appendingPathComponent("Notes.txt").path), "放回带出来的未跟踪文件也拿掉")
         let stashes = try await repository.stashes()
         XCTAssertEqual(stashes.count, 1, "收起的改动还在列表里")

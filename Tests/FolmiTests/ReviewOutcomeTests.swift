@@ -152,14 +152,14 @@ final class ReviewOutcomeTests: XCTestCase {
             return FileDiff(file: file, area: area, rawPatch: "", hunks: [hunk], fingerprint: "f", isPartialSupported: partial, notice: nil)
         }
         let working = diff(.working), staged = diff(.staged)
-        XCTAssertEqual(ReviewActionNames.make(working, hunk: working.hunks[0]), .init(accept: "收下这处并暂存", reject: "丢弃这处"))
+        XCTAssertEqual(ReviewActionNames.make(working, hunk: working.hunks[0]), .init(accept: "收下这处并暂存", reject: "丢弃这处…"))
         XCTAssertEqual(ReviewActionNames.make(working, hunk: working.hunks[0], selected: 2).accept, "收下选中的 2 行")
         XCTAssertEqual(ReviewActionNames.make(staged, hunk: staged.hunks[0]), .init(accept: "确认这处", reject: "退回工作区"))
         XCTAssertEqual(ReviewActionNames.make(staged, hunk: nil), .init(accept: "确认整个文件", reject: "整个文件退回工作区"))
         let whole = diff(.working, partial: false)
         XCTAssertEqual(ReviewActionNames.make(whole, hunk: whole.hunks[0]).accept, "收下整个文件", "no silent widening to the whole file")
-        XCTAssertEqual(ReviewActionNames.make(working, hunk: nil), .init(accept: "收下整个文件", reject: nil))
+        XCTAssertEqual(ReviewActionNames.make(working, hunk: nil), .init(accept: "收下整个文件", reject: "丢弃整个文件的改动…"))
         let new = diff(.working, untracked: true)
-        XCTAssertEqual(ReviewActionNames.make(new, hunk: new.hunks[0]), .init(accept: "收下整个文件", reject: "删除新文件"))
+        XCTAssertEqual(ReviewActionNames.make(new, hunk: new.hunks[0]), .init(accept: "收下整个文件", reject: "删除新文件…"))
     }
 }

@@ -7,13 +7,17 @@ public struct FileChange: Identifiable, Hashable, Sendable, Codable {
     public let originalPath: String?
     public let indexCode: String
     public let worktreeCode: String
+    private let submodule: Bool?
     public var id: String { path }
     public var hasStaged: Bool { ![".", " ", "?"].contains(indexCode) }
     public var hasWorking: Bool { isUntracked || ![".", " "].contains(worktreeCode) }
     public var isUntracked: Bool { indexCode == "?" }
+    public var isNewInWorktree: Bool { isUntracked || worktreeCode == "A" }
+    public var isSubmodule: Bool { submodule == true }
     public var isConflict: Bool { indexCode == "U" || worktreeCode == "U" || ["AA", "DD"].contains(indexCode + worktreeCode) }
-    public init(path: String, originalPath: String? = nil, indexCode: String, worktreeCode: String) {
+    public init(path: String, originalPath: String? = nil, indexCode: String, worktreeCode: String, isSubmodule: Bool = false) {
         self.path = path; self.originalPath = originalPath; self.indexCode = indexCode; self.worktreeCode = worktreeCode
+        self.submodule = isSubmodule ? true : nil
     }
 }
 
@@ -62,6 +66,14 @@ public struct CommitSummary: Identifiable, Sendable, Codable {
     }
 }
 
+public struct RemoteBranch: Identifiable, Sendable, Equatable, Codable {
+    public let name: String
+    public let remote: String
+    let object: String
+    public var id: String { remote + "/" + name }
+    var ref: String { "refs/remotes/" + id }
+}
+
 public struct RepositorySnapshot: Sendable, Codable {
     public let root: URL
     public let branch: String
@@ -70,6 +82,8 @@ public struct RepositorySnapshot: Sendable, Codable {
     public let commits: [CommitSummary]
     public let branches: [String]
     public let remotes: [String]
+    /// Nil in cached snapshots made before the remote branch list was recorded.
+    public let remoteBranches: [RemoteBranch]?
     public let fingerprint: String
     /// The branch's upstream and how far ahead / behind it is; nil without an upstream.
     public let upstream: String?
@@ -83,9 +97,11 @@ public struct RepositorySnapshot: Sendable, Codable {
     /// How many stashes (临时收起的改动) the repository holds; nil in snapshots saved before it was recorded.
     public let stashCount: Int?
     public init(root: URL, branch: String, head: String?, files: [FileChange], commits: [CommitSummary], branches: [String], remotes: [String], fingerprint: String,
-                upstream: String? = nil, ahead: Int? = nil, behind: Int? = nil, unpushed: Int? = nil, operation: RepositoryOperation? = nil, stashCount: Int? = nil) {
+                upstream: String? = nil, ahead: Int? = nil, behind: Int? = nil, unpushed: Int? = nil, operation: RepositoryOperation? = nil,
+                stashCount: Int? = nil, remoteBranches: [RemoteBranch]? = nil) {
         self.root = root; self.branch = branch; self.head = head; self.files = files; self.commits = commits; self.branches = branches; self.remotes = remotes; self.fingerprint = fingerprint
         self.upstream = upstream; self.ahead = ahead; self.behind = behind; self.unpushed = unpushed ?? ahead; self.operation = operation; self.stashCount = stashCount
+        self.remoteBranches = remoteBranches
     }
 }
 

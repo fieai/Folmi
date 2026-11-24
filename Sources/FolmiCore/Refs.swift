@@ -5,7 +5,9 @@ import Foundation
 extension GitRepository {
     func validBranchName(_ name: String, git: GitProcess) throws {
         let check = try git.run(["check-ref-format", "--branch", name], allowFailure: true)
-        guard check.status == 0, !name.hasPrefix("-") else { throw FolmiError.unsupported("「\(name)」不是有效的分支名。") }
+        guard check.status == 0, check.text == name + "\n", !name.hasPrefix("-") else {
+            throw FolmiError.unsupported("「\(name)」不是有效的分支名。")
+        }
     }
 
     func refObject(_ ref: String, git: GitProcess) throws -> String? {
@@ -86,14 +88,60 @@ extension GitRepository {
 
     /// Adds `pattern` as the last line of the root `.gitignore`, creating it when needed. Tracked files stay tracked
     /// (git keeps following them); the caller says so.
-    public func addToGitignore(_ pattern: String) async throws {
+    public func addToGitignore(_ pattern: String, expectedFingerprint: String? = nil) async throws {
+        if let expectedFingerprint { _ = try require(expectedFingerprint) }
+        try writeGitignore(pattern)
+    }
+
+    private func writeGitignore(_ pattern: String) throws {
         let root = try runner().directory
         let current = try Self.readWorktreeFile(".gitignore", root: root)
+        guard !pattern.contains(where: \.isNewline) else { throw FolmiError.unsupported("文件名含有换行，无法添加到 .gitignore。") }
+        guard current.linkDestination == nil else { throw FolmiError.unsupported(".gitignore 是符号链接，不能添加忽略规则。") }
         var text = current.data.flatMap { UTF8Text.decode($0) } ?? ""
+        if let data = current.data, UTF8Text.decode(data) == nil {
+            throw FolmiError.unsupported(".gitignore 不是 UTF-8 文本，无法添加忽略规则。")
+        }
         if text.components(separatedBy: .newlines).contains(pattern) { return }
         if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
         text += pattern + "\n"
         try Self.writeWorktreeFile(WorktreeFile(path: ".gitignore", data: Data(text.utf8), permissions: current.permissions ?? 0o644), root: root)
+    }
+
+    public func stopTrackingBlocker(_ path: String) async throws -> String? {
+        try stopTrackingBlocker(path, git: runner())
+    }
+
+    private func stopTrackingBlocker(_ path: String, git: GitProcess) throws -> String? {
+        let file = try Self.contained(path, root: git.directory)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
+        let type = attributes?[.type] as? FileAttributeType
+        guard type == .typeRegular || type == .typeSymbolicLink else { return "本机需要有这份文件。" }
+        let result = try git.run(["rm", "--dry-run", "--cached", "--", path], allowFailure: true)
+        guard result.status == 0 else { return "Git 无法保留当前的暂存版本。请先取消这个文件的暂存。" }
+        return nil
+    }
+
+    /// Records the deletion in the index and adds an ignore rule while leaving the file on disk.
+    public func stopTracking(_ path: String, expectedFingerprint: String) async throws -> UndoStep {
+        _ = try require(expectedFingerprint)
+        let git = try runner()
+        if let blocker = try stopTrackingBlocker(path, git: git) { throw FolmiError.unsupported(blocker) }
+        let index = try await captureIndex([path])
+        let ignore = try Self.readWorktreeFile(".gitignore", root: git.directory)
+        _ = try require(expectedFingerprint)
+        _ = try git.run(["rm", "--cached", "--", path])
+        do {
+            try writeGitignore(Self.ignorePattern(for: path, folder: false))
+            let ignored = try git.run(["check-ignore", "--no-index", "--quiet", "--", "./" + path],
+                                      allowFailure: true, literalPathspecs: false)
+            guard ignored.status == 0 else { throw FolmiError.unsupported("这个文件被其他规则重新纳入跟踪。请检查目录里的 .gitignore。") }
+        } catch {
+            if case .index(let entries) = index { try restoreIndex(entries) }
+            if try Self.readWorktreeFile(".gitignore", root: git.directory) != ignore { try Self.writeWorktreeFile(ignore, root: git.directory) }
+            throw error
+        }
+        return .group([index, .worktree([ignore])])
     }
 }
 

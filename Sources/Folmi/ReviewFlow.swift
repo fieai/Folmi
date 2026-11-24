@@ -21,6 +21,13 @@ struct RecentAccept: Equatable {
     let scope: String
 }
 
+struct DiscardPrompt {
+    let title: String
+    let message: String
+    let action: String
+    let confirm: () -> Void
+}
+
 /// The commit message the app writes while the user reviews.
 enum CommitSuggestion: Equatable {
     case idle
@@ -70,17 +77,21 @@ extension FolmiModel {
         guard !busy, let repository, let entry = (undo ? undoStacks : redoStacks)[key]?.last else {
             NSSound.beep(); return
         }
+        if case .branchSwitch = entry.step, let blocker = branchSwitchBlocker {
+            errorMessage = blocker
+            return
+        }
         mutate(undo ? "撤销：\(entry.title)" : "重做：\(entry.title)") { [weak self] in
             if let expected = entry.expected, try await repository.recapture(expected) != expected {
                 throw FolmiFailure(message: "「\(entry.title)」之后这些文件又被改过（终端、编辑器或其他工具），撤销会覆盖那些改动，所以没有执行：\n"
                                        + entry.step.paths.joined(separator: "\n") + "\n\n这一步还留着：处理好这些文件后可以再撤销一次。")
             }
             let inverse = try await repository.undo(entry.step)
+            let expected = try? await repository.recapture(inverse)
             await MainActor.run {
                 guard let self else { return }
                 if undo { self.undoStacks[key]?.removeAll { $0.id == entry.id } } else { self.redoStacks[key]?.removeAll { $0.id == entry.id } }
-                // Right after this, the paths hold exactly what `entry.step` recorded.
-                let next = UndoEntry(title: entry.title, step: inverse, expected: entry.step, seenKeys: entry.seenKeys)
+                let next = UndoEntry(title: entry.title, step: inverse, expected: expected, seenKeys: entry.seenKeys)
                 if undo { self.redoStacks[key, default: []].append(next) } else { self.undoStacks[key, default: []].append(next) }
                 self.syncUndoLabels()
                 if !entry.seenKeys.isEmpty {
@@ -104,6 +115,18 @@ extension FolmiModel {
             let output = try await operation()
             let after = try? await repository.recapture(step)
             await MainActor.run { self?.pushUndo(title, step, expected: after) }
+            return output
+        }, succeeded: succeeded, after: after)
+    }
+
+    /// For operations that capture their undo inside the same repository call as the change.
+    func mutateUndoable(_ title: String, succeeded: (() -> Void)? = nil, after: (() -> Void)? = nil,
+                        operation: @escaping () async throws -> (UndoStep, String)) {
+        guard let repository else { return }
+        mutate(title, operation: { [weak self] in
+            let (step, output) = try await operation()
+            let expected = try? await repository.recapture(step)
+            self?.pushUndo(title, step, expected: expected)
             return output
         }, succeeded: succeeded, after: after)
     }
@@ -181,12 +204,17 @@ extension FolmiModel {
             self.markFileSeen(added)
         })
     }
-    /// ⌫ on a whole file: a new file is removed (⌘Z writes it back), a staged one is unstaged; other files are
-    /// rejected hunk by hunk.
-    func rejectFile(_ diff: FileDiff) {
-        if diff.area == .staged { unstageFile(diff.file) { [weak self] in self?.recordDaily(.rejected); self?.recordFileDecision(.reject, diff) } }
-        else if diff.file.isUntracked { rejectUntracked(diff.file, diff: diff) }
-        else { NSSound.beep() }
+    /// ⌫ on a whole file: a staged file goes back to the work tree; a work-tree file needs confirmation.
+    func rejectFile(_ diff: FileDiff, succeeded: (() -> Void)? = nil) {
+        if diff.area == .staged {
+            unstageFile(diff.file) { [weak self] in
+                self?.recordDaily(.rejected)
+                self?.recordFileDecision(.reject, diff)
+                succeeded?()
+            }
+        } else {
+            askDiscardFiles([diff.file], diff: diff, succeeded: succeeded)
+        }
     }
     var reviewTally: ReviewTally { ReviewTally.make(allChanges, ledger: reviewLedger, keys: ReviewKeyCache.keys) }
 
@@ -244,41 +272,85 @@ extension FolmiModel {
         }
         apply(hunk, diff: diff, selected: selected) { [weak self] in decided(); self?.acceptedReview(diff, scope: scope, undoable: true) { self?.markSeen(keys: keys) } }
     }
-    /// ⌫ on the review page: this hunk is not wanted. A work-tree hunk is taken out of the file; a staged one goes
-    /// back to the work tree only (unstaged), so nothing written is lost without ⌘Z.
-    func rejectHunk(_ hunk: DiffHunk, in diff: FileDiff) {
+    func rejectSelection(_ hunk: DiffHunk, in diff: FileDiff, confirm: Bool = false, succeeded: (() -> Void)? = nil) {
+        let selected = allChangesSelected(in: hunk, of: diff)
+        let lines = selected.isEmpty ? nil : selected
+        if confirm, diff.area == .working {
+            askDiscardHunk(hunk, in: diff, selected: lines, succeeded: succeeded)
+        } else {
+            rejectHunk(hunk, in: diff, selected: lines, succeeded: succeeded)
+        }
+    }
+
+    /// A staged hunk or selection goes back to the work tree, preserving its contents.
+    func rejectHunk(_ hunk: DiffHunk, in diff: FileDiff, selected: Set<Int>? = nil, succeeded: (() -> Void)? = nil) {
         guard let repository else { return }
         let path = diff.file.path
+        let lines = selected.map { ids in hunk.lines.filter { ids.contains($0.id) } } ?? hunk.lines
         let counted: () -> Void = { [weak self] in
             self?.recordDaily(.rejected)
-            self?.recordDecision(.reject, scope: .hunk, path: path, lines: hunk.lines)
+            self?.recordDecision(.reject, scope: selected == nil ? .hunk : .lines, path: path, lines: lines)
+            succeeded?()
         }
         if diff.area == .staged {
             guard diff.isPartialSupported else { unstageFile(diff.file, succeeded: counted); return }
             mutateUndoable("取消暂存 \(path)", capture: { try await repository.captureIndex([path]) }, succeeded: counted) {
-                try await repository.apply(diff: diff, hunkID: hunk.id, selectedLineIDs: nil)
+                try await repository.apply(diff: diff, hunkID: hunk.id, selectedLineIDs: selected)
                 return "\(path)\n\(hunk.header)"
             }
             return
         }
-        if diff.file.isUntracked { rejectUntracked(diff.file, diff: diff); return }
-        mutate("丢弃 \(path) 的一处改动", operation: { [weak self] in
-            let step = try await repository.discard(diff: diff, hunkID: hunk.id)
-            let after = try? await repository.recapture(step)
-            await MainActor.run { self?.pushUndo("丢弃 \(path) 的一处改动", step, expected: after) }
-            return "\(path)\n\(hunk.header)"
-        }, succeeded: counted)
+        if !diff.isPartialSupported { askDiscardFiles([diff.file], diff: diff, succeeded: succeeded); return }
+        let scope = selected.map { "选中的 \($0.count) 行" } ?? "一处改动"
+        mutateUndoable("丢弃 \(path) 的\(scope)", succeeded: counted) {
+            let step = try await repository.discard(diff: diff, hunkID: hunk.id, selectedLineIDs: selected)
+            return (step, "\(path)\n\(hunk.header)")
+        }
     }
-    /// A new file nobody wants: it is removed, and ⌘Z writes it back.
-    func rejectUntracked(_ file: FileChange, diff: FileDiff? = nil) {
-        guard let repository, let root = repositoryURL, file.isUntracked else { return }
-        mutateUndoable("删除新文件 \(file.path)", capture: { try await repository.captureWorktree([file.path]) },
-                       succeeded: { [weak self] in
-                           self?.recordDaily(.rejected)
-                           self?.recordDecision(.reject, scope: .file, path: file.path, lines: diff?.hunks.flatMap(\.lines) ?? [])
-                       }) {
-            try FileManager.default.removeItem(at: root.appendingPathComponent(file.path))
-            return file.path
+
+    func discardBlocker(_ files: [FileChange]) -> String? {
+        if files.contains(where: \.isConflict) { return "先解决冲突，再丢弃改动。" }
+        if files.contains(where: \.isSubmodule) { return "请在子模块里处理这些改动。" }
+        let paths = Set(files.flatMap { [$0.path] + ($0.worktreeCode == "R" ? [$0.originalPath].compactMap { $0 } : []) })
+        if editorWorkspace?.documents.contains(where: { $0.isDirty && paths.contains($0.id) }) == true {
+            return "编辑器里还有没保存的改动，先保存。"
+        }
+        return nil
+    }
+
+    func askDiscardHunk(_ hunk: DiffHunk, in diff: FileDiff, selected: Set<Int>? = nil, succeeded: (() -> Void)? = nil) {
+        guard !busy, diff.area == .working, discardBlocker([diff.file]) == nil else { return }
+        guard diff.isPartialSupported else { askDiscardFiles([diff.file], diff: diff, succeeded: succeeded); return }
+        let root = repositoryURL
+        let scope = selected.map { "选中的 \($0.count) 行" } ?? "这一处改动"
+        discardPrompt = DiscardPrompt(title: "丢弃\(scope)？", message: "\(diff.file.path)\n\n⌥⌘Z 可撤销。", action: "丢弃") { [weak self] in
+            guard let self, self.repositoryURL == root, self.discardBlocker([diff.file]) == nil else { return }
+            self.rejectHunk(hunk, in: diff, selected: selected, succeeded: succeeded)
+        }
+    }
+
+    func askDiscardFiles(_ files: [FileChange], diff: FileDiff? = nil, succeeded: (() -> Void)? = nil) {
+        guard !busy, !files.isEmpty, let repository, let state = snapshot, discardBlocker(files) == nil else { return }
+        let new = files.filter(\.isNewInWorktree).count
+        let action = new == files.count ? "删除新文件" : "丢弃改动"
+        let title = files.count == 1 ? files[0].path : "\(files.count) 个文件"
+        var message = files.prefix(6).map(\.path).joined(separator: "\n")
+        if files.count > 6 { message += "\n另有 \(files.count - 6) 个文件" }
+        if new > 0 { message += "\n\n会删除 \(new) 个新文件。" }
+        if new < files.count { message += "\n\n已跟踪文件会恢复到暂存区里的样子。" }
+        message += "\n\n⌥⌘Z 可撤销。"
+        discardPrompt = DiscardPrompt(title: "\(action)？", message: message, action: action) { [weak self] in
+            guard let self, self.repository === repository, self.discardBlocker(files) == nil else { return }
+            self.mutateUndoable("\(action) · \(title)", succeeded: { [weak self] in
+                for file in files {
+                    self?.recordDaily(.rejected)
+                    self?.recordDecision(.reject, scope: .file, path: file.path, lines: diff?.hunks.flatMap(\.lines) ?? [])
+                }
+                succeeded?()
+            }) {
+                let step = try await repository.discardFiles(files, expectedFingerprint: state.fingerprint)
+                return (step, files.map(\.path).joined(separator: "\n"))
+            }
         }
     }
 

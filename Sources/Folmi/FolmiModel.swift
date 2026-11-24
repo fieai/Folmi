@@ -66,9 +66,8 @@ final class FolmiModel {
     var showPull = false
     var showStashes = false
     var stashEntries: [StashEntry] = []
-    var stashFileLists: [String: [String]] = [:]
-    /// Per stash, the files that would conflict if it were brought back onto the current commit (see `stashConflicts`).
-    var stashConflictLists: [String: [String]] = [:]
+    var stashPlans: [String: StashRestorePlan] = [:]
+    @ObservationIgnored var stashRequest = UUID()
     /// The pull sheet's state: what a pull would do (read after a fresh fetch), the chosen way, why it cannot run.
     var pullPlan: GitRepository.PullPlan?
     var pullKind: GitRepository.PullKind = .fastForward
@@ -174,6 +173,8 @@ final class FolmiModel {
     var historyLoading = false
     var historyRequestedLimit = FolmiModel.historyLimit
     var historyHasMore = false
+    var historyScope: GitRepository.HistoryScope = .allBranches
+    var historySearch: String?
     var selectedCommitID: String?
     var commitDetail: CommitDetail?
     var selectedCommitFile: String?
@@ -313,6 +314,8 @@ final class FolmiModel {
     var readerCommentDraft: ReaderCommentDraft?
     /// A branch or tag action waiting for a name or a yes.
     var refPrompt: RefPrompt?
+    var branchSwitchPrompt: BranchSwitchPlan?
+    var discardPrompt: DiscardPrompt?
     /// The right card shows the AI tab instead of the selected terminal.
     var aiTabSelected = false
     /// The AI tab's conversation with Claude or Codex (AgentSession.swift), its draft and attached context.
@@ -717,6 +720,9 @@ final class FolmiModel {
         reviewFileJump = nil; reviewBrowsingFileKey = nil
         historyRequest = UUID(); commitRequest = UUID(); history = []; historyRows = []
         historyRequestedLimit = Self.historyLimit; historyHasMore = false; historyPath = nil
+        historyScope = .allBranches; historySearch = nil
+        refPrompt = nil; branchSwitchPrompt = nil; discardPrompt = nil
+        stashRequest = UUID(); stashEntries = []; stashPlans = [:]
         showCommitComposer = false
         selectedCommitID = nil; commitDetail = nil; selectedCommitFile = nil; commitFileDiff = nil; compareBaseID = nil
         loadReviewLedger(); syncUndoLabels()
@@ -801,7 +807,8 @@ final class FolmiModel {
             if loaded != nil, repositoryURL == root { noteStatusDuration(await repository.lastStatusDuration) }
             guard let next = loaded, repositoryURL == root, !busy, let current = snapshot else { return }
             guard next.fingerprint != current.fingerprint || next.branch != current.branch || next.head != current.head ||
-                  next.branches != current.branches || next.remotes != current.remotes || next.unpushed != current.unpushed else { return }
+                  next.branches != current.branches || next.remotes != current.remotes || next.remoteBranches != current.remoteBranches ||
+                  next.stashCount != current.stashCount || next.unpushed != current.unpushed else { return }
             let pathsChanged = Set(next.files.map(\.path)) != Set(current.files.map(\.path))
             let listInput = await ChangeListInput.prepare(next)
             guard repositoryURL == root, !busy, snapshot?.fingerprint == current.fingerprint else { return }
@@ -818,7 +825,8 @@ final class FolmiModel {
             scheduleReaderPrefetch()
             await updateDiff(keepingSelection: true)
             if content == .allChanges { await loadAllChanges() }
-            if content == .history, next.head != current.head || next.branches != current.branches { await loadHistory() }
+            if content == .history,
+               next.head != current.head || next.branches != current.branches || next.remoteBranches != current.remoteBranches { await loadHistory() }
             await relocateReviewComments()
             if pathsChanged { await refreshProjectTree() }
             PerfLog.afterFrame { PerfLog.interval("switch.refreshFrame", since: applied) }
@@ -1099,11 +1107,6 @@ final class FolmiModel {
             catch { report(error, title: "读取完整提交消息失败"); amendLast = false }
             busy = false
         }
-    }
-    func checkout(_ branch: String) {
-        guard let repository, let state = snapshot, branch != state.branch else { return }
-        if editorWorkspace?.hasUnsavedChanges == true { report(FolmiFailure(message: "先保存或关闭当前项目中未保存的编辑，再切换分支。"), title: "仍有编辑草稿"); return }
-        mutate("切换分支") { try await repository.checkout(branch: branch, expectedFingerprint: state.fingerprint); return branch }
     }
     /// `after` runs once the status is read again, whether or not the operation succeeded.
     /// `succeeded` runs only when the operation went through, before the reload: review marks and counts wait for

@@ -16,7 +16,9 @@ struct HistoryView: View {
     @State private var continuous = false
     @State private var diffSearchRequest = 0
 
-    private var filteredHistory: [CommitNode] { HistoryFilter.matches(model.history, query: historyQuery) }
+    private var filteredHistory: [CommitNode] {
+        model.historySearch == nil ? HistoryFilter.matches(model.history, query: historyQuery) : model.history
+    }
 
     var body: some View {
         VSplitView {
@@ -79,21 +81,27 @@ struct HistoryView: View {
     private var graphList: some View {
         let filtered = filteredHistory
         // A path filter skips commits, so the lanes would not connect: the graph is left out, as when filtering.
-        let querying = !historyQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let querying = model.historySearch != nil || !historyQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let filtering = querying || model.historyPath != nil
         let lanes = min(HistoryGraphMetrics.maximumLanes, model.historyRows.map(\.width).max() ?? 1)
         let graphWidth = filtering ? 0 : HistoryGraphMetrics.width(lanes: lanes)
-        let rowsByID = Dictionary(uniqueKeysWithValues: zip(model.history.map(\.id), model.historyRows))
+        let rowsByID = filtering ? [:] : Dictionary(uniqueKeysWithValues: zip(model.history.map(\.id), model.historyRows))
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text("\(model.history.count) 个提交").themedFont(.caption.weight(.medium), points: 10)
-                if querying {
+                if let search = model.historySearch {
+                    Text("搜索「\(search)」").themedFont(.caption, points: 10).foregroundStyle(.secondary).lineLimit(1)
+                } else if querying {
                     Text("筛选到 \(filtered.count) 个").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                 }
                 if model.historyLoading { ProgressView().controlSize(.mini) }
                 Spacer()
-                Text(model.historyPath == nil ? "j/k 上下 · 包含本地、远程分支和标签" : "j/k 上下 · 当前分支上改过这个文件的提交（含改名前）")
-                    .themedFont(.caption2, points: 10).foregroundStyle(.secondary)
+                if model.historyPath == nil {
+                    historyScopePicker
+                } else {
+                    Text("当前分支中改过此文件的提交（含改名前）")
+                        .themedFont(.caption2, points: 10).foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal, 12).frame(height: 28)
             if let path = model.historyPath {
@@ -109,8 +117,12 @@ struct HistoryView: View {
             }
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("筛选已加载的提交：编号、标题、作者、分支或标签", text: $historyQuery)
+                TextField("筛选提交，按回车搜索提交说明", text: $historyQuery)
                     .textFieldStyle(.plain)
+                    .onSubmit { model.searchHistory(historyQuery) }
+                    .onChange(of: historyQuery) { _, query in
+                        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { model.searchHistory("") }
+                    }
                     .accessibilityLabel("筛选提交历史").accessibilityIdentifier("history-filter")
                 if !historyQuery.isEmpty {
                     Button { historyQuery = "" } label: { Image(systemName: "xmark.circle.fill") }
@@ -121,10 +133,11 @@ struct HistoryView: View {
                         .disabled(model.historyLoading).accessibilityIdentifier("history-load-more")
                 }
             }.themedFont(.system(size: 12), points: 12).padding(.horizontal, 12).padding(.vertical, 8)
-                .help("筛选当前已加载提交的编号、标题、作者、邮箱及分支/标签名称；继续加载可搜索更早记录。")
+                .help("输入时筛选已加载的提交；按回车搜索所选范围内全部提交的说明。")
             Divider()
             if filtered.isEmpty && !model.historyLoading {
-                Text(querying ? "已加载记录中没有匹配提交，可清除筛选或继续加载" : (model.historyPath != nil ? "当前分支上没有改过这个文件的提交" : "还没有提交记录")).themedFont(.caption, points: 10).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text(historyEmptyMessage(querying: querying)).themedFont(.caption, points: 10).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -172,8 +185,23 @@ struct HistoryView: View {
             }
             return .handled
         }
-        .onAppear { focused = true }
+        .onAppear { focused = true; historyQuery = model.historySearch ?? "" }
         .onChange(of: model.repositoryURL) { _, _ in historyQuery = "" }
+        .onChange(of: model.historyPath) { _, path in if path != nil { historyQuery = model.historySearch ?? "" } }
+    }
+
+    private var historyScopePicker: some View {
+        ThemedSegmented(options: [(GitRepository.HistoryScope.allBranches, "全部分支"), (.currentBranch, "只看当前分支")],
+                        selection: Binding(get: { model.historyScope }, set: model.setHistoryScope))
+            .controlSize(.small)
+            .help("全部分支包含本地分支、远端分支和标签。")
+            .accessibilityIdentifier("history-scope")
+    }
+
+    private func historyEmptyMessage(querying: Bool) -> String {
+        if model.historySearch != nil { return "没有匹配的提交说明。" }
+        if querying { return "已加载的记录里没有匹配项。按回车搜索更早的提交。" }
+        return model.historyPath == nil ? "还没有提交记录。" : "当前分支没有改过这个文件的提交。"
     }
 
     @ViewBuilder private func rowMenu(_ commit: CommitNode) -> some View {

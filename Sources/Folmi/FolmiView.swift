@@ -89,7 +89,25 @@ struct FolmiView: View {
         } message: { plan in
             Text(FolmiModel.mergeMessage(plan))
         }
+        .confirmationDialog(model.branchSwitchPrompt.map { "切换到「\($0.target.name)」" } ?? "",
+                            isPresented: Binding(get: { model.branchSwitchPrompt != nil }, set: { if !$0 { model.branchSwitchPrompt = nil } }),
+                            presenting: model.branchSwitchPrompt) { plan in
+            if plan.canStash {
+                Button("先暂放改动再切换分支") { model.runBranchSwitch(plan, stashing: true) }
+            }
+            Button(plan.canStash ? "取消" : "好", role: .cancel) { model.branchSwitchPrompt = nil }
+        } message: { plan in
+            Text(plan.blocker ?? "")
+        }
         .modifier(RefPrompts(model: model))
+        .alert(model.discardPrompt?.title ?? "",
+               isPresented: Binding(get: { model.discardPrompt != nil }, set: { if !$0 { model.discardPrompt = nil } }),
+               presenting: model.discardPrompt) { prompt in
+            Button(prompt.action, role: .destructive) { model.discardPrompt = nil; prompt.confirm() }
+            Button("取消", role: .cancel) { model.discardPrompt = nil }
+        } message: { prompt in
+            Text(prompt.message)
+        }
         .sheet(item: $model.readerCommentDraft) { draft in
             ReviewCommentComposer(title: "\(draft.reference) · 「\(draft.quote.prefix(40))\(draft.quote.count > 40 ? "…" : "")」",
                                   onAdd: { model.addReaderComment($0, draft: draft) },
@@ -161,6 +179,9 @@ private struct BranchMenu: View {
                     Button(behind > 0 ? "拉取 \(behind) 个提交…" : "检查远端更新…", action: model.preparePull)
                 }
                 if unpushed > 0 || snapshot.upstream != nil { Divider() }
+                Button("新建并切换分支…") { model.refPrompt = .createAndSwitch }
+                    .disabled(model.newBranchBlocker != nil)
+                    .help(model.newBranchBlocker ?? "从当前提交新建分支")
                 ForEach(snapshot.branches, id: \.self) { branch in
                     // A branch checked out in another worktree cannot be checked out here; it opens that folder.
                     if branch != snapshot.branch, let holder = model.worktree(holding: branch) {
@@ -177,7 +198,19 @@ private struct BranchMenu: View {
                                 Text(branch)
                             }
                         }
+                        .disabled(branch != snapshot.branch && model.branchSwitchBlocker != nil)
+                        .help(model.branchSwitchBlocker ?? "切换到 \(branch)")
                     }
+                }
+                if let remotes = snapshot.remoteBranches, !remotes.isEmpty {
+                    Menu("远端分支") {
+                        ForEach(remotes) { remote in
+                            Button(remote.id) { model.trackBranch(remote) }
+                                .help("新建本地跟踪分支并切换过去")
+                        }
+                    }
+                    .disabled(model.branchSwitchBlocker != nil)
+                    .help(model.branchSwitchBlocker ?? "查看已取回的远端分支")
                 }
                 if !model.otherWorktrees.isEmpty {
                     Divider()
@@ -216,7 +249,7 @@ private struct BranchMenu: View {
             .disabled(model.busy)
             .help(unpushed > 0 ? "\(unpushed) 个提交还没推送；点开可推送、拉取或切换分支"
                   : inReview > 0 ? "\(inReview) 个提交已推到 Gerrit 等待评审，合并后会自动消失"
-                  : ((snapshot.behind ?? 0) > 0 ? "远端有 \(snapshot.behind ?? 0) 个新提交；点开可拉取" : "切换本地分支；未提交改动由 Git 检查"))
+                  : ((snapshot.behind ?? 0) > 0 ? "远端有 \(snapshot.behind ?? 0) 个新提交；点开可拉取" : "新建、切换分支或查看远端分支"))
         }
     }
 }

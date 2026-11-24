@@ -1,9 +1,11 @@
+import CryptoKit
+import Darwin
 import Foundation
 
 /// What one undoable action changed, recorded before it ran. Undoing a step restores what it holds and returns the
 /// step that redoes it, so undo and redo are the same operation.
 public enum UndoStep: Sendable, Equatable {
-    /// Work-tree files as they were; `data == nil` means the file did not exist.
+    /// Work-tree files as they were, including links and paths that did not exist.
     case worktree([WorktreeFile])
     /// Index entries as they were; `entry == nil` means the path was not in the index.
     case index([IndexSnapshot])
@@ -19,6 +21,7 @@ public enum UndoStep: Sendable, Equatable {
     case ref(ref: String, restore: String?, current: String?)
     /// Undo renames branch `to` back to `from` (short names).
     case renameBranch(from: String, to: String)
+    case branchSwitch(BranchSwitchUndo)
     /// Undo moves the work-tree file or folder at `current` back to `restore`, never over something already there.
     case move(restore: String, current: String)
     /// `path` was sent to the Trash and sits at `trashed` (an absolute path): undo puts it back. With `trashed == nil`
@@ -37,7 +40,7 @@ public enum UndoStep: Sendable, Equatable {
         case .index(let entries): return entries.map(\.path)
         case .move(let restore, let current): return [restore, current]
         case .trash(let path, _): return [path]
-        case .head, .reset, .stash, .ref, .renameBranch, .remote: return []
+        case .head, .reset, .stash, .ref, .renameBranch, .branchSwitch, .remote: return []
         case .group(let steps): return steps.flatMap(\.paths)
         }
     }
@@ -47,41 +50,92 @@ public struct WorktreeFile: Sendable, Equatable, Codable {
     public let path: String
     public let data: Data?
     public let permissions: Int?
-    public init(path: String, data: Data?, permissions: Int?) { self.path = path; self.data = data; self.permissions = permissions }
+    public let linkDestination: String?
+    // Large undo copies are private and live only as long as their undo entries.
+    fileprivate var backup: WorktreeBackup? = nil
+    private enum CodingKeys: String, CodingKey { case path, data, permissions, linkDestination }
+
+    public init(path: String, data: Data?, permissions: Int?, linkDestination: String? = nil) {
+        self.path = path; self.data = data; self.permissions = permissions; self.linkDestination = linkDestination
+    }
+}
+
+private final class WorktreeBackup: Sendable, Equatable {
+    private let directory: URL
+    private let digest: SHA256Digest
+    var file: URL { directory.appendingPathComponent("contents") }
+
+    init(copying source: URL) throws {
+        let manager = FileManager.default
+        let folder = manager.temporaryDirectory.appendingPathComponent("folmi-undo-" + UUID().uuidString, isDirectory: true)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        do {
+            let copy = folder.appendingPathComponent("contents")
+            try manager.copyItem(at: source, to: copy)
+            guard try manager.attributesOfItem(atPath: copy.path)[.type] as? FileAttributeType == .typeRegular else {
+                throw FolmiError.staleSnapshot
+            }
+            let handle = try FileHandle(forReadingFrom: copy); defer { try? handle.close() }
+            var hash = SHA256()
+            while let chunk = try handle.read(upToCount: 128 * 1024), !chunk.isEmpty { hash.update(data: chunk) }
+            directory = folder
+            digest = hash.finalize()
+        } catch {
+            try? manager.removeItem(at: folder)
+            throw error
+        }
+    }
+
+    deinit { try? FileManager.default.removeItem(at: directory) }
+    static func == (lhs: WorktreeBackup, rhs: WorktreeBackup) -> Bool { lhs.digest == rhs.digest }
 }
 
 public struct IndexSnapshot: Sendable, Equatable {
     public let path: String
     public let mode: String?
     public let object: String?
-    public init(path: String, mode: String?, object: String?) { self.path = path; self.mode = mode; self.object = object }
+    let intentToAdd: Bool
+    public init(path: String, mode: String?, object: String?, intentToAdd: Bool = false) {
+        self.path = path; self.mode = mode; self.object = object; self.intentToAdd = intentToAdd
+    }
 }
 
 extension GitRepository {
     // MARK: Capture
 
-    /// The listed work-tree files as they are now. Files over 32 MiB are refused: undo keeps them in memory.
-    public func captureWorktree(_ paths: [String]) async throws -> UndoStep {
-        let root = try runner().directory
-        return .worktree(try Set(paths).sorted().map { try Self.readWorktreeFile($0, root: root) })
+    /// The listed work-tree files as they are now. Large copies can be kept on disk for session-only undo.
+    public func captureWorktree(_ paths: [String], allowLargeFiles: Bool = false) async throws -> UndoStep {
+        .worktree(try Self.captureWorktreeFiles(paths, root: runner().directory, allowLargeFiles: allowLargeFiles))
     }
 
-    static func readWorktreeFile(_ path: String, root: URL) throws -> WorktreeFile {
-        let url = try contained(path, root: root)
+    private static func captureWorktreeFiles(_ paths: [String], root: URL, allowLargeFiles: Bool) throws -> [WorktreeFile] {
+        try Set(paths).sorted().map { try readWorktreeFile($0, root: root, allowLargeFiles: allowLargeFiles) }
+    }
+
+    static func readWorktreeFile(_ path: String, root: URL, allowLargeFiles: Bool = false) throws -> WorktreeFile {
+        let url = try worktreeFileURL(path, root: root)
         let attributes: [FileAttributeKey: Any]
         do { attributes = try FileManager.default.attributesOfItem(atPath: url.path) }
         catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
             // Only a file that is really not there is recorded as absent: undoing then removes it.
             return WorktreeFile(path: path, data: nil, permissions: nil)
         }
+        if attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+            return WorktreeFile(path: path, data: nil, permissions: nil,
+                                linkDestination: try FileManager.default.destinationOfSymbolicLink(atPath: url.path))
+        }
         // Anything else (no permission, an unreadable folder) is not "absent"; recording it so would delete it on undo.
         guard attributes[.type] as? FileAttributeType == .typeRegular else {
             throw FolmiError.unsupported("\(path) 不是普通文件，无法撤销。")
         }
-        guard ((attributes[.size] as? NSNumber)?.intValue ?? 0) <= 32 * 1024 * 1024 else {
-            throw FolmiError.unsupported("\(path) 超过 32 MiB，无法记录撤销。")
+        let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue
+        if ((attributes[.size] as? NSNumber)?.intValue ?? 0) > 32 * 1024 * 1024 {
+            guard allowLargeFiles else { throw FolmiError.unsupported("\(path) 超过 32 MiB，无法记录撤销。") }
+            var file = WorktreeFile(path: path, data: nil, permissions: mode)
+            file.backup = try WorktreeBackup(copying: url)
+            return file
         }
-        return WorktreeFile(path: path, data: try Data(contentsOf: url), permissions: (attributes[.posixPermissions] as? NSNumber)?.intValue)
+        return WorktreeFile(path: path, data: try Data(contentsOf: url), permissions: mode)
     }
 
     /// The index entries of the listed paths as they are now. Conflicted paths (several stages) are refused.
@@ -97,17 +151,32 @@ extension GitRepository {
             }
             let fields = records[0][..<tab].split(separator: " ")
             guard fields.count == 3, fields[2] == "0" else { throw FolmiError.unsupported("\(path) 处于冲突状态，无法记录撤销。") }
-            result.append(IndexSnapshot(path: path, mode: String(fields[0]), object: String(fields[1])))
+            let object = String(fields[1])
+            result.append(IndexSnapshot(path: path, mode: String(fields[0]), object: object,
+                                        intentToAdd: try Self.isIntentToAdd(path, object: object, git: git)))
         }
         return .index(result)
     }
 
+    private static func isIntentToAdd(_ path: String, object: String, git: GitProcess) throws -> Bool {
+        guard emptyBlobObjects.contains(object) else { return false }
+        let output = try git.run(["ls-files", "--debug", "--", path]).text
+        let flags = output.split(separator: "\n").last?.components(separatedBy: "\tflags: ").last.flatMap { UInt32($0, radix: 16) }
+        return (flags ?? 0) & 0x2000_0000 != 0
+    }
+
+    private static let emptyBlobObjects: Set<String> = {
+        let header = Data("blob 0\0".utf8)
+        return [Insecure.SHA1.hash(data: header).map { String(format: "%02x", $0) }.joined(),
+                SHA256.hash(data: header).map { String(format: "%02x", $0) }.joined()]
+    }()
+
     /// The same paths captured again now, to tell whether anything touched them since a step was recorded.
     public func recapture(_ step: UndoStep) async throws -> UndoStep {
         switch step {
-        case .worktree(let files): return try await captureWorktree(files.map(\.path))
+        case .worktree(let files): return try await captureWorktree(files.map(\.path), allowLargeFiles: true)
         case .index(let entries): return try await captureIndex(entries.map(\.path))
-        case .head, .reset, .stash, .ref, .renameBranch, .move, .trash, .remote: return step
+        case .head, .reset, .stash, .ref, .renameBranch, .branchSwitch, .move, .trash, .remote: return step
         case .group(let steps):
             var result: [UndoStep] = []
             for step in steps { result.append(try await recapture(step)) }
@@ -150,19 +219,21 @@ extension GitRepository {
         switch step {
         case .worktree(let files):
             let root = try runner().directory
-            let current = try files.map { try Self.readWorktreeFile($0.path, root: root) }
-            for file in files { try Self.writeWorktreeFile(file, root: root) }
+            let current = try files.map { try Self.readWorktreeFile($0.path, root: root, allowLargeFiles: true) }
+            var touched: [WorktreeFile] = []
+            do {
+                for (file, previous) in zip(files, current) where file != previous {
+                    touched.append(previous)
+                    try Self.writeWorktreeFile(file, root: root)
+                }
+            } catch {
+                for previous in touched.reversed() { try Self.writeWorktreeFile(previous, root: root) }
+                throw error
+            }
             return .worktree(current)
         case .index(let entries):
             guard case .index(let current) = try await captureIndex(entries.map(\.path)) else { return .index([]) }
-            let git = try runner()
-            for entry in entries {
-                if let mode = entry.mode, let object = entry.object {
-                    _ = try git.run(["update-index", "--add", "--cacheinfo", "\(mode),\(object),\(entry.path)"])
-                } else {
-                    _ = try git.run(["update-index", "--force-remove", "--", entry.path])
-                }
-            }
+            try restoreIndex(entries)
             return .index(current)
         case let .head(restore, current, branch):
             // update-ref checks the old value atomically; an empty old value means "must not exist yet".
@@ -192,6 +263,8 @@ extension GitRepository {
         case let .renameBranch(from, to):
             _ = try runner().run(["branch", "-m", "--", to, from])
             return .renameBranch(from: to, to: from)
+        case .branchSwitch(let change):
+            return try undoBranchSwitch(change)
         case let .move(restore, current):
             let root = try runner().directory
             let source = try Self.contained(current, root: root), destination = try Self.contained(restore, root: root)
@@ -208,26 +281,95 @@ extension GitRepository {
             try Self.move(URL(fileURLWithPath: trashed), to: try Self.contained(path, root: root), named: path)
             return .trash(path: path, trashed: nil)
         case .stash(let change):
-            return try undoStash(change)
+            return try await undoStash(change)
         case let .remote(restore, current):
             return try undoRemote(restore: restore, current: current)
         case .group(let steps):
             var inverses: [UndoStep] = []
-            for step in steps.reversed() { inverses.append(try await undo(step)) }
+            do {
+                for step in steps.reversed() { inverses.append(try await undo(step)) }
+            } catch {
+                for inverse in inverses.reversed() { _ = try await undo(inverse) }
+                throw error
+            }
             return .group(inverses)
         }
     }
 
+    func restoreIndex(_ entries: [IndexSnapshot]) throws {
+        guard !entries.isEmpty else { return }
+        let git = try runner()
+        let format = try git.run(["rev-parse", "--show-object-format"]).text
+        let zero = String(repeating: "0", count: format == "sha256\n" ? 64 : 40)
+        let intents = entries.filter(\.intentToAdd)
+        for intent in intents {
+            let file = try Self.worktreeFileURL(intent.path, root: git.directory)
+            let type = try? FileManager.default.attributesOfItem(atPath: file.path)[.type] as? FileAttributeType
+            guard type == .typeRegular || type == .typeSymbolicLink else {
+                throw FolmiError.unsupported("找不到 \(intent.path)，无法恢复它的预添加状态。")
+            }
+        }
+        var input = ""
+        for entry in entries {
+            input += "0 \(zero)\t\(entry.path)\0"
+            if !entry.intentToAdd, let mode = entry.mode, let object = entry.object { input += "\(mode) \(object)\t\(entry.path)\0" }
+        }
+        _ = try git.run(["update-index", "-z", "--index-info"], input: Data(input.utf8))
+        if !intents.isEmpty {
+            _ = try git.run(["add", "--force", "--intent-to-add", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                            input: Self.pathspecs(intents.map(\.path)))
+        }
+    }
+
     static func writeWorktreeFile(_ file: WorktreeFile, root: URL) throws {
-        let url = try contained(file.path, root: root)
+        let url = try worktreeFileURL(file.path, root: root)
         let manager = FileManager.default
-        guard let data = file.data else {
-            if manager.fileExists(atPath: url.path) { try manager.removeItem(at: url) }
+        if file.linkDestination != nil || file.backup != nil {
+            try makeFolders(for: file.path, root: root)
+            let temporary = url.deletingLastPathComponent().appendingPathComponent(".folmi-" + UUID().uuidString)
+            defer { try? manager.removeItem(at: temporary) }
+            if let destination = file.linkDestination {
+                try manager.createSymbolicLink(atPath: temporary.path, withDestinationPath: destination)
+            } else if let backup = file.backup {
+                try manager.copyItem(at: backup.file, to: temporary)
+                if let mode = file.permissions { try manager.setAttributes([.posixPermissions: mode], ofItemAtPath: temporary.path) }
+            }
+            guard rename(temporary.path, url.path) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
             return
         }
-        try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard let data = file.data else {
+            // A dangling link is still a work-tree entry. Never remove a directory recursively.
+            let attributes: [FileAttributeKey: Any]
+            do { attributes = try manager.attributesOfItem(atPath: url.path) }
+            catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile { return }
+            guard attributes[.type] as? FileAttributeType != .typeDirectory else {
+                throw FolmiError.unsupported("\(file.path) 现在是文件夹，不能把它当作文件移除。")
+            }
+            try manager.removeItem(at: url)
+            return
+        }
+        try makeFolders(for: file.path, root: root)
         try data.write(to: url, options: .atomic)
         if let permissions = file.permissions { try manager.setAttributes([.posixPermissions: permissions], ofItemAtPath: url.path) }
+    }
+
+    private static func worktreeFileURL(_ path: String, root: URL) throws -> URL {
+        let url = try contained(path, root: root)
+        var parent = root
+        for component in path.split(separator: "/").dropLast() {
+            parent.appendPathComponent(String(component))
+            do {
+                let attributes = try FileManager.default.attributesOfItem(atPath: parent.path)
+                guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+                    throw FolmiError.unsupported("\(component) 不是普通文件夹，不能操作其中的文件。")
+                }
+            } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+                break
+            }
+        }
+        return url
     }
 
     /// A path inside the work tree, never through `..` or an absolute path.
@@ -239,6 +381,58 @@ extension GitRepository {
     }
 
     // MARK: Discard
+
+    /// Restores tracked work-tree files from the index and removes the chosen untracked files.
+    /// The index stays as the user reviewed it, even when a file has changes in both areas.
+    public func discardFiles(_ files: [FileChange], expectedFingerprint: String) async throws -> UndoStep {
+        let current = try require(expectedFingerprint)
+        let git = try runner()
+        let available = Set(current.files.filter(\.hasWorking))
+        guard !files.isEmpty, files.allSatisfy(available.contains) else { throw FolmiError.staleSnapshot }
+        guard !files.contains(where: { $0.isConflict || $0.isSubmodule }) else {
+            throw FolmiError.unsupported("先解决冲突。子模块的改动请在子模块里处理。")
+        }
+        let possibleIntents = files.filter { ["A", "R", "C", "D"].contains($0.worktreeCode) }.map(\.path)
+        guard case .index(let entries) = try await captureIndex(possibleIntents) else { throw FolmiError.staleSnapshot }
+        let intents = entries.filter(\.intentToAdd)
+        let intentPaths = Set(intents.map(\.path))
+        if files.contains(where: { intentPaths.contains($0.path) && $0.worktreeCode == "D" }) {
+            throw FolmiError.unsupported("预添加的文件已删除，请先取消预添加。")
+        }
+        var tracked: Set<String> = [], untracked: Set<String> = []
+        for file in files {
+            if file.isUntracked || intentPaths.contains(file.path) { untracked.insert(file.path) }
+            else { tracked.insert(file.path) }
+            if file.worktreeCode == "R", let original = file.originalPath { tracked.insert(original) }
+        }
+        let root = git.directory
+        let before = try Self.captureWorktreeFiles(Array(tracked.union(untracked)), root: root, allowLargeFiles: true)
+        _ = try require(expectedFingerprint)
+        var touched = tracked
+        do {
+            try restoreIndex(intents.map { IndexSnapshot(path: $0.path, mode: nil, object: nil) })
+            if !tracked.isEmpty {
+                _ = try git.run(["restore", "--worktree", "--no-recurse-submodules", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                                input: Self.pathspecs(tracked.sorted()))
+            }
+            for file in before where untracked.contains(file.path) {
+                guard try Self.readWorktreeFile(file.path, root: root, allowLargeFiles: true) == file else { throw FolmiError.staleSnapshot }
+                touched.insert(file.path)
+                try Self.writeWorktreeFile(WorktreeFile(path: file.path, data: nil, permissions: nil), root: root)
+            }
+            // Undo and redo must be able to check the resulting files too.
+            _ = try Self.captureWorktreeFiles(before.map(\.path), root: root, allowLargeFiles: true)
+        } catch {
+            for file in before.reversed() where touched.contains(file.path) {
+                if (try? Self.readWorktreeFile(file.path, root: root, allowLargeFiles: true)) != file {
+                    try Self.writeWorktreeFile(file, root: root)
+                }
+            }
+            try restoreIndex(intents)
+            throw error
+        }
+        return intents.isEmpty ? .worktree(before) : .group([.index(intents), .worktree(before)])
+    }
 
     /// Takes one work-tree hunk (or the chosen lines of it) out of the file, after checking the view is current.
     /// Returns the step that brings it back.

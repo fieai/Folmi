@@ -22,7 +22,8 @@ struct GitProcess {
         environment.forEach { env[$0.key] = $0.value }
         let fastStatus = largeRepository && arguments.first == "status"
         env["GIT_TERMINAL_PROMPT"] = "0"; if !fastStatus { env["GIT_OPTIONAL_LOCKS"] = "0" }
-        env.removeValue(forKey: "GIT_GLOB_PATHSPECS"); env.removeValue(forKey: "GIT_NOGLOB_PATHSPECS"); if literalPathspecs { env["GIT_LITERAL_PATHSPECS"] = "1" }
+        env.removeValue(forKey: "GIT_GLOB_PATHSPECS"); env.removeValue(forKey: "GIT_NOGLOB_PATHSPECS")
+        env["GIT_LITERAL_PATHSPECS"] = literalPathspecs ? "1" : nil
         let execution: ProcessExecutionResult
         do {
             execution = try ProcessExecutor.run(

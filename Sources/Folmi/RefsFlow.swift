@@ -2,24 +2,104 @@ import AppKit
 import FolmiCore
 import SwiftUI
 
-/// A branch or tag action waiting for a name or a confirmation.
+/// A Git action waiting for a name or confirmation.
 enum RefPrompt: Identifiable, Equatable {
+    case createAndSwitch
+    case trackBranch(RemoteBranch)
     case renameBranch(String)
     case deleteBranch(String, ownCommits: Bool)
     case createTag(commit: String)
     case deleteTag(String)
+    case ignoreTracked(path: String, fingerprint: String, blocker: String?)
 
     var id: String {
         switch self {
+        case .createAndSwitch: return "new-branch"
+        case .trackBranch(let remote): return "track:" + remote.id
         case .renameBranch(let name): return "rename:" + name
         case .deleteBranch(let name, _): return "delete:" + name
         case .createTag(let commit): return "tag:" + commit
         case .deleteTag(let name): return "untag:" + name
+        case .ignoreTracked(let path, _, _): return "ignore:" + path
         }
     }
 }
 
 extension FolmiModel {
+    var branchSwitchBlocker: String? {
+        if editorWorkspace?.hasUnsavedChanges == true { return "先保存编辑器里的改动，再切换分支。" }
+        if snapshot?.operation != nil || snapshot?.files.contains(where: \.isConflict) == true {
+            return "先完成当前的冲突处理，再切换分支。"
+        }
+        return nil
+    }
+
+    var newBranchBlocker: String? {
+        branchSwitchBlocker ?? (snapshot?.head == nil ? "先完成第一次提交。" : nil)
+    }
+
+    func checkout(_ branch: String) {
+        guard branch != snapshot?.branch else { return }
+        prepareBranchSwitch(.local(branch))
+    }
+
+    func trackBranch(_ remote: RemoteBranch) {
+        guard branchSwitchBlocker == nil else { return }
+        if snapshot?.branches.contains(where: { $0 == remote.name || $0.hasPrefix(remote.name + "/") || remote.name.hasPrefix($0 + "/") }) == true {
+            refPrompt = .trackBranch(remote)
+        } else {
+            prepareBranchSwitch(.remote(remote, name: remote.name))
+        }
+    }
+
+    func prepareBranchSwitch(_ target: BranchSwitchTarget) {
+        guard !busy, let repository, let state = snapshot, branchSwitchBlocker == nil else { return }
+        busy = true
+        Task {
+            let plan: BranchSwitchPlan
+            do { plan = try await repository.prepareBranchSwitch(target, expectedFingerprint: state.fingerprint) }
+            catch {
+                busy = false
+                report(error, title: "检查分支切换失败")
+                return
+            }
+            busy = false
+            guard self.repository === repository else { return }
+            if plan.blocker == nil { runBranchSwitch(plan) }
+            else { branchSwitchPrompt = plan }
+        }
+    }
+
+    func runBranchSwitch(_ plan: BranchSwitchPlan, stashing: Bool = false) {
+        branchSwitchPrompt = nil
+        guard let repository, branchSwitchBlocker == nil, !stashing || plan.canStash else { return }
+        let branch = plan.target.name
+        let title: String
+        switch plan.target {
+        case .local: title = "切换到 \(branch)"
+        case .new, .remote: title = "新建并切换到 \(branch)"
+        }
+        let message = "切换到 \(branch) 前的暂放 · " + defaultStashMessage
+        mutate(stashing ? "先暂放改动再切换分支" : title) { [weak self] in
+            var entry: StashEntry?
+            if stashing {
+                entry = try await repository.stashAll(message: message, expectedFingerprint: plan.fingerprint)
+                if let entry { self?.pushUndo("暂放改动（\(entry.message)）", .stash(.pop(object: entry.id))) }
+            }
+            do {
+                let fingerprint = stashing ? try await repository.load().fingerprint : nil
+                let step = try await repository.checkout(plan, afterStashing: fingerprint)
+                self?.pushUndo(title, step)
+                return stashing ? "改动已暂放，已切换到「\(branch)」。" : "当前分支是「\(branch)」。"
+            } catch {
+                if let entry {
+                    throw FolmiFailure(message: error.localizedDescription + "\n\n改动已暂放为「\(entry.message)」，可以在「暂放的改动」里拿回。")
+                }
+                throw error
+            }
+        }
+    }
+
     func askDeleteBranch(_ branch: String) {
         guard let repository else { return }
         Task {
@@ -97,14 +177,43 @@ extension FolmiModel {
 
     /// Adds the path to the root .gitignore; ⌥⌘Z takes the line out again.
     func ignorePath(_ path: String, folder: Bool) {
-        guard let repository else { return }
+        guard !busy, let repository, let state = snapshot else { return }
+        guard renameBlocker(".gitignore") == nil else {
+            errorMessage = "请先保存编辑器里的 .gitignore。"
+            return
+        }
+        Task {
+            do {
+                let tracked = try await repository.isTracked(path)
+                let blocker = tracked && !folder ? try await repository.stopTrackingBlocker(path) : nil
+                guard !busy, self.repository === repository else { return }
+                if tracked, !folder {
+                    refPrompt = .ignoreTracked(path: path, fingerprint: state.fingerprint, blocker: blocker)
+                } else {
+                    addIgnoreRule(path, folder: folder, tracked: tracked, fingerprint: state.fingerprint)
+                }
+            } catch { report(error, title: "检查忽略规则失败") }
+        }
+    }
+
+    func addIgnoreRule(_ path: String, folder: Bool = false, tracked: Bool, fingerprint: String) {
+        refPrompt = nil
+        guard let repository, renameBlocker(".gitignore") == nil else { return }
         let pattern = GitRepository.ignorePattern(for: path, folder: folder)
         mutateUndoable("忽略 \(path)", capture: { try await repository.captureWorktree([".gitignore"]) }) {
-            try await repository.addToGitignore(pattern)
-            let tracked = try await repository.isTracked(path)
+            try await repository.addToGitignore(pattern, expectedFingerprint: fingerprint)
             return tracked
-                ? "已把 \(pattern) 加进 .gitignore。不过它已经被 Git 跟踪，之后的改动仍会出现；要停止跟踪得先从仓库里删除它。"
+                ? "已把 \(pattern) 加进 .gitignore。Git 仍会显示已经跟踪的文件的改动。"
                 : "已把 \(pattern) 加进 .gitignore。"
+        }
+    }
+
+    func stopTracking(_ path: String, fingerprint: String) {
+        refPrompt = nil
+        guard let repository, renameBlocker(".gitignore") == nil else { return }
+        mutateUndoable("停止跟踪 \(path)") {
+            let step = try await repository.stopTracking(path, expectedFingerprint: fingerprint)
+            return (step, "已在暂存区记录删除，本机文件仍在。⌥⌘Z 可撤销。")
         }
     }
 
@@ -202,6 +311,27 @@ struct RefPrompts: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .alert(branchTitle, isPresented: binding {
+                if case .createAndSwitch = $0 { return true }; if case .trackBranch = $0 { return true }; return false
+            }) {
+                TextField("分支名，例如 feature/login", text: $name)
+                Button("新建并切换") {
+                    let target = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    switch model.refPrompt {
+                    case .createAndSwitch?: model.prepareBranchSwitch(.new(target))
+                    case .trackBranch(let remote)?: model.prepareBranchSwitch(.remote(remote, name: target))
+                    default: break
+                    }
+                    model.refPrompt = nil
+                }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("取消", role: .cancel) { model.refPrompt = nil }
+            } message: {
+                if case .trackBranch(let remote) = model.refPrompt {
+                    Text("为「\(remote.id)」指定一个可用的本地分支名。")
+                } else {
+                    Text("从当前提交新建分支。尚未提交的改动会跟过去。")
+                }
+            }
             .alert("分支改名", isPresented: binding { if case .renameBranch = $0 { return true }; return false }) {
                 TextField("新名字", text: $name)
                 Button("改名") { if case .renameBranch(let branch) = model.refPrompt { model.renameBranch(branch, to: name) } }
@@ -216,6 +346,19 @@ struct RefPrompts: ViewModifier {
                 Button("取消", role: .cancel) { model.refPrompt = nil }
             } message: {
                 if case .createTag(let commit) = model.refPrompt { Text("打在提交 \(commit.prefix(7)) 上。填了说明就是附注标签。") }
+            }
+            .alert("添加忽略规则", isPresented: binding { if case .ignoreTracked = $0 { return true }; return false }) {
+                if case .ignoreTracked(let path, let fingerprint, let blocker) = model.refPrompt {
+                    Button("停止跟踪（保留本机文件）") { model.stopTracking(path, fingerprint: fingerprint) }
+                        .disabled(blocker != nil)
+                    Button("只添加忽略规则") { model.addIgnoreRule(path, tracked: true, fingerprint: fingerprint) }
+                }
+                Button("取消", role: .cancel) { model.refPrompt = nil }
+            } message: {
+                if case .ignoreTracked(let path, _, let blocker) = model.refPrompt {
+                    Text("Git 已在跟踪「\(path)」。停止跟踪会在暂存区记录删除，本机文件保留。⌥⌘Z 可撤销。"
+                         + (blocker.map { "\n\n" + $0 } ?? ""))
+                }
             }
             .confirmationDialog(deleteTitle, isPresented: binding {
                 if case .deleteBranch = $0 { return true }; if case .deleteTag = $0 { return true }; return false
@@ -237,9 +380,18 @@ struct RefPrompts: ViewModifier {
                 }
             }
             .onChange(of: model.refPrompt) { _, prompt in
-                name = { if case .renameBranch(let branch) = prompt { return branch }; return "" }()
+                switch prompt {
+                case .renameBranch(let branch)?: name = branch
+                case .trackBranch(let remote)?: name = remote.id
+                default: name = ""
+                }
                 message = ""
             }
+    }
+
+    private var branchTitle: String {
+        if case .trackBranch = model.refPrompt { return "新建本地跟踪分支" }
+        return "新建并切换分支"
     }
 
     private var deleteTitle: String {

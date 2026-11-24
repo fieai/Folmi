@@ -38,6 +38,9 @@ struct ConflictView: View {
     let diff: FileDiff
     @State private var file: ConflictFile?
     @State private var loaded = false
+    @State private var showsAncestor = false
+    @State private var ancestor: String?
+    @State private var ancestorLoading = false
     @Environment(\.folmiTheme) private var theme
 
     private var path: String { diff.file.path }
@@ -45,7 +48,7 @@ struct ConflictView: View {
     var body: some View {
         let names = model.conflictSideNames
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 header(names)
                 if !loaded {
                     ProgressView().controlSize(.small)
@@ -53,8 +56,12 @@ struct ConflictView: View {
                     if file.blocks.isEmpty {
                         resolvedNote
                     } else {
+                        if showsAncestor, file.blocks.contains(where: { $0.base == nil }) {
+                            ConflictAncestorText(title: "共同祖先 · 整个文件", text: ancestor, loading: ancestorLoading)
+                        }
                         ForEach(file.blocks) { block in
-                            ConflictBlockCard(block: block, line: Self.line(of: block.index, in: file), names: names, busy: model.busy) { choice in
+                            ConflictBlockCard(block: block, line: Self.line(of: block.index, in: file), names: names,
+                                              busy: model.busy, showsAncestor: showsAncestor) { choice in
                                 model.resolveConflict(path, block: block.index, choice: choice, expected: file)
                             }
                         }
@@ -69,8 +76,15 @@ struct ConflictView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: diff.fingerprint) {
-            file = try? await model.repository?.conflictFile(path)
-            loaded = true
+            let result = try? await model.repository?.conflictFile(path)
+            if !Task.isCancelled { file = result; loaded = true }
+        }
+        .task(id: showsAncestor ? diff.fingerprint : nil) {
+            ancestor = nil
+            guard showsAncestor else { ancestorLoading = false; return }
+            ancestorLoading = true
+            let result = try? await model.repository?.conflictAncestor(path)
+            if !Task.isCancelled { ancestor = result; ancestorLoading = false }
         }
     }
 
@@ -85,6 +99,10 @@ struct ConflictView: View {
             }
             Spacer(minLength: 8)
             if let file, !file.blocks.isEmpty {
+                Toggle("共同祖先", isOn: $showsAncestor)
+                    .toggleStyle(.checkbox).controlSize(.small)
+                    .help("查看合并前两个版本共有的内容")
+                    .accessibilityIdentifier("conflict-show-base")
                 Menu("全部用…") {
                     Button("全部用\(names.ours)的") { model.resolveConflict(path, block: nil, choice: .ours, expected: file) }
                     Button("全部用\(names.theirs)的") { model.resolveConflict(path, block: nil, choice: .theirs, expected: file) }
@@ -128,10 +146,12 @@ private struct ConflictBlockCard: View {
     let line: Int
     let names: (ours: String, theirs: String)
     let busy: Bool
+    let showsAncestor: Bool
     let choose: (ConflictFile.Choice) -> Void
     @Environment(\.folmiTheme) private var theme
 
     var body: some View {
+        let rows = block.alignedSides
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text("第 \(block.index + 1) 处 · 第 \(line) 行").themedFont(.caption.weight(.medium), points: 10)
@@ -148,9 +168,13 @@ private struct ConflictBlockCard: View {
             .padding(.horizontal, 10).frame(height: 34)
             .background(ThemeColor(token: .accent, opacity: 0.06))
             HStack(alignment: .top, spacing: 0) {
-                side(names.ours, label: block.oursLabel, text: block.ours, token: .removed)
+                side(names.ours, label: block.oursLabel, text: highlighted(rows, old: true), token: .removed)
                 Divider()
-                side(names.theirs, label: block.theirsLabel, text: block.theirs, token: .added)
+                side(names.theirs, label: block.theirsLabel, text: highlighted(rows, old: false), token: .added)
+            }
+            if showsAncestor, let base = block.base {
+                Divider()
+                ConflictAncestorText(title: "共同祖先 · 这一处", text: base)
             }
         }
         .themedBackground(Color.theme(theme, \.card), .control)
@@ -159,21 +183,66 @@ private struct ConflictBlockCard: View {
         .clipShape(RoundedRectangle(cornerRadius: theme.style.radius(.control), style: .continuous))
     }
 
-    private func side(_ name: String, label: String, text: String, token: ThemeToken) -> some View {
+    private func side(_ name: String, label: String, text: AttributedString, token: ThemeToken) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Circle().fill(.themed(token, opacity: 0.65)).frame(width: 5, height: 5)
                 Text(name).themedFont(.caption.weight(.medium), points: 10)
                 Text(label).themedFont(.caption2.monospaced(), points: 10).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             }
-            Text(text.isEmpty ? "（这一边是空的）" : String(text.dropLast(text.hasSuffix("\n") ? 1 : 0)))
+            Text(text.characters.isEmpty ? AttributedString("（这一边是空的）") : text)
                 .themedFont(.system(size: 12, design: .monospaced), points: 12)
-                .foregroundStyle(text.isEmpty ? .secondary : .primary)
+                .foregroundStyle(text.characters.isEmpty ? .secondary : .primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(.themed(token, opacity: 0.07))
+    }
+
+    private func highlighted(_ rows: [AlignedDiffRow], old: Bool) -> AttributedString {
+        var text = AttributedString()
+        let color = Color.theme(theme, old ? \.removed : \.added).opacity(0.32)
+        for row in rows {
+            guard let cell = old ? row.old : row.new else { continue }
+            if cell.lineNumber != 1 { text += AttributedString("\n") }
+            let value = SideBySideDisplayBudget.clippedText(cell.line.text).text
+            var line = AttributedString(value.isEmpty ? " " : value)
+            if cell.line.kind != .context {
+                let other = SideBySideDisplayBudget.clippedText((old ? row.new : row.old)?.line.text ?? "").text
+                for changed in DiffWords.changedRanges(in: value, comparedTo: other) {
+                    if let sourceRange = Range(changed, in: value), let range = Range(sourceRange, in: line) {
+                        line[range].backgroundColor = color
+                    }
+                }
+            }
+            text += line
+        }
+        return text
+    }
+}
+
+private struct ConflictAncestorText: View {
+    let title: String
+    let text: String?
+    var loading = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).themedFont(.caption.weight(.medium), points: 10)
+            if loading {
+                ProgressView().controlSize(.small)
+            } else {
+                let content = text.map { $0.isEmpty ? "（这一处为空）" : $0 } ?? "共同祖先中没有可显示的文本。"
+                Text(content)
+                    .themedFont(.system(size: 12, design: .monospaced), points: 12)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.themed(.hover, opacity: 0.55))
     }
 }

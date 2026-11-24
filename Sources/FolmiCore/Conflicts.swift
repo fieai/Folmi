@@ -104,6 +104,24 @@ public struct ConflictBlock: Sendable, Equatable, Identifiable {
     public let raw: String
     public var id: Int { index }
 
+    public var alignedSides: [AlignedDiffRow] {
+        let old = ConflictFile.lines(ours).map { $0.trimmingCharacters(in: .newlines) }
+        let new = ConflictFile.lines(theirs).map { $0.trimmingCharacters(in: .newlines) }
+        var lines: [DiffLine] = []
+        func append(_ values: ArraySlice<String>, kind: DiffLineKind) {
+            for value in values { lines.append(DiffLine(id: lines.count, text: value, kind: kind)) }
+        }
+        var start = 0
+        for change in LineDiff.changes(old: old, new: new) {
+            append(old[start..<change.old.lowerBound], kind: .context)
+            append(old[change.old], kind: .deletion)
+            append(new[change.new], kind: .addition)
+            start = change.old.upperBound
+        }
+        append(old[start...], kind: .context)
+        return DiffAlignment.rows(in: DiffHunk(id: "conflict", header: "@@ -1 +1 @@", lines: lines))
+    }
+
     public func text(for choice: ConflictFile.Choice) -> String {
         switch choice {
         case .ours: return ours
@@ -125,6 +143,14 @@ extension GitRepository {
         let root = try runner().directory
         guard let data = try Self.readWorktreeFile(path, root: root).data, let text = UTF8Text.decode(data) else { return nil }
         return ConflictFile(text)
+    }
+
+    /// Stage one is the merge base even when the working file has only two-sided conflict markers.
+    public func conflictAncestor(_ path: String) async throws -> String? {
+        let git = try runner()
+        let result = try git.run(["cat-file", "blob", ":1:" + path], allowFailure: true)
+        guard result.status == 0, !result.stdout.contains(0) else { return nil }
+        return UTF8Text.decode(result.stdout)
     }
 
     /// Writes the file with one block (or all, when `index` is nil) settled, if the file is still what was shown.

@@ -171,7 +171,7 @@ private struct EditorColumnView: View {
                     PaneTitle(title: "差异", detail: model.fileDiffs.isEmpty ? nil : "\(model.fileDiffs.count) 个文件")
                     Spacer(minLength: 4)
                 } else {
-                    EditorTabStrip(workspace: workspace, onSave: model.fileDidSave, column: column.id,
+                    EditorTabStrip(workspace: workspace, onSave: model.fileDidSave, onShowHistory: model.showFileHistory, column: column.id,
                                    onSplit: { tab, right in model.splitEditor(toRight: right, tab: tab, from: column.id) },
                                    onMove: { tab, right in model.moveEditorTab(tab, from: column.id, toRight: right) })
                     if model.content == .editor, let origin = model.diffEditReturn, origin.path == column.selected {

@@ -55,7 +55,6 @@ struct AllChangesNavigator: Equatable {
 /// back to the work tree, never "discarded"; a change that cannot be split says it acts on the whole file.
 struct ReviewActionNames: Equatable {
     let accept: String
-    /// nil: ⌫ does nothing here (a folded tracked file is rejected hunk by hunk).
     let reject: String?
 
     static func make(_ diff: FileDiff, hunk: DiffHunk?, selected: Int = 0) -> ReviewActionNames {
@@ -63,11 +62,13 @@ struct ReviewActionNames: Equatable {
         if diff.area == .staged {
             if hunk == nil { return .init(accept: "确认整个文件", reject: "整个文件退回工作区") }
             return .init(accept: selected > 0 ? "确认选中的 \(selected) 行" : "确认这处",
-                         reject: wholeFile ? "整个文件退回工作区" : "退回工作区")
+                         reject: wholeFile ? "整个文件退回工作区" : (selected > 0 ? "选中的 \(selected) 行退回工作区" : "退回工作区"))
         }
-        if diff.file.isUntracked { return .init(accept: "收下整个文件", reject: "删除新文件") }
-        if wholeFile { return .init(accept: "收下整个文件", reject: nil) }
-        return .init(accept: selected > 0 ? "收下选中的 \(selected) 行" : "收下这处并暂存", reject: "丢弃这处")
+        if diff.file.isConflict || diff.file.isSubmodule { return .init(accept: "收下整个文件", reject: nil) }
+        if diff.file.isNewInWorktree { return .init(accept: "收下整个文件", reject: "删除新文件…") }
+        if wholeFile { return .init(accept: "收下整个文件", reject: "丢弃整个文件的改动…") }
+        return .init(accept: selected > 0 ? "收下选中的 \(selected) 行" : "收下这处并暂存",
+                     reject: selected > 0 ? "丢弃选中的 \(selected) 行…" : "丢弃这处…")
     }
 }
 
@@ -581,9 +582,9 @@ struct AllChangesView: View {
     private func reject() {
         guard !revealInsteadOfActing() else { return }
         guard actionNames?.reject != nil, let stop = current, let diff = diff(for: stop), !model.busy else { return }
-        if let id = stop.hunkID, let hunk = diff.hunks.first(where: { $0.id == id }) { model.rejectHunk(hunk, in: diff) }
-        else { model.rejectFile(diff) }
-        advance()
+        if let id = stop.hunkID, let hunk = diff.hunks.first(where: { $0.id == id }) {
+            model.rejectSelection(hunk, in: diff, confirm: true, succeeded: advance)
+        } else { model.rejectFile(diff, succeeded: advance) }
     }
     /// Moves on at once when nothing will reload; after a Git change the reload moves the cursor.
     private func advance() {
@@ -600,12 +601,12 @@ struct AllChangesView: View {
     private func previewScope(for diff: FileDiff) -> DiffActionPreview? {
         guard let hoveredDecision, !needsReviewReveal, let current, current.fileKey == diff.allChangesKey else { return nil }
         let wholeFile = diff.file.isUntracked || (!diff.isPartialSupported &&
-            (hoveredDecision == .accept ? diff.area == .working : diff.area == .staged))
+            (hoveredDecision == .reject || diff.area == .working))
         guard !wholeFile, let id = current.hunkID,
               let hunk = diff.hunks.first(where: { $0.id == id }) else {
             return DiffActionPreview(hunkID: nil, lineIDs: [])
         }
-        let lines = hoveredDecision == .accept ? model.allChangesSelected(in: hunk, of: diff) : []
+        let lines = model.allChangesSelected(in: hunk, of: diff)
         return DiffActionPreview(hunkID: id, lineIDs: lines)
     }
 
@@ -832,6 +833,7 @@ struct AllChangesView: View {
             if diff.area == .working { model.stageFile(diff.file) } else { model.unstageFile(diff.file) }
         }
         .disabled(model.busy)
+        if diff.area == .working { DiscardFilesButton(model: model, files: [diff.file], diff: diff) }
     }
 
     private func commentBinding(_ key: String) -> Binding<String?> {

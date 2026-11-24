@@ -144,6 +144,30 @@ final class ReviewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRejectSelectionWaitsForConfirmationAndKeepsOtherLines() async throws {
+        let (model, file, _) = try await makeModel()
+        let diff = try await reviewDiff(model)
+        let hunk = diff.hunks[0]
+        let addition = try XCTUnwrap(hunk.lines.first { $0.kind == .addition && $0.text == "EDIT A" })
+        let deletion = try XCTUnwrap(hunk.lines.first { $0.kind == .deletion })
+        model.toggleAllChangesLine(addition.id, in: diff)
+        model.rejectSelection(hunk, in: diff, confirm: true)
+        let confirmation = try XCTUnwrap(model.discardPrompt)
+        XCTAssertTrue(try String(contentsOf: file, encoding: .utf8).contains("EDIT A"))
+        model.discardPrompt = nil
+        confirmation.confirm()
+        try await eventually("丢弃选中行") { !model.busy }
+        XCTAssertNil(model.errorMessage)
+        let text = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertFalse(text.contains("EDIT A"))
+        XCTAssertFalse(text.split(separator: "\n").contains(Substring(deletion.text)), "the unselected deletion stays")
+        XCTAssertTrue(text.contains("EDIT B"))
+        model.undoGitOperation()
+        try await eventually("撤销丢弃选中行") { !model.busy }
+        XCTAssertTrue(try String(contentsOf: file, encoding: .utf8).contains("EDIT A"))
+    }
+
+    @MainActor
     func testUndoRefusesWhenFileChangedAfterwards() async throws {
         let (model, file, _) = try await makeModel()
         let diff = try await reviewDiff(model)

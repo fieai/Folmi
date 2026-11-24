@@ -444,6 +444,7 @@ struct ChangesPane: View {
                 folderRow(path, depth: depth, expanded: expanded, count: folderCounts[path]) {
                     toggleFolder(path, expanded)
                 }
+                .contextMenu { folderMenu(path, in: group) }
             }
         }
     }
@@ -511,6 +512,7 @@ struct ChangesPane: View {
             let count = files.count > 1 ? " \(files.count) 个文件" : ""
             if group == .working {
                 Button("暂存\(count)") { model.stageFiles(files) }.disabled(model.busy)
+                DiscardFilesButton(model: model, files: files)
             } else {
                 Button("取消暂存\(count)") { model.unstageFiles(files) }.disabled(model.busy)
             }
@@ -528,9 +530,23 @@ struct ChangesPane: View {
                model.visibleAllChanges.contains(where: { $0.area == group && $0.file.id == files[0].id }) {
                 Button("在全部改动中定位") { model.reviewFileJump = ReviewFileJump(key: group.rawValue + ":" + files[0].id) }
             }
-            if files.count == 1, files[0].isUntracked {
+            if files.count == 1 {
+                Button("只看这个文件的提交历史") { model.showFileHistory(files[0].path) }.disabled(!model.hasSnapshot || model.busy)
                 Button("忽略这个文件（加进 .gitignore）") { model.ignorePath(files[0].path, folder: false) }.disabled(model.busy)
             }
+        }
+    }
+
+    @ViewBuilder private func folderMenu(_ path: String, in area: ChangeArea) -> some View {
+        let prefix = path + "/"
+        let files = (model.snapshot?.files ?? []).filter {
+            $0.path.hasPrefix(prefix) && (area == .working ? $0.hasWorking : $0.hasStaged)
+        }
+        if area == .working {
+            Button("暂存整个文件夹") { model.stageFiles(files) }.disabled(model.busy || files.isEmpty)
+            DiscardFilesButton(model: model, files: files)
+        } else {
+            Button("取消暂存整个文件夹") { model.unstageFiles(files) }.disabled(model.busy || files.isEmpty)
         }
     }
 
@@ -551,6 +567,21 @@ struct ChangesPane: View {
         let group: ChangeArea = added.first.flatMap { ChangeArea(rawValue: String($0.prefix { $0 != ":" })) } ?? model.area
         let prefix = group.rawValue + ":"
         model.selectFiles(Set(tags.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }), in: group)
+    }
+}
+
+struct DiscardFilesButton: View {
+    let model: FolmiModel
+    let files: [FileChange]
+    var diff: FileDiff?
+
+    var body: some View {
+        let blocker = model.discardBlocker(files)
+        Button(files.allSatisfy(\.isNewInWorktree) ? "删除新文件…" : "丢弃改动…", role: .destructive) {
+            model.askDiscardFiles(files, diff: diff)
+        }
+        .disabled(model.busy || files.isEmpty || blocker != nil)
+        .help(blocker ?? "确认后执行，⌥⌘Z 可撤销")
     }
 }
 

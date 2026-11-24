@@ -204,6 +204,8 @@ struct SideBySideDiff: View {
     var commentReveal: ReviewCommentReveal?
     var onEditPoint: ((DiffEditPoint, FileDiff) -> Void)?
     var editReveal: DiffEditReturn?
+    var onDiscardHunk: ((DiffHunk, FileDiff, Set<Int>?) -> Void)?
+    var discardBlocker: ((FileDiff) -> String?)?
     @Environment(\.folmiTheme) private var theme
 
     var body: some View {
@@ -248,7 +250,9 @@ struct SideBySideDiff: View {
                             editReveal: edit?.0.key == diff.allChangesKey ? edit?.0 : nil,
                             onEditRowAppeared: { anchor in
                                 DispatchQueue.main.async { proxy.scrollTo(anchor, anchor: .center) }
-                            }
+                            },
+                            onDiscardHunk: onDiscardHunk,
+                            discardBlocker: discardBlocker?(diff)
                         )
                         .id(diff.allChangesKey)
                     }
@@ -369,6 +373,8 @@ struct SideBySideFile: View {
     var onEditPoint: ((DiffEditPoint, FileDiff) -> Void)?
     var editReveal: DiffEditReturn?
     var onEditRowAppeared: ((String) -> Void)?
+    var onDiscardHunk: ((DiffHunk, FileDiff, Set<Int>?) -> Void)?
+    var discardBlocker: String?
     @Environment(\.folmiTheme) private var theme
     @State private var localCommenting: String?
     @State private var hoveredHunk: String?
@@ -579,7 +585,8 @@ struct SideBySideFile: View {
     }
 
     private func hunkToolbar(_ hunk: DiffHunk, partialAllowed: Bool) -> some View {
-        let count = hunk.lines.filter { selected.contains($0.id) && ($0.kind == .addition || $0.kind == .deletion) }.count
+        let picked = Set(hunk.lines.filter { selected.contains($0.id) && ($0.kind == .addition || $0.kind == .deletion) }.map(\.id))
+        let count = picked.count
         return HStack(spacing: 8) {
             if seenHunkIDs.contains(hunk.id) {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 11)).foregroundStyle(.themed(.added)).help("已看过")
@@ -632,6 +639,14 @@ struct SideBySideFile: View {
                     .onHover { previewAction(hunk.id, lines: [], inside: $0) }
             }
             .disabled(busy || !partialAllowed)
+            if diff.area == .working, partialAllowed, let onDiscardHunk {
+                Button(count > 0 ? "丢弃选中的 \(count) 行…" : "丢弃此块…", role: .destructive) {
+                    onDiscardHunk(hunk, diff, picked.isEmpty ? nil : picked)
+                }
+                .disabled(busy || discardBlocker != nil)
+                .help(discardBlocker ?? "确认后执行，⌥⌘Z 可撤销")
+                .onHover { previewAction(hunk.id, lines: picked, inside: $0) }
+            }
             }
             }
         }

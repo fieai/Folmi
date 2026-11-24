@@ -194,7 +194,9 @@ struct DiffPane: View {
                                onExplain: model.explainHunk, onHandToAgent: model.handHunkToAgent, agentTitle: model.agentTitle,
                                layout: model.diffLayout, commentReveal: model.reviewCommentReveal,
                                onEditPoint: { point, diff in Task { await model.editDiffPoint(point, in: diff) } },
-                               editReveal: model.diffEditReveal)
+                               editReveal: model.diffEditReveal,
+                               onDiscardHunk: { model.askDiscardHunk($0, in: $1, selected: $2) },
+                               discardBlocker: { model.discardBlocker([$0.file]) })
     }
     /// One Markdown file, shown rendered unless the user switched this view to source.
     private var renderedMarkdown: FileDiff? {
@@ -225,6 +227,9 @@ struct DiffToolbar: View {
                 Button(model.area == .staged ? "取消暂存这 \(model.fileDiffs.count) 个文件" : "暂存这 \(model.fileDiffs.count) 个文件",
                        action: model.toggleStageSelectedFiles)
                     .controlSize(.small).disabled(model.busy)
+            }
+            if let diff, diff.area == .working {
+                DiscardFilesButton(model: model, files: [diff.file], diff: diff).controlSize(.small)
             }
             if let diff, diff.file.worktreeCode != "D", diff.file.indexCode != "D" {
                 Button {

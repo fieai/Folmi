@@ -88,7 +88,9 @@ public actor GitRepository {
                     guard i < records.count else { throw FolmiError.unsupported("重命名状态缺少原文件名。") }
                     original = records[i]; i += 1
                 }
-                files.append(FileChange(path: String(fields[count]), originalPath: original, indexCode: String(codes[0]), worktreeCode: String(codes[1])))
+                let path = String(fields[count])
+                files.append(FileChange(path: path, originalPath: original, indexCode: String(codes[0]), worktreeCode: String(codes[1]),
+                                        isSubmodule: fields[2].hasPrefix("S")))
             } else if record.hasPrefix("? ") { files.append(FileChange(path: String(record.dropFirst(2)), indexCode: "?", worktreeCode: "?")) }
         }
         var hash = SHA256()
@@ -148,17 +150,18 @@ public actor GitRepository {
     /// so a refresh is one `git status`. Otherwise the ref reads run side by side: each is mostly process start-up.
     public func load(reusing previous: RepositorySnapshot? = nil) async throws -> RepositorySnapshot {
         let current = try state(), git = try runner()
-        if let previous, previous.root == git.directory, previous.head == current.head, previous.branch == current.branch,
+        if let previous, previous.remoteBranches != nil, previous.root == git.directory, previous.head == current.head, previous.branch == current.branch,
            previous.upstream == current.upstream, previous.ahead == current.ahead, previous.behind == current.behind {
             return RepositorySnapshot(root: git.directory, branch: current.branch, head: current.head, files: current.files, commits: previous.commits,
                                       branches: previous.branches, remotes: previous.remotes, fingerprint: current.fingerprint,
                                       upstream: current.upstream, ahead: current.ahead, behind: current.behind, unpushed: previous.unpushed,
-                                      operation: try operationInProgress(git), stashCount: previous.stashCount)
+                                      operation: try operationInProgress(git), stashCount: previous.stashCount, remoteBranches: previous.remoteBranches)
         }
         var jobs: [(arguments: [String], allowFailure: Bool)] = [
-            (["for-each-ref", "--format=%(refname:short)", "refs/heads/"], false),
+            (["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"], false),
             (["remote"], false),
-            (Self.stashListArguments, true)
+            (Self.stashListArguments, true),
+            (["for-each-ref", "--format=%(refname:lstrip=2)%09%(symref)%09%(objectname)", "refs/remotes/"], false)
         ]
         if let head = current.head {
             jobs.append((["log", "-40", "--format=%H%x00%h%x00%at%x00%s%x00"], false))
@@ -168,9 +171,16 @@ public actor GitRepository {
         let branches = outputs[0].components(separatedBy: .newlines).filter { !$0.isEmpty }
         let remotes = outputs[1].components(separatedBy: .newlines).filter { !$0.isEmpty }
         let stashCount = Self.parseStashList(outputs[2]).count
+        let remoteNames = remotes.sorted { $0.count > $1.count }
+        let remoteBranches: [RemoteBranch] = outputs[3].split(separator: "\n").compactMap { row in
+            let fields = row.split(separator: "\t", omittingEmptySubsequences: false)
+            guard fields.count == 3, fields[1].isEmpty,
+                  let remote = remoteNames.first(where: { fields[0].hasPrefix($0 + "/") }) else { return nil }
+            return RemoteBranch(name: String(fields[0].dropFirst(remote.count + 1)), remote: remote, object: String(fields[2]))
+        }
         var commits: [CommitSummary] = []
         if current.head != nil {
-            let log = outputs[3].components(separatedBy: "\0")
+            let log = outputs[4].components(separatedBy: "\0")
             var i = 0
             while i + 3 < log.count {
                 let id = log[i].trimmingCharacters(in: .newlines)
@@ -180,10 +190,10 @@ public actor GitRepository {
             }
         }
         var unpushed = current.ahead
-        if current.head != nil, !remotes.isEmpty { unpushed = Int(outputs[4].trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if current.head != nil, !remotes.isEmpty { unpushed = Int(outputs[5].trimmingCharacters(in: .whitespacesAndNewlines)) }
         return RepositorySnapshot(root: git.directory, branch: current.branch, head: current.head, files: current.files, commits: commits, branches: branches, remotes: remotes, fingerprint: current.fingerprint,
                                   upstream: current.upstream, ahead: current.ahead, behind: current.behind, unpushed: unpushed,
-                                  operation: try operationInProgress(git), stashCount: stashCount)
+                                  operation: try operationInProgress(git), stashCount: stashCount, remoteBranches: remoteBranches)
     }
 
     /// A commit published to another remote branch still counts as ahead of its upstream for pulling.
@@ -227,7 +237,9 @@ public actor GitRepository {
         let git = try runner()
         let before: State
         if let known { before = State(branch: "", head: nil, files: [file], fingerprint: known) } else { before = try state() }
-        guard let actual = before.files.first(where: { $0.path == file.path }) else { throw FolmiError.staleSnapshot }
+        guard let actual = before.files.first(where: { $0.path == file.path && (area == .working ? $0.hasWorking : $0.hasStaged) }) else {
+            throw FolmiError.staleSnapshot
+        }
         var raw = "", notice: String?
         if actual.isUntracked {
             let url = git.directory.appendingPathComponent(actual.path)
@@ -249,6 +261,7 @@ public actor GitRepository {
         let hunks = actual.isUntracked ? [] : Patch.hunks(raw)
         if actual.isConflict { notice = "冲突文件暂不支持部分暂存，请先在编辑器中解决冲突。" }
         else if actual.originalPath != nil { notice = "重命名请使用整个文件操作。" }
+        else if raw.components(separatedBy: "\n").contains(where: { $0.hasPrefix("index ") && $0.hasSuffix(" 120000") }) { notice = "符号链接请使用整个文件操作。" }
         else if raw.components(separatedBy: "\n").contains(where: { $0.hasPrefix("index ") && $0.hasSuffix(" 160000") }) { notice = "子模块请使用整个文件操作。" }
         else if raw.contains("Binary files ") || raw.contains("GIT binary patch") { notice = "二进制文件仅支持整个文件操作。" }
         else if raw.contains("\nnew file mode ") || raw.contains("\ndeleted file mode ") || raw.contains("\nold mode ") || raw.contains("\nnew mode ") { notice = "新增、删除或文件模式变化请使用整个文件操作。" }
@@ -474,14 +487,6 @@ public actor GitRepository {
         try runner().run(["show", "-s", "--format=%B", "HEAD"]).text
     }
 
-    public func checkout(branch: String, expectedFingerprint: String) async throws {
-        _ = try require(expectedFingerprint)
-        let git = try runner()
-        let branches = try git.run(["for-each-ref", "--format=%(refname:short)", "refs/heads/"]).text.components(separatedBy: .newlines)
-        guard branches.contains(branch), !branch.hasPrefix("-") else { throw FolmiError.unsupported("只能切换到现有本地分支。") }
-        _ = try git.run(["switch", "--", branch])
-    }
-
     // MARK: One file's history
 
     public struct FileRevision: Identifiable, Sendable, Equatable {
@@ -535,19 +540,24 @@ public actor GitRepository {
 
     // MARK: History
 
+    public enum HistoryScope: Hashable, Sendable { case allBranches, currentBranch }
+
     /// Commits reachable from HEAD, local and remote branches and tags, newest first with children before parents.
     /// With `path`, only the current branch's commits that changed that file, following renames.
-    public func history(limit: Int = 500, path: String? = nil) async throws -> [CommitNode] {
+    public func history(limit: Int = 500, path: String? = nil, scope: HistoryScope = .allBranches, search: String? = nil) async throws -> [CommitNode] {
         let git = try runner()
-        guard try git.run(["rev-parse", "--verify", "--quiet", "HEAD"], allowFailure: true).status == 0 else { return [] }
+        let hasHead = try refObject("HEAD", git: git) != nil
+        guard hasHead || (scope == .allBranches && path == nil) else { return [] }
         let format = "--format=%H%x00%P%x00%h%x00%an%x00%ae%x00%at%x00%D%x00%s"
+        var args = ["log", "-z", "--decorate=short", "-n", String(max(1, limit)), format]
+        if let search, !search.isEmpty { args += ["--fixed-strings", "--regexp-ignore-case", "--grep=" + search] }
         if let path {
-            let text = try git.run(["log", "-z", "--follow", "--decorate=short", "-n", String(max(1, limit)), format, "HEAD", "--", path]).text
-            return CommitNode.parse(text)
+            return CommitNode.parse(try git.run(args + ["--follow", "HEAD", "--", path]).text)
         }
-        let text = try git.run(["log", "-z", "--topo-order", "--decorate=short", "-n", String(max(1, limit)), format,
-                                "HEAD", "--branches", "--remotes", "--tags", "--"]).text
-        return CommitNode.parse(text)
+        args.append("--topo-order")
+        if hasHead { args.append("HEAD") }
+        if scope == .allBranches { args += ["--branches", "--remotes", "--tags"] }
+        return CommitNode.parse(try git.run(args + ["--"]).text)
     }
 
     /// The commit's message and the files it changed against its first parent (renames shown as delete plus add).
@@ -558,7 +568,13 @@ public actor GitRepository {
         let parts = meta.split(separator: "\0", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 3 else { throw FolmiError.unsupported("无法读取提交信息。") }
         let base = try parentOrEmptyTree(object, git: git)
-        let records = try git.run(["diff-tree", "-r", "-z", "--no-renames", "--name-status", base, object]).text
+        return CommitDetail(id: object, message: parts[2].trimmingCharacters(in: .newlines), committer: parts[0],
+                            committerDate: Date(timeIntervalSince1970: TimeInterval(parts[1]) ?? 0),
+                            files: try Self.commitFiles(base: base, target: object, git: git))
+    }
+
+    static func commitFiles(base: String, target: String, git: GitProcess) throws -> [CommitFileChange] {
+        let records = try git.run(["diff-tree", "-r", "-z", "--no-renames", "--name-status", base, target]).text
             .components(separatedBy: "\0")
         var files: [CommitFileChange] = []
         var index = 0
@@ -567,8 +583,7 @@ public actor GitRepository {
             if !status.isEmpty { files.append(CommitFileChange(path: records[index + 1], status: String(status.prefix(1)))) }
             index += 2
         }
-        return CommitDetail(id: object, message: parts[2].trimmingCharacters(in: .newlines), committer: parts[0],
-                            committerDate: Date(timeIntervalSince1970: TimeInterval(parts[1]) ?? 0), files: files)
+        return files
     }
 
     /// One file's change in a commit, against its first parent. Read only: `isPartialSupported` is always false.
@@ -576,20 +591,25 @@ public actor GitRepository {
         let git = try runner()
         let object = try verifiedCommit(id, git: git)
         let base = try parentOrEmptyTree(object, git: git)
+        return try Self.readOnlyDiff(base: base, target: object, file: file, git: git)
+    }
+
+    static func readOnlyDiff(base: String, target: String, file: CommitFileChange, git: GitProcess) throws -> FileDiff {
         let bytes = try git.run(["diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--full-index",
-                                 "--unified=3", base, object, "--", file.path]).stdout
+                                 "--unified=3", base, target, "--", file.path]).stdout
         let change = FileChange(path: file.path, indexCode: file.status, worktreeCode: ".")
+        let key = base + "\0" + target + "\0" + file.path
         guard let raw = UTF8Text.decode(bytes) else {
-            return FileDiff(file: change, area: .staged, rawPatch: "", hunks: [], fingerprint: object + file.path,
+            return FileDiff(file: change, area: .staged, rawPatch: "", hunks: [], fingerprint: key,
                             isPartialSupported: false, notice: "差异包含非 UTF-8 文本，无法显示。")
         }
         let hunks = Patch.hunks(raw)
         let notice: String? = raw.contains("Binary files ") || raw.contains("GIT binary patch") ? "二进制文件，无法显示文本差异。"
             : (hunks.isEmpty ? "没有文本差异（可能只是文件模式变化）。" : nil)
-        return FileDiff(file: change, area: .staged, rawPatch: raw, hunks: hunks, fingerprint: object + "\0" + file.path,
+        return FileDiff(file: change, area: .staged, rawPatch: raw, hunks: hunks, fingerprint: key,
                         isPartialSupported: false, notice: notice,
                         versions: FileVersions(old: file.status == "A" ? nil : .object(base + ":" + file.path),
-                                               new: file.status == "D" ? nil : .object(object + ":" + file.path)))
+                                               new: file.status == "D" ? nil : .object(target + ":" + file.path)))
     }
 
     func verifiedCommit(_ id: String, git: GitProcess) throws -> String {
