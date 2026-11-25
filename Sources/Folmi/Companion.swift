@@ -82,6 +82,7 @@ extension FolmiModel {
             let line = error.split(separator: "\n").first.map(String.init) ?? error
             return CompanionStatus(state: .error, text: line)
         }
+        if let projectReadStatus, busy { return CompanionStatus(state: .working, text: projectReadStatus) }
         if case let .finished(files, _, _) = capsule {
             return CompanionStatus(state: .attention, text: "改完了 · \(files) 个文件等你看")
         }
@@ -90,7 +91,7 @@ extension FolmiModel {
         }
         if agentSessions.contains(where: \.isBusy) { return CompanionStatus(state: .working, text: "AI 正在回答…") }
         if commitSuggestion == .generating { return CompanionStatus(state: .thinking, text: "正在写提交说明…") }
-        if busy { return CompanionStatus(state: .working, text: projectReadStatus ?? "正在执行…") }
+        if busy { return CompanionStatus(state: .working, text: "正在执行…") }
         if !hasSnapshot { return CompanionStatus(state: .sleep, text: nil) }
         return CompanionStatus(state: .idle, text: nil)
     }

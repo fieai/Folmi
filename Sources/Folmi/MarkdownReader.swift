@@ -121,10 +121,17 @@ struct MarkdownReaderView: NSViewRepresentable {
                 let flashFrom = !documentChanged && view.externalChange != nil && view.externalChange != flashedChange ? renderedKey?.text : nil
                 let debounce = !documentChanged && textChanged
                     && view.workspace.editingColumn(for: view.documentID, beside: view.column) != nil
-                render(key, scrollTo: navigationLine ?? (documentChanged || previous?.active == false ? startLine(view) : nil),
-                       documentChanged: documentChanged, flashFrom: flashFrom, debounce: debounce, explicitScroll: navigationLine != nil)
-            } else if renderedKey == key {
-                if pendingRender != nil { renderTask?.cancel(); pendingRender = nil }
+                let queuedJump = pendingRender.flatMap { $0.key.documentID == key.documentID && $0.explicitScroll ? $0.line : nil }
+                let jump = navigation ? navigationLine ?? startLine(view) : queuedJump
+                render(key, scrollTo: jump ?? (documentChanged || previous?.active == false ? startLine(view) : nil),
+                       documentChanged: documentChanged, flashFrom: flashFrom, debounce: debounce, explicitScroll: jump != nil)
+            } else {
+                if let request = pendingRender {
+                    renderTask?.cancel(); pendingRender = nil
+                    if !navigation, request.key.documentID == key.documentID, request.explicitScroll, let line = request.line {
+                        scroll(toLine: line, smooth: false)
+                    }
+                }
                 if previous?.active == false, let start = PerfLog.readerSwitchStart(for: key.documentID) {
                     reportPaint(for: key, switchStart: start)
                 }
@@ -311,10 +318,19 @@ struct MarkdownReaderView: NSViewRepresentable {
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any], let type = body["type"] as? String,
-                  let parent, parent.active, !dismantled, body["path"] as? String == parent.documentID,
+                  let parent, parent.active, !dismantled, let path = body["path"] as? String, path == renderedKey?.documentID,
                   body["revision"] as? Int == renderRevision else { return }
-            if pendingRender != nil, type != "top", type != "copy" { return }
+            if type == "copy" {
+                // Copy uses the text on screen, even while another document is being prepared.
+                if let text = body["text"] as? String {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    parent.workspace.showNotice("代码已复制")
+                }
+                return
+            }
             let workspace = parent.workspace, id = parent.documentID
+            guard path == id, pendingRender == nil || type == "top" else { return }
             switch type {
             case "link":
                 if let line = body["fromLine"] as? Int { workspace.noteReaderLocation(line, in: id, column: parent.columnID) }
@@ -328,7 +344,7 @@ struct MarkdownReaderView: NSViewRepresentable {
                     do { try workspace.toggleTask(at: offset, in: id) } catch { workspace.errorMessage = error.localizedDescription }
                 }
             case "top":
-                if parent.active, body["path"] as? String == id, let line = body["line"] as? Int {
+                if let line = body["line"] as? Int {
                     workspace.readerTopLineByColumn[parent.columnID, default: [:]][id] = line
                     workspace.outline(for: parent.column).updateCaret(offset(ofLine: line))
                     if body["userScroll"] as? Bool == true {
@@ -370,12 +386,6 @@ struct MarkdownReaderView: NSViewRepresentable {
                 guard let text = body["text"] as? String, let first = body["line"] as? Int, let last = body["end"] as? Int else { return }
                 let mode: AIAssistState.Mode = type == "plain" ? .plain : type == "deai" ? .deAI : .translate
                 workspace.assistSelection?(mode, text, first == last ? "\(id):\(first + 1)" : "\(id):\(first + 1)-\(last + 1)")
-            case "copy":
-                if let text = body["text"] as? String {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    workspace.showNotice("代码已复制")
-                }
             default:
                 break
             }
