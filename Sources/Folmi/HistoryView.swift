@@ -191,8 +191,9 @@ struct HistoryView: View {
     }
 
     private var historyScopePicker: some View {
-        ThemedSegmented(options: [(GitRepository.HistoryScope.allBranches, "全部分支"), (.currentBranch, "只看当前分支")],
-                        selection: Binding(get: { model.historyScope }, set: model.setHistoryScope))
+        ThemedSegmented(options: [(true, "全部分支"), (false, "只看当前分支")],
+                        selection: Binding(get: { model.historyScope == .allBranches },
+                                           set: { model.setHistoryScope($0 ? .allBranches : .currentBranch) }))
             .controlSize(.small)
             .help("全部分支包含本地分支、远端分支和标签。")
             .accessibilityIdentifier("history-scope")

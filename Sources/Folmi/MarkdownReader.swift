@@ -113,8 +113,8 @@ struct MarkdownReaderView: NSViewRepresentable {
                 && (view.workspace.navigationColumn == nil || view.workspace.navigationColumn == view.columnID)
             let navigationLine = navigation ? view.workspace.navigationReaderLine : nil
             if pendingRender?.key == key {
-                if navigation {
-                    pendingRender?.line = navigationLine ?? startLine(view)
+                if let navigationLine {
+                    pendingRender?.line = navigationLine
                     pendingRender?.explicitScroll = true
                 }
             } else if renderedKey != key {
@@ -122,7 +122,7 @@ struct MarkdownReaderView: NSViewRepresentable {
                 let debounce = !documentChanged && textChanged
                     && view.workspace.editingColumn(for: view.documentID, beside: view.column) != nil
                 let queuedJump = pendingRender.flatMap { $0.key.documentID == key.documentID && $0.explicitScroll ? $0.line : nil }
-                let jump = navigation ? navigationLine ?? startLine(view) : queuedJump
+                let jump = navigationLine ?? queuedJump
                 render(key, scrollTo: jump ?? (documentChanged || previous?.active == false ? startLine(view) : nil),
                        documentChanged: documentChanged, flashFrom: flashFrom, debounce: debounce, explicitScroll: jump != nil)
             } else {
