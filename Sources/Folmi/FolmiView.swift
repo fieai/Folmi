@@ -6,6 +6,19 @@ struct FolmiView: View {
 
     var body: some View {
         let _ = PerfLog.body("FolmiView")
+        return windowPrompts
+            // Apply the theme outside the presentations so sheets inherit it with the window.
+            .themedFont(.body, points: 13)
+            .environment(\.folmiTheme, model.theme)
+            .environment(\.folmiGlass, model.glassSurfaces)
+            .environment(\.foldWhitespaceHunks, model.foldWhitespace)
+            // Reading repositoryURL (observed) re-reads the repository when the project changes.
+            .environment(\.gitRepository, model.repositoryURL == nil ? nil : model.repository)
+            // A design swaps a custom font for the system one in that design.
+            .fontDesign(model.theme.style.pixelFont && PixelFont.isAvailable ? nil : model.theme.style.fontDesign)
+    }
+
+    private var workspaceWindow: some View {
         Group {
             if model.gitStartupState.blocksGit {
                 StartupEnvironmentView(model: model)
@@ -53,6 +66,10 @@ struct FolmiView: View {
                 }
             }
         }
+    }
+
+    private var workspaceSheets: some View {
+        workspaceWindow
         .sheet(isPresented: $model.showDelivery) {
             DeliverySheet(model: model).folmiSheetStyle()
         }
@@ -79,7 +96,13 @@ struct FolmiView: View {
             AllTerminalsSheet(model: model).folmiSheetStyle()
         }
         .sheet(isPresented: $model.showDocHistory) { DocHistorySheet(model: model).folmiSheetStyle() }
-        .confirmationDialog(model.mergePrompt.map { "把「\($0.source)」合并进「\($0.branch)」？" } ?? "",
+    }
+
+    private var repositoryPrompts: some View {
+        let mergeTitle = model.mergePrompt.map { "把「\($0.source)」合并进「\($0.branch)」？" } ?? ""
+        let switchTitle = model.branchSwitchPrompt.map { "切换到「\($0.target.name)」" } ?? ""
+        return workspaceSheets
+        .confirmationDialog(mergeTitle,
                             isPresented: Binding(get: { model.mergePrompt != nil }, set: { if !$0 { model.mergePrompt = nil } }),
                             presenting: model.mergePrompt) { plan in
             if plan.blocked == nil {
@@ -89,7 +112,7 @@ struct FolmiView: View {
         } message: { plan in
             Text(FolmiModel.mergeMessage(plan))
         }
-        .confirmationDialog(model.branchSwitchPrompt.map { "切换到「\($0.target.name)」" } ?? "",
+        .confirmationDialog(switchTitle,
                             isPresented: Binding(get: { model.branchSwitchPrompt != nil }, set: { if !$0 { model.branchSwitchPrompt = nil } }),
                             presenting: model.branchSwitchPrompt) { plan in
             if plan.canStash {
@@ -100,6 +123,10 @@ struct FolmiView: View {
             Text(plan.blocker ?? "")
         }
         .modifier(RefPrompts(model: model))
+    }
+
+    private var windowPrompts: some View {
+        repositoryPrompts
         .alert(model.discardPrompt?.title ?? "",
                isPresented: Binding(get: { model.discardPrompt != nil }, set: { if !$0 { model.discardPrompt = nil } }),
                presenting: model.discardPrompt) { prompt in
@@ -146,17 +173,6 @@ struct FolmiView: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
-        // Text without its own font (labels, buttons, menus) in the pixel font under 像素; reads the theme set below.
-        .themedFont(.body, points: 13)
-        // Last, so the sheets above (push, pull, settings…) get the theme too, not just the window. The accent tint
-        // stays on the window: in a sheet it would turn every plain button into accent-colored text.
-        .environment(\.folmiTheme, model.theme)
-        .environment(\.folmiGlass, model.glassSurfaces)
-        .environment(\.foldWhitespaceHunks, model.foldWhitespace)
-        // Reading repositoryURL (observed) re-reads the repository when the project changes.
-        .environment(\.gitRepository, model.repositoryURL == nil ? nil : model.repository)
-        // A design swaps a custom font for the system one in that design, so the pixel font goes without it.
-        .fontDesign(model.theme.style.pixelFont && PixelFont.isAvailable ? nil : model.theme.style.fontDesign)
     }
 }
 
