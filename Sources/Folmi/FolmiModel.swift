@@ -45,10 +45,12 @@ final class FolmiModel {
     var area: ChangeArea = .working
     var fileDiff: FileDiff?
     var fileDiffs: [FileDiff] = []
+    var diffLoading = false
     var selectedLines: [String: Set<Int>] = [:]
     var draftMessage = "" { didSet { scheduleSave() } }
     var amendLast = false { didSet { scheduleSave() } }
     var busy = false
+    var projectReadStatus: String?
     var gitStartupState: GitStartupState = .unchecked
     var gitInstallMessage: String?
     var gitInstallerRunning = false
@@ -276,7 +278,7 @@ final class FolmiModel {
     var largeRepositoryOffer = false
     var lastSlowStatus: TimeInterval = 0
     @ObservationIgnored var slowStatusCount = 0
-    func toggleShortcuts() { withMotion(.easeOut(duration: 0.12)) { showShortcuts = showShortcuts == .pinned ? .hidden : .pinned } }
+    func toggleShortcuts() { showShortcuts = showShortcuts == .pinned ? .hidden : .pinned }
     @ObservationIgnored var savedSnapshotFingerprint: String?
     /// Projects whose terminal tabs were all closed: reopening starts one fresh tab.
     @ObservationIgnored var terminalTabsCleared: Set<String> = []
@@ -571,6 +573,7 @@ final class FolmiModel {
         guard !busy, !gitStartupState.blocksGit else { return }
         do { try savePreferencesNow() } catch { report(error, title: "保存配置失败"); return }
         busy = true
+        projectReadStatus = "正在创建演示项目…"
         Task {
             do {
                 let demo = try await DemoRepository.create(includeNavigationSamples: true, remoteUpdates: true)
@@ -578,6 +581,7 @@ final class FolmiModel {
                 record("演示项目已创建", "\(demo.root.path)\n远程 demo 是本地临时裸仓库；终端也使用隔离环境。")
                 try savePreferencesNow()
             } catch { report(error, title: "创建演示项目失败") }
+            projectReadStatus = nil
             busy = false
         }
     }
@@ -587,6 +591,7 @@ final class FolmiModel {
         PerfLog.mark("launch.openCalled")
         do { try savePreferencesNow() } catch { report(error, title: "保存配置失败"); return }
         busy = true
+        projectReadStatus = "正在打开项目…"
         // A project opened before is drawn from its last saved status first; the real status follows at once.
         let cached = SnapshotCache.load(root: url.standardizedFileURL.path)
         PerfLog.mark(cached == nil ? "launch.cacheMiss" : "launch.cacheHit")
@@ -599,6 +604,7 @@ final class FolmiModel {
                 await loadWorktrees()
             } catch let error where FolmiModel.isNotRepository(error) { reportNotRepository(url) }
             catch { report(error, title: "打开项目失败") }
+            projectReadStatus = nil
             busy = false
             openPendingTaskLine()
             // The saved status is replaced right away; a project that can no longer be read says so.
@@ -642,6 +648,7 @@ final class FolmiModel {
         let settings = savedProject(state.root.path)!
         largeRepositoryOffer = false; slowStatusCount = 0
         area = ChangeArea(rawValue: settings.lastArea) ?? .working
+        diffRequest = UUID(); diffLoading = false
         selectedFileID = nil; selectedFileIDs = []; fileDiff = nil; fileDiffs = []; selectedLines = [:]; fileSearch = ""
         reviewCommentReveal = nil
         diffEditReturn = nil; diffEditReveal = nil; diffEditRequest = UUID()
@@ -858,7 +865,11 @@ final class FolmiModel {
     func refresh() {
         guard !busy, repository != nil else { return }
         busy = true
-        Task { do { try await reload() } catch { report(error, title: "刷新失败") }; busy = false }
+        projectReadStatus = "正在刷新项目状态…"
+        Task {
+            defer { projectReadStatus = nil; busy = false }
+            do { try await reload() } catch { report(error, title: "刷新失败") }
+        }
     }
     func reload() async throws {
         guard let repository else { return }
@@ -957,9 +968,10 @@ final class FolmiModel {
             area = change.hasWorking ? .working : .staged
             selectedFileIDs = [change.id]
             selectedFileID = change.id
-            Task { await updateDiff() }
+            queueDiffUpdate()
         } else {
             diffRequest = UUID()
+            diffLoading = false
             selectedFileIDs = []
             selectedFileID = path
             selectedLines = [:]
@@ -1114,7 +1126,7 @@ final class FolmiModel {
     func mutate(_ title: String, clearDraft: Bool = false, operation: @escaping () async throws -> String,
                 succeeded: (() -> Void)? = nil, after: (() -> Void)? = nil) {
         guard !busy else { return }
-        busy = true; diffRequest = UUID(); deliveryPlan = nil
+        busy = true; diffRequest = UUID(); diffLoading = false; deliveryPlan = nil
         Task {
             do {
                 let output = try await operation()

@@ -84,7 +84,7 @@ struct ShortcutOverlay: View {
 
     var body: some View {
         // Reading the state here keeps the window itself from re-rendering when the sheet opens or closes.
-        ZStack { content }.motion(.easeOut(duration: 0.12), value: model.showShortcuts)
+        ZStack { content }.dissolve(value: model.showShortcuts, animation: Motion.state)
     }
 
     @ViewBuilder private var content: some View {
@@ -119,7 +119,7 @@ struct ShortcutOverlay: View {
             .overlay(RoundedRectangle(cornerRadius: theme.style.radius(.card) + 4, style: .continuous).strokeBorder(ThemeColor(token: .border)))
             .shadow(color: .black.opacity(0.18), radius: 24, y: 8)
             .padding(40)
-            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            .transition(.opacity)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("快捷键一览")
         }

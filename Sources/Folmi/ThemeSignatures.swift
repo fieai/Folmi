@@ -111,22 +111,19 @@ struct CommitSweepLine: View {
     @State private var visible = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        GeometryReader { geometry in
-            Rectangle().fill(.themed(.added))
-                .frame(width: geometry.size.width * progress, height: 2)
-                .opacity(visible ? 1 : 0)
-        }
-        .frame(height: 2)
-        .allowsHitTesting(false)
-        .onChange(of: trigger) { _, value in
-            guard value != nil, !reduceMotion else { return }
-            progress = 0
-            visible = true
-            withAnimation(Motion.resolved(.easeInOut(duration: 0.55), reduceMotion: reduceMotion)) { progress = 1 }
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(0.75))
-                withAnimation(Motion.resolved(.easeOut(duration: 0.3), reduceMotion: reduceMotion)) { visible = false }
+        Rectangle().fill(.themed(.added))
+            .frame(height: 2)
+            .scaleEffect(x: progress, y: 1, anchor: .leading)
+            .opacity(visible && !reduceMotion ? 1 : 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .task(id: trigger) {
+                guard trigger != nil, !reduceMotion else { return }
+                progress = 0
+                visible = true
+                withMotion(Motion.layout) { progress = 1 }
+                do { try await Task.sleep(for: .milliseconds(490)) } catch { return }
+                withMotion(Motion.reveal) { visible = false }
             }
-        }
     }
 }

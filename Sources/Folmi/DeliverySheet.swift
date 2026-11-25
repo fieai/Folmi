@@ -268,7 +268,7 @@ struct ActivitySheet: View {
             HStack {
                 Text("操作记录").themedFont(.title3.weight(.semibold), points: 15)
                 Spacer()
-                if model.busy { ProgressView().controlSize(.small) }
+                if model.busy { WaitingIndicator().controlSize(.small) }
                 Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction)
             }
             Text("本次会话的命令、结果和错误输出。")

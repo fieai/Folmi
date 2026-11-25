@@ -90,7 +90,7 @@ extension FolmiModel {
         }
         if agentSessions.contains(where: \.isBusy) { return CompanionStatus(state: .working, text: "AI 正在回答…") }
         if commitSuggestion == .generating { return CompanionStatus(state: .thinking, text: "正在写提交说明…") }
-        if busy { return CompanionStatus(state: .working, text: "正在执行…") }
+        if busy { return CompanionStatus(state: .working, text: projectReadStatus ?? "正在执行…") }
         if !hasSnapshot { return CompanionStatus(state: .sleep, text: nil) }
         return CompanionStatus(state: .idle, text: nil)
     }
@@ -140,12 +140,13 @@ struct CompanionStatusItem: View {
         let lasting = model.companionStatus
         let showSuccess = celebrating != nil && lasting.state.priority < CompanionState.success.priority
         let state = showSuccess ? .success : lasting.state
+        let title = showSuccess ? "已提交 \(celebrating?.id.prefix(7) ?? "")" : lasting.text ?? (model.hasSnapshot ? "就绪" : "选择仓库开始")
         HStack(spacing: 5) {
             CompanionMark(state: state, size: 16, animated: false)
-            Text(showSuccess ? "已提交 \(celebrating?.id.prefix(7) ?? "")" : lasting.text ?? (model.hasSnapshot ? "就绪" : "选择仓库开始"))
+            Text(title)
                 .foregroundStyle(ThemeColor(token: state == .error ? .removed : state == .attention ? .modified : .secondaryText))
                 .lineLimit(1)
-                .contentTransition(.opacity)
+                .motionContent(title)
         }
         .onChange(of: model.lastCommit) { _, toast in
             guard let toast else { return }

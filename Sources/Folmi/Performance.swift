@@ -176,11 +176,15 @@ enum PerfLog {
         guard enabled, let pending = readerSwitch else { return }
         interval(name, since: pending.start, detail: pending.label)
     }
-    static func readerPainted(_ path: String, bytes: Int, renderStart: ContinuousClock.Instant) {
+    static func readerSwitchStart(for path: String) -> ContinuousClock.Instant? {
+        guard let pending = readerSwitch, pending.path == path else { return nil }
+        return pending.start
+    }
+    static func readerPainted(_ path: String, bytes: Int, switchStart: ContinuousClock.Instant?, renderStart: ContinuousClock.Instant?) {
         guard enabled else { return }
         mark("launch.readerPainted")
-        interval("reader.render", since: renderStart, detail: "\(path) \(bytes)B")
-        if let pending = readerSwitch, pending.path == path {
+        if let renderStart { interval("reader.render", since: renderStart, detail: "\(path) \(bytes)B") }
+        if let pending = readerSwitch, pending.path == path, pending.start == switchStart {
             readerSwitch = nil
             interval("switch.reader", since: pending.start, detail: "\(pending.label) \(path) \(bytes)B")
         }

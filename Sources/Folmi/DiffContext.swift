@@ -122,7 +122,7 @@ struct DiffContextView: View {
         } else if let failure {
             notice(failure)
         } else {
-            ProgressView().controlSize(.mini).padding(8).accessibilityLabel("正在读取上下文")
+            WaitingIndicator().controlSize(.mini).padding(8).accessibilityLabel("正在读取上下文")
         }
     }
 

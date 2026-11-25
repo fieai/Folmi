@@ -121,18 +121,16 @@ struct EditorOrDiffPage: View {
     let model: FolmiModel
     @ObservedObject var workspace: EditorWorkspace
     let tracker: PaneFocusTracker
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let _ = PerfLog.body("EditorOrDiffPage")
         let columnsShown = model.content == .editor || workspace.columns.hasDiff
-        ZStack {
+        Group {
             if columnsShown {
-                EditorColumnsView(model: model, workspace: workspace, tracker: tracker).transition(.opacity)
+                EditorColumnsView(model: model, workspace: workspace, tracker: tracker)
             } else {
-                DiffPane(model: model).transition(.opacity)
+                DiffPane(model: model)
             }
         }
-        .animation(reduceMotion ? nil : Motion.state, value: columnsShown)
     }
 }
 

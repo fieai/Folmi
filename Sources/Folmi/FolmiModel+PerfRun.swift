@@ -50,7 +50,7 @@ extension FolmiModel {
                     try? await Task.sleep(for: .milliseconds(900))
                 }
             }
-            // Through a code file and back: the reader's web view is torn down for the code file and built again.
+            // Through a code file and back: the same reader returns with its existing document.
             if let code = browserPaths.first(where: { !$0.lowercased().hasSuffix(".md") && size($0) > 0 }), let back = markdown.first {
                 for _ in 0..<3 {
                     editPath(code); try? await Task.sleep(for: .milliseconds(600))

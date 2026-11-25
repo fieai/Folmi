@@ -11,7 +11,7 @@ struct CommitSuggestionStatus: View {
         switch model.commitSuggestion {
         case .idle: EmptyView()
         case .generating:
-            HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("AI 正在写提交说明…") }
+            HStack(spacing: 4) { WaitingIndicator().controlSize(.mini); Text("AI 正在写提交说明…") }
                 .themedFont(.caption2, points: 10).foregroundStyle(.secondary)
         case .ready(let source):
             Label("已写好 · \(source)", systemImage: "sparkles").themedFont(.caption2, points: 10).foregroundStyle(.secondary)

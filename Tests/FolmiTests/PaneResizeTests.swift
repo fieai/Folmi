@@ -48,6 +48,23 @@ final class PaneResizeTests: XCTestCase {
         XCTAssertEqual(began, 0)
     }
 
+    func testDividerUsesTheVisibleSizeWhenTheSavedSizeNoLongerFits() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: true)
+        let divider = PaneDividerView(vertical: false)
+        window.contentView?.addSubview(divider)
+        var value = 560.0, ended = 0
+        divider.value = { value }
+        divider.limit = { _ in 220...400 }
+        divider.onChange = { value = $0 }
+        divider.onEnd = { ended += 1 }
+
+        divider.mouseDown(with: mouse(.leftMouseDown, at: NSPoint(x: 400, y: 10), in: window))
+        divider.mouseDragged(with: mouse(.leftMouseDragged, at: NSPoint(x: 380, y: 10), in: window))
+        XCTAssertEqual(value, 380)
+        divider.removeFromSuperview()
+        XCTAssertEqual(ended, 1)
+    }
+
     func testSizesFollowTheModelExceptDuringADrag() {
         let sizes = PaneSizes()
         var layout = PaneLayoutState()

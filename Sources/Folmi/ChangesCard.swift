@@ -9,7 +9,6 @@ struct SideCard: View {
     @Binding var treeQuery: String
     let treeExpansion: ProjectTreeExpansion
     @State private var groupChangesByFolder = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let _ = PerfLog.body("SideCard")
@@ -27,14 +26,13 @@ struct SideCard: View {
                     .themedCapsule(ThemeColor(token: .accent, opacity: 0.12))
             }
         } content: {
-            ZStack {
+            Group {
                 if tab == .files {
-                    TreePane(model: model, query: $treeQuery, expansion: treeExpansion).transition(.opacity)
+                    TreePane(model: model, query: $treeQuery, expansion: treeExpansion)
                 } else {
-                    ChangesPane(model: model, groupByFolder: $groupChangesByFolder).transition(.opacity)
+                    ChangesPane(model: model, groupByFolder: $groupChangesByFolder)
                 }
             }
-            .animation(reduceMotion ? nil : Motion.state, value: tab)
             .onChange(of: model.repositoryURL?.path) { _, _ in treeExpansion.reset(); treeQuery = "" }
         }
     }
@@ -86,7 +84,7 @@ struct TreePane: View {
                 }
                 .padding(.horizontal, 6).padding(.bottom, 6)
             }
-            if model.treeLoading { ProgressView("读取文件树…").controlSize(.small).padding(8) }
+            if model.treeLoading { WaitingIndicator("读取文件树…").controlSize(.small).padding(8) }
             if let error = model.treeError {
                 Label(error, systemImage: "exclamationmark.triangle").themedFont(.caption, points: 10).foregroundStyle(.secondary).padding(12)
                 Spacer(minLength: 0)
@@ -323,10 +321,8 @@ struct ChangesPane: View {
                     if let root = model.snapshot?.root { PerfLog.largeProjectListReady(root: root) }
                 }
                 .task(id: model.theme.style.instrument ? model.snapshot?.fingerprint : nil) { await model.loadLineCounts() }
-                // Staging, unstaging or committing slides rows from one group to the other instead of a jump.
-                .motion(Motion.reveal, value: forcedGrouping ? [] : staged.map(\.id) + ["|"] + working.map(\.id))
                 .transaction { transaction in
-                    // Animating thousands of hidden file identities delays the first usable large-project frame.
+                    // Large repositories can apply thousands of row identities in one update.
                     if forcedGrouping { transaction.animation = nil; transaction.disablesAnimations = true }
                 }
                 }
@@ -602,7 +598,7 @@ struct GroupHeader: View {
             Circle().fill(ThemeColor(token: token)).frame(width: 6, height: 6)
             Text(title).themedFont(.system(size: 11.5, weight: .semibold), points: 11.5).foregroundStyle(ThemeColor(token: .foreground))
             Text("\(count)").themedFont(.system(size: 11, weight: .medium).monospacedDigit(), points: 11).foregroundStyle(.secondary)
-                .contentTransition(.numericText())
+                .motionContent(count, transition: .numericText())
             Text(detail).themedFont(.caption2, points: 10).foregroundStyle(.secondary)
             if let warning {
                 Text("· " + warning).themedFont(.caption2, points: 10).foregroundStyle(ThemeColor(token: .modified)).lineLimit(1)
@@ -618,7 +614,6 @@ struct GroupHeader: View {
                     .themedFont(.caption, points: 11).accessibilityLabel("\(moveAll.title)\(title) \(count) 个文件")
             }
         }
-        .motion(Motion.reveal, value: count)
     }
 }
 
@@ -642,7 +637,7 @@ struct StashEntryRow: View {
             HStack(spacing: 7) {
                 Image(systemName: "tray.full").font(.system(size: 12))
                 Text("暂放的改动").themedFont(.caption, points: 10)
-                Text("\(count)").themedFont(.caption.monospacedDigit(), points: 10).contentTransition(.numericText())
+                Text("\(count)").themedFont(.caption.monospacedDigit(), points: 10).motionContent(count, transition: .numericText())
                 if nudge, let oldest {
                     Text("· 最早 " + oldest.formatted(.relative(presentation: .named)) + "，该清理了")
                         .themedFont(.caption, points: 10).foregroundStyle(ThemeColor(token: .modified)).lineLimit(1)
@@ -658,8 +653,7 @@ struct StashEntryRow: View {
         }
         .buttonStyle(.pressableRow)
         .onHover { hovering = $0 }
-        .motion(Motion.hover, value: hovering)
-        .motion(Motion.reveal, value: count)
+        .dissolve(value: hovering, animation: Motion.hover)
         .help("查看、拿回或删除暂放的改动")
     }
 }
@@ -667,32 +661,32 @@ struct StashEntryRow: View {
 struct ReviewEntryRow: View {
     let model: FolmiModel
     @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let _ = PerfLog.body("ReviewEntryRow")
         let files = model.snapshot?.files.count ?? 0
         let tally = model.reviewTally
         let fresh = model.openingBanner != nil
+        let done = tally.hunks > 0 && tally.remaining == 0
+        let subtitle = model.openingBanner ?? detail(files: files, tally: tally)
         let shape = RoundedRectangle(cornerRadius: model.theme.style.radius(.control), style: .continuous)
         Button { model.showContent(.allChanges); model.focusPane(.editor) } label: {
             HStack(spacing: 8) {
-                Image(systemName: tally.hunks > 0 && tally.remaining == 0 ? "checkmark.circle" : "checklist")
+                Image(systemName: done ? "checkmark.circle" : "checklist")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(ThemeColor(token: fresh ? .accent : .secondaryText))
-                    .contentTransition(.symbolEffect(.replace))
+                    .motionContent(done, transition: .symbolEffect(.replace))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("逐个验收").themedFont(.system(size: 12.5, weight: .semibold), points: 12.5)
-                    Text(model.openingBanner ?? detail(files: files, tally: tally))
+                    Text(subtitle)
                         .themedFont(.caption, points: 10).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                        .contentTransition(.numericText())
+                        .motionContent(subtitle, transition: .numericText())
                 }
                 Spacer(minLength: 4)
                 if tally.hunks > 0 {
                     ThemeProgressBar(fraction: Double(tally.seen) / Double(max(1, tally.hunks)), width: 36)
                 }
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                    .offset(x: hovering && !reduceMotion ? 2 : 0)
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -702,10 +696,9 @@ struct ReviewEntryRow: View {
         }
         .buttonStyle(.pressableRow)
         .onHover { hovering = $0 }
-        .animation(reduceMotion ? nil : Motion.hover, value: hovering)
-        .animation(reduceMotion ? nil : Motion.reveal, value: fresh)
-        .animation(reduceMotion ? nil : Motion.reveal, value: tally)
-        .help("在「全部改动」里一处一处过：空格看下一处，⏎ 通过并暂存，⌫ 不要，⌘Z 撤销")
+        .dissolve(value: hovering, animation: Motion.hover)
+        .dissolve(value: fresh)
+        .help("空格看下一处，⏎ 收下，⌫ 丢弃，⌥⌘Z 撤销")
     }
 
     private func detail(files: Int, tally: ReviewTally) -> String {
@@ -772,13 +765,17 @@ struct CommitSection: View {
                 Button("建议拆分") { model.suggestSplit() }
             }.controlSize(.small).disabled(model.busy || model.stagedCount == 0)
 
-            if let hint, !hint.field {
-                Label(hint.text, systemImage: hint.symbol)
-                    .themedFont(.caption, points: 10)
-                    .foregroundStyle(ThemeColor(token: hint.blocking ? .modified : .secondaryText))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .transition(.opacity.combined(with: .offset(y: -4)))
+            ZStack {
+                if let hint, !hint.field {
+                    Label(hint.text, systemImage: hint.symbol)
+                        .themedFont(.caption, points: 10)
+                        .foregroundStyle(ThemeColor(token: hint.blocking ? .modified : .secondaryText))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .motionContent(hint)
+                        .transition(.opacity)
+                }
             }
+            .dissolve(value: hint != nil && hint?.field == false)
             } else if !model.isComposingCommit, model.unpushedCount > 0 {
                 Button("推送 \(model.unpushedCount) 个提交…", action: model.prepareDelivery)
                     .controlSize(.small).disabled(model.busy)
@@ -786,7 +783,6 @@ struct CommitSection: View {
             CommitExclusionNote(model: model)
         }
         .padding(Metrics.contentInset)
-        .motion(Motion.reveal, value: commitHint?.text)
     }
 
     private struct Hint: Equatable {
@@ -818,7 +814,6 @@ struct CommitActionButton: View {
     let model: FolmiModel
     @State private var justCommitted: CommitToast?
     @State private var completionTick = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
     private enum Phase: Equatable { case commit, committed, push }
@@ -837,9 +832,9 @@ struct CommitActionButton: View {
                 ZStack {
                     label(for: phase, unpushed: unpushed)
                         .id(phase)
-                        .transition(terrazzo ? .opacity : .asymmetric(insertion: .offset(y: 14).combined(with: .opacity),
-                                                                      removal: .offset(y: -14).combined(with: .opacity)))
+                        .transition(.opacity)
                 }
+                .dissolve(value: phase, animation: Motion.state)
                 .frame(maxWidth: .infinity)
                 .clipped()
             }
@@ -850,14 +845,15 @@ struct CommitActionButton: View {
                     .fill(ThemeColor(token: .added))
                     .overlay { if phase == .committed { label(for: .committed, unpushed: unpushed).foregroundStyle(successText) } }
                     .opacity(phase == .committed ? 1 : 0)
+                    .dissolve(value: phase == .committed)
                     .padding(.bottom, model.theme.style.prominent == .clay ? 3 : 0)
                     .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
             .overlay(alignment: .bottomLeading) {
                 // 锌莓's signature: a line runs the button's width once when the commit lands.
                 if model.theme.style.instrument { CommitSweepLine(trigger: justCommitted?.id).offset(y: 5) }
             }
-            .scaleEffect(phase == .committed && !reduceMotion && !terrazzo ? 1.03 : 1)
             .terrazzoParticles(trigger: completionTick)
             .disabled(phase == .committed || (phase == .push ? model.busy : !model.canCommit))
             .help(phase == .push ? "先预览目标和命令，确认后再推送" : "提交暂存区（⌘↵）")
@@ -866,19 +862,19 @@ struct CommitActionButton: View {
                 Button { model.prepareDelivery() } label: { Label("↑\(unpushed)", systemImage: "arrow.up").labelStyle(.titleOnly).monospacedDigit() }
                     .disabled(model.busy)
                     .help("推送已有的 \(unpushed) 个提交")
-                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    .transition(.opacity)
             }
         }
         .controlSize(.large)
-        .animation(reduceMotion ? nil : (terrazzo ? .easeOut(duration: 0.18) : Motion.settle), value: phase)
         .onChange(of: model.lastCommit) { _, toast in
             guard let toast else { return }
             justCommitted = toast
             if model.theme == .terrazzo || model.theme == .pixel { completionTick += 1 }
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(reduceMotion ? 1.2 : 1.6))
-                if justCommitted == toast { justCommitted = nil }
-            }
+        }
+        .task(id: justCommitted) {
+            guard let toast = justCommitted else { return }
+            do { try await Task.sleep(for: .seconds(1.4)) } catch { return }
+            if justCommitted == toast { justCommitted = nil }
         }
     }
 
@@ -886,20 +882,17 @@ struct CommitActionButton: View {
         switch phase {
         case .commit:
             HStack(spacing: 8) {
-                Text(model.amendLast ? "修订提交" : "提交暂存区 \(model.stagedCount)").contentTransition(.numericText())
+                Text(model.amendLast ? "修订提交" : "提交暂存区 \(model.stagedCount)")
+                    .motionContent(model.stagedCount, transition: .numericText())
                 if model.theme.style.instrument {
                     Text("⌘↩").font(.system(size: 11, design: .monospaced)).opacity(0.7)
                 }
             }
         case .committed:
-            if model.theme == .terrazzo {
-                Label("已提交 \(justCommitted?.id.prefix(7) ?? "")", systemImage: "checkmark.circle.fill")
-            } else {
-                Label("已提交 \(justCommitted?.id.prefix(7) ?? "")", systemImage: "checkmark.circle.fill")
-                    .symbolEffect(.bounce, value: justCommitted?.id)
-            }
+            Label("已提交 \(justCommitted?.id.prefix(7) ?? "")", systemImage: "checkmark.circle.fill")
         case .push:
-            Label("推送 \(unpushed) 个提交", systemImage: "arrow.up.circle").contentTransition(.numericText())
+            Label("推送 \(unpushed) 个提交", systemImage: "arrow.up.circle")
+                .motionContent(unpushed, transition: .numericText())
         }
     }
 }

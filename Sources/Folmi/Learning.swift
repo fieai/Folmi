@@ -512,7 +512,7 @@ struct RuleProposalCard: View {
         }
         .padding(12).frame(maxWidth: 420, alignment: .leading)
         .background(ThemeColor(token: .accent, opacity: 0.06), in: RoundedRectangle(cornerRadius: 8))
-        .sheet(isPresented: $editing) { RuleWriteSheet(model: model, proposal: proposal).sheetEntrance() }
+        .sheet(isPresented: $editing) { RuleWriteSheet(model: model, proposal: proposal).folmiSheetStyle() }
     }
 }
 
@@ -561,7 +561,7 @@ struct RuleWriteSheet: View {
                 .frame(height: 220).background(ThemeColor(token: .canvas), in: RoundedRectangle(cornerRadius: 6))
             }
             HStack {
-                if polishing { ProgressView().controlSize(.small); Text("正在改写…").themedFont(.caption, points: 10).foregroundStyle(.secondary) }
+                if polishing { WaitingIndicator().controlSize(.small); Text("正在改写…").themedFont(.caption, points: 10).foregroundStyle(.secondary) }
                 Spacer()
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("写入") {
@@ -660,7 +660,7 @@ struct MemorySheet: View {
         }
         .padding(20).frame(width: 580)
         .onAppear { model.refreshLearning() }
-        .sheet(isPresented: $adding, onDismiss: { refresh += 1 }) { RuleWriteSheet(model: model, proposal: nil).sheetEntrance() }
+        .sheet(isPresented: $adding, onDismiss: { refresh += 1 }) { RuleWriteSheet(model: model, proposal: nil).folmiSheetStyle() }
     }
 
     static func describe(_ key: String) -> String {

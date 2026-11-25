@@ -202,7 +202,7 @@ struct HistoryDiffSequence: View {
             Label("读取差异失败。\(message)", systemImage: "exclamationmark.triangle")
                 .themedFont(.caption, points: 11).foregroundStyle(.secondary).padding(12)
         case nil:
-            ProgressView().controlSize(.small).padding(12)
+            WaitingIndicator().controlSize(.small).padding(12)
                 .accessibilityLabel("正在读取 \(file.path)")
                 .task { await source.load(file, scope: scope, repository: repository) }
         }
@@ -232,7 +232,7 @@ struct HistoryDiffSequence: View {
                         Image(systemName: "exclamationmark.triangle").help("部分文件读取失败，未计入查找")
                     }
                 } else {
-                    ProgressView().controlSize(.mini).accessibilityLabel("正在查找")
+                    WaitingIndicator().controlSize(.mini).accessibilityLabel("正在查找")
                 }
             }
             PaneIconButton(symbol: "chevron.up", help: "上一项（⇧⏎）") { stepSearch(by: -1) }

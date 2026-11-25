@@ -386,7 +386,7 @@ private struct StashFilePreview: View {
                         } else if let error {
                             Text(error).themedFont(.caption, points: 10).foregroundStyle(.secondary).padding(10)
                         } else {
-                            ProgressView().controlSize(.small).padding(10)
+                            WaitingIndicator().controlSize(.small).padding(10)
                         }
                     }
                 }.frame(height: 245)

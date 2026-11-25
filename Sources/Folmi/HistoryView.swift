@@ -36,7 +36,7 @@ struct HistoryView: View {
         .sheet(item: $rewording) { detail in
             RewordSheet(text: $rewordText, onCancel: { rewording = nil },
                         onSave: { model.rewordCommit(detail.id, message: rewordText); rewording = nil })
-                .sheetEntrance()
+                .folmiSheetStyle()
         }
         .sheet(item: $model.squashPrompt) { plan in
             RewordSheet(text: $squashText, title: "把 \(plan.count) 个提交合并成一个",
@@ -44,7 +44,7 @@ struct HistoryView: View {
                         saveTitle: "合并提交",
                         onCancel: { model.squashPrompt = nil },
                         onSave: { model.squash(plan, message: squashText) })
-                .sheetEntrance()
+                .folmiSheetStyle()
                 .onAppear { squashText = plan.suggestedMessage }
         }
         .alert("从这个提交新建分支", isPresented: Binding(get: { branchFrom != nil }, set: { if !$0 { branchFrom = nil } })) {
@@ -94,7 +94,7 @@ struct HistoryView: View {
                 } else if querying {
                     Text("筛选到 \(filtered.count) 个").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                 }
-                if model.historyLoading { ProgressView().controlSize(.mini) }
+                if model.historyLoading { WaitingIndicator().controlSize(.mini) }
                 Spacer()
                 if model.historyPath == nil {
                     historyScopePicker
@@ -318,7 +318,7 @@ struct HistoryView: View {
                                                previewHeight: max(ChangePreview.defaultHeight, geometry.size.height - 60))
                             .id(detail.id + diff.file.path)
                     } else {
-                        ProgressView().controlSize(.small).padding(20)
+                        WaitingIndicator().controlSize(.small).padding(20)
                     }
                 }
             }

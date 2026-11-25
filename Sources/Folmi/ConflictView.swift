@@ -51,7 +51,7 @@ struct ConflictView: View {
             LazyVStack(alignment: .leading, spacing: 12) {
                 header(names)
                 if !loaded {
-                    ProgressView().controlSize(.small)
+                    WaitingIndicator().controlSize(.small)
                 } else if let file {
                     if file.blocks.isEmpty {
                         resolvedNote
@@ -232,7 +232,7 @@ private struct ConflictAncestorText: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).themedFont(.caption.weight(.medium), points: 10)
             if loading {
-                ProgressView().controlSize(.small)
+                WaitingIndicator().controlSize(.small)
             } else {
                 let content = text.map { $0.isEmpty ? "（这一处为空）" : $0 } ?? "共同祖先中没有可显示的文本。"
                 Text(content)

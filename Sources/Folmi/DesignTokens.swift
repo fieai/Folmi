@@ -3,24 +3,18 @@ import SwiftUI
 // Shared motion and size values. Views pick a named token instead of writing their own duration or spacing, so the
 // whole app moves and lines up the same way, and a change here retunes every place at once.
 
-/// Every animation in the app is one of these.
+/// Shared timing for feedback, content changes and deliberate changes to the layout.
 enum Motion {
-    /// Hover fills and small pointer feedback.
-    static let hover = Animation.easeOut(duration: 0.12)
-    /// A button giving under the pointer and coming back.
-    static let press = Animation.spring(response: 0.2, dampingFraction: 0.6)
-    /// Selection, tab switches, toggles: one state replacing another.
-    static let state = Animation.snappy(duration: 0.2)
-    /// Something arriving or leaving inside a card: rows, notices, counts.
-    static let reveal = Animation.snappy(duration: 0.26)
-    /// Cards opening, closing, maximizing.
-    static let layout = Animation.smooth(duration: 0.3)
-    /// Something landing with weight: a commit, an edge springing back to its limit.
-    static let settle = Animation.spring(response: 0.4, dampingFraction: 0.68)
+    static let hoverDuration = 0.12
+    static let hover = Animation.easeOut(duration: hoverDuration)
+    static let press = Animation.smooth(duration: 0.14)
+    static let state = Animation.smooth(duration: 0.16)
+    static let reveal = Animation.smooth(duration: 0.20)
+    static let layout = Animation.smooth(duration: 0.24)
+    /// The short dissolve used for feedback that can also play under Reduce Motion.
+    static let fade = Animation.easeOut(duration: 0.10)
     /// Keeping a list's selection in view while arrowing through it.
     static let scroll = Animation.easeOut(duration: 0.1)
-    /// A slow breathing pulse for work in progress.
-    static let pulse = Animation.easeInOut(duration: 0.9).repeatForever()
 
     /// The animation, or none when the person asked the system to reduce motion.
     static func resolved(_ animation: Animation, reduceMotion: Bool) -> Animation? { reduceMotion ? nil : animation }
@@ -39,21 +33,44 @@ enum Metrics {
     /// Inner padding of a card's own content.
     static let contentInset: CGFloat = 10
     /// How far a pressed control shrinks, and a pressed full-width row.
-    static let pressScale: CGFloat = 0.94
-    static let rowPressScale: CGFloat = 0.985
+    static let pressScale: CGFloat = 0.98
+    static let rowPressScale: CGFloat = 0.99
 }
 
 private struct MotionAnimation<Value: Equatable>: ViewModifier {
     let animation: Animation
     let value: Value
+    let fadesUnderReduceMotion: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func body(content: Content) -> some View { content.animation(reduceMotion ? nil : animation, value: value) }
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? (fadesUnderReduceMotion ? Motion.fade : nil) : animation, value: value)
+    }
+}
+
+private struct MotionContent<Value: Equatable>: ViewModifier {
+    let value: Value
+    let transition: ContentTransition
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .contentTransition(reduceMotion ? .opacity : transition)
+            .dissolve(value: value, animation: Motion.state)
+    }
 }
 
 extension View {
-    /// `.animation(_:value:)` that stays still when Reduce Motion is on.
     func motion<Value: Equatable>(_ animation: Animation, value: Value) -> some View {
-        modifier(MotionAnimation(animation: animation, value: value))
+        modifier(MotionAnimation(animation: animation, value: value, fadesUnderReduceMotion: false))
+    }
+
+    /// Use on leaves whose feedback changes only opacity, fill or content.
+    func dissolve<Value: Equatable>(value: Value, animation: Animation = Motion.reveal) -> some View {
+        modifier(MotionAnimation(animation: animation, value: value, fadesUnderReduceMotion: true))
+    }
+
+    func motionContent<Value: Equatable>(_ value: Value, transition: ContentTransition = .opacity) -> some View {
+        modifier(MotionContent(value: value, transition: transition))
     }
 }
 
@@ -63,8 +80,7 @@ func withMotion<Result>(_ animation: Animation, _ body: () throws -> Result) ret
     try withAnimation(Motion.resolved(animation, reduceMotion: Motion.systemReducesMotion), body)
 }
 
-/// A plain button that answers a click: it gives a little under the pointer and springs back. Square-cornered
-/// themes (像素) press down by a pixel instead of shrinking, like a hardware key.
+/// A plain button that answers a click. In the pixel theme it presses down like a hardware key.
 struct PressableButtonStyle: ButtonStyle {
     enum Kind { case control, row }
     var kind: Kind = .control
@@ -83,10 +99,10 @@ struct PressableButtonStyle: ButtonStyle {
             let pixel = theme.style.isSquare
             let scale = kind == .row ? Metrics.rowPressScale : Metrics.pressScale
             label
-                .opacity(pressed ? 0.78 : 1)
+                .opacity(pressed ? 0.86 : 1)
                 .scaleEffect(pressed && !pixel && !reduceMotion ? scale : 1)
-                .offset(x: pressed && pixel ? 1 : 0, y: pressed && pixel ? 1 : 0)
-                .animation(reduceMotion ? nil : Motion.press, value: pressed)
+                .offset(x: pressed && pixel && !reduceMotion ? 1 : 0, y: pressed && pixel && !reduceMotion ? 1 : 0)
+                .dissolve(value: pressed, animation: Motion.press)
                 .pointerCursor()
         }
     }
@@ -128,7 +144,8 @@ struct ThemedLinkButtonStyle: ButtonStyle {
             configuration.label
                 .foregroundStyle(enabled ? AnyShapeStyle(ThemeColor(token: .link)) : AnyShapeStyle(.tertiary))
                 .underline(hovering && enabled)
-                .opacity(configuration.isPressed ? 0.7 : 1)
+                .opacity(configuration.isPressed ? 0.86 : 1)
+                .dissolve(value: configuration.isPressed, animation: Motion.press)
                 .contentShape(Rectangle())
                 .onHover { hovering = $0 }
                 .pointerCursor()

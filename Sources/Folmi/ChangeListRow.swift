@@ -41,15 +41,20 @@ struct ChangeListTree: Sendable {
 
     init(_ files: [FileChange]) {
         self.files = files
+        var directories: [String] = []
         for file in files {
-            let parts = file.path.split(separator: "/")
-            let directory = parts.dropLast().joined(separator: "/")
+            let directory = file.path.lastIndex(of: "/").map { String(file.path[..<$0]) } ?? ""
+            if !directory.isEmpty, filesByFolder[directory] == nil { directories.append(directory) }
             filesByFolder[directory, default: []].append(file)
+        }
+        // A large change set often has hundreds of files in each folder. Count their shared ancestors once.
+        for directory in directories {
+            let fileCount = filesByFolder[directory]!.count
             var parent = ""
-            for component in parts.dropLast() {
+            for component in directory.split(separator: "/") {
                 let path = parent.isEmpty ? String(component) : parent + "/" + component
                 if counts[path] == nil { foldersByParent[parent, default: []].append(path) }
-                counts[path, default: 0] += 1
+                counts[path, default: 0] += fileCount
                 parent = path
             }
         }

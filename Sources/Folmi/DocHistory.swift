@@ -38,7 +38,7 @@ struct DocHistorySheet: View {
                         StaticReaderView(html: page.html, marks: page.marks, theme: model.theme, presentation: model.editorPresentation,
                                          root: model.repositoryURL)
                     }
-                    if loading { ProgressView() }
+                    if loading { WaitingIndicator() }
                     if let note, !loading { Text(note).foregroundStyle(.secondary) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

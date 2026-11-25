@@ -235,7 +235,7 @@ struct ChangePreview: View {
             Group {
                 switch side {
                 case nil:
-                    ProgressView().controlSize(.small)
+                    WaitingIndicator().controlSize(.small)
                 case .file(let url)?:
                     if kind == .image {
                         if let image { FittedImage(image: image) }
@@ -410,7 +410,7 @@ private struct WordTextDiffView: View {
                 Text(failure).themedFont(.caption, points: 10).foregroundStyle(.secondary)
                     .padding(12).frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                ProgressView().controlSize(.small).padding(20).frame(maxWidth: .infinity)
+                WaitingIndicator().controlSize(.small).padding(20).frame(maxWidth: .infinity)
             }
         }
         .task(id: old.path + "\0" + new.path) { await load() }

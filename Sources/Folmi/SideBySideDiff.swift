@@ -381,7 +381,6 @@ struct SideBySideFile: View {
     @State private var hoveredAction: DiffActionPreview?
     @State private var openedWhitespace: Set<String> = []
     @Environment(\.foldWhitespaceHunks) private var foldWhitespace
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var commentingHunk: String? {
         get { commenting?.wrappedValue ?? localCommenting }
         nonmutating set { if let commenting { commenting.wrappedValue = newValue } else { localCommenting = newValue } }
@@ -588,12 +587,23 @@ struct SideBySideFile: View {
         let picked = Set(hunk.lines.filter { selected.contains($0.id) && ($0.kind == .addition || $0.kind == .deletion) }.map(\.id))
         let count = picked.count
         return HStack(spacing: 8) {
-            if seenHunkIDs.contains(hunk.id) {
-                Image(systemName: "checkmark.circle.fill").font(.system(size: 11)).foregroundStyle(.themed(.added)).help("已看过")
-                    .transition(.scale(scale: 0.4).combined(with: .opacity))
-            } else if !readOnly && !seenHunkIDs.isEmpty {
-                Text("新").themedFont(.system(size: 9, weight: .bold), points: 9).foregroundStyle(.white)
-                    .padding(.horizontal, 4).padding(.vertical, 1).themedCapsule(ThemeColor(token: .accent)).help("上次看过之后的新改动")
+            if quietHunkActions || !seenHunkIDs.isEmpty {
+                let seen = seenHunkIDs.contains(hunk.id)
+                let fresh = !readOnly && !seenHunkIDs.isEmpty
+                ZStack {
+                    if seen {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
+                            .foregroundStyle(.themed(.added)).help("已看过")
+                            .transition(.opacity)
+                    } else if fresh {
+                        Text("新").themedFont(.system(size: 9, weight: .bold), points: 9).foregroundStyle(.white)
+                            .padding(.horizontal, 4).padding(.vertical, 1).themedCapsule(ThemeColor(token: .accent)).help("上次看过之后的新改动")
+                            .transition(.opacity)
+                    }
+                }
+                .frame(width: 18)
+                .dissolve(value: seen)
+                .dissolve(value: fresh)
             }
             if hunk.isWhitespaceOnly {
                 Text("只改空白").themedFont(.system(size: 9, weight: .medium), points: 9).foregroundStyle(.secondary)
@@ -651,15 +661,15 @@ struct SideBySideFile: View {
             }
         }
         .controlSize(.mini)
-        // The check pops in once ⏎ went through, and the current mark fades over to the next hunk instead of jumping.
-        .animation(reduceMotion ? nil : Motion.settle, value: seenHunkIDs.contains(hunk.id))
-        .animation(reduceMotion ? nil : Motion.state, value: currentHunkID == hunk.id)
         .onHover { inside in
             guard quietHunkActions else { return }
             if inside { hoveredHunk = hunk.id } else if hoveredHunk == hunk.id { hoveredHunk = nil }
         }
         .padding(.horizontal, 10).frame(height: 34)
-        .background(ThemeColor(token: .accent, opacity: currentHunkID == hunk.id ? 0.16 : 0.06))
+        .background {
+            Color.clear.background(ThemeColor(token: .accent, opacity: currentHunkID == hunk.id ? 0.16 : 0.06))
+                .dissolve(value: currentHunkID == hunk.id, animation: Motion.state)
+        }
         .overlay(alignment: .leading) {
             if currentHunkID == hunk.id { Rectangle().fill(ThemeColor(token: .accent)).frame(width: 3) }
         }

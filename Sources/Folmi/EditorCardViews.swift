@@ -29,11 +29,12 @@ struct EditorCardTabs: View {
         if let modeDetail {
             // The switcher already names the mode; only its detail is added.
             Text(modeDetail).themedFont(.system(size: 12), points: 12).foregroundStyle(.secondary).lineLimit(1).padding(.leading, 4)
+                .motionContent(modeDetail)
         }
     }
     private var modeDetail: String? {
         switch model.content {
-        case .diff: return model.fileDiffs.isEmpty ? nil : "\(model.fileDiffs.count) 个文件"
+        case .diff: return model.diffLoading || model.fileDiffs.isEmpty ? nil : "\(model.fileDiffs.count) 个文件"
         case .allChanges: return model.snapshot.map { "\($0.files.count) 个文件" }
         case .tasks: return model.currentIdeaTasks.map { "随手记 \($0.filter(\.entry.status.isOpen).count) 项没做完" }
         default: return nil
@@ -67,7 +68,7 @@ struct ContentModeSwitcher: View {
                 Button { model.showContent(mode) } label: {
                     HStack(spacing: 4) {
                         Image(systemName: symbol).font(.system(size: Metrics.iconSize, weight: .medium))
-                        if titled.contains(mode) || selected {
+                        if titled.contains(mode) {
                             Text(mode.rawValue).themedFont(.system(size: 12, weight: .medium), points: 12).fixedSize()
                         }
                     }
@@ -81,6 +82,7 @@ struct ContentModeSwitcher: View {
                 .buttonStyle(.pressable)
                 .help(help)
                 .accessibilityLabel(mode.rawValue)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
         .segmentTrack()
@@ -135,36 +137,36 @@ struct ReviewCommentsMenu: View {
 struct EditorCardPage: View {
     let model: FolmiModel
     let tracker: PaneFocusTracker
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let _ = PerfLog.body("EditorCardPage")
-        // Switching 编辑 / 差异 / 全部改动 / 历史 / 待办 cross-fades; the pages stay the same views otherwise.
-        // 编辑 and 差异 share one page, so moving between a file column and the 差异 column keeps both.
+        // The title switcher carries the selection. Replacing the canvas immediately leaves one interactive page.
         let editorPage = model.content == .editor || model.content == .diff
-        ZStack {
+        Group {
             if editorPage, let editor = model.editorWorkspace {
-                EditorOrDiffPage(model: model, workspace: editor, tracker: tracker).id(editor.root.path).transition(.opacity)
+                EditorOrDiffPage(model: model, workspace: editor, tracker: tracker).id(editor.root.path)
             } else if model.content == .allChanges {
-                AllChangesView(model: model).id(model.repositoryURL?.path).transition(.opacity)
+                AllChangesView(model: model).id(model.repositoryURL?.path)
             } else if model.content == .history {
-                HistoryView(model: model).id(model.repositoryURL?.path).transition(.opacity)
+                HistoryView(model: model).id(model.repositoryURL?.path)
             } else if model.content == .tasks {
-                TasksPage(model: model).id(model.repositoryURL?.path).transition(.opacity)
+                TasksPage(model: model).id(model.repositoryURL?.path)
             } else if model.content == .calls {
-                CallMapPage(model: model).transition(.opacity)
-            } else { DiffPane(model: model).transition(.opacity) }
+                CallMapPage(model: model)
+            } else { DiffPane(model: model) }
         }
-        .animation(reduceMotion ? nil : Motion.state, value: editorPage ? FolmiContent.editor : model.content)
     }
 }
 
 struct DiffPane: View {
     let model: FolmiModel
+    @State private var showsLoading = false
+
     var body: some View {
         let _ = PerfLog.body("DiffPane")
         Group {
             if model.fileDiffs.isEmpty {
-                if model.snapshot?.files.isEmpty == true { DoneState(model: model) }
+                if model.diffLoading { Color.clear }
+                else if model.snapshot?.files.isEmpty == true { DoneState(model: model) }
                 else { panePlaceholder(symbol: "rectangle.split.2x1", title: "没有待比较的改动", detail: "选择左侧改动文件查看左右 diff；支持多选。") }
             } else {
                 VStack(spacing: 0) {
@@ -178,9 +180,32 @@ struct DiffPane: View {
                         sourceDiff
                     }
                 }
+                .disabled(model.diffLoading)
                 .assistBeside(model)
             }
-        }.background(Color.theme(model.theme, \.card))
+        }
+        .background(Color.theme(model.theme, \.card))
+        .overlay(alignment: .topTrailing) {
+            let visible = model.diffLoading && showsLoading
+            ZStack {
+                if visible {
+                    WaitingLabel(title: "正在读取差异…", waiting: true)
+                        .themedFont(.caption.weight(.medium), points: 10)
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .themedCapsule(.regularMaterial, stroke: true)
+                        .padding(6)
+                        .transition(.opacity)
+                }
+            }
+            .dissolve(value: visible)
+            .allowsHitTesting(false)
+        }
+        .task(id: model.diffLoading) {
+            showsLoading = false
+            guard model.diffLoading else { return }
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+            showsLoading = model.diffLoading
+        }
     }
     private var sourceDiff: some View {
                 SideBySideDiff(diffs: model.fileDiffs, selectedLines: model.selectedLines, busy: model.busy,

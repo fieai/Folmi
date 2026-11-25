@@ -109,7 +109,7 @@ private struct StandaloneFolderView: View {
             } else if let error {
                 ContentUnavailableView("无法打开文件夹", systemImage: "folder", description: Text(error))
             } else {
-                ProgressView("读取文件夹…")
+                WaitingIndicator("读取文件夹…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

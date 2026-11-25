@@ -15,7 +15,7 @@ struct MarkdownReaderView: NSViewRepresentable {
     let theme: FolmiTheme
     let navigationRevision: UInt64
     let indexRevision: UInt64
-    /// Shown, rather than faded out behind the source editor.
+    /// Shown in the editor column and eligible for input.
     var active = true
     /// False while a code file is open: the view stays alive but renders nothing.
     var isMarkdown = true
@@ -54,10 +54,23 @@ struct MarkdownReaderView: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        private struct RenderKey: Equatable {
+            let documentID: String
+            let text: String
+            let style: String
+        }
+        private struct PendingRender {
+            let key: RenderKey
+            var line: Int?
+            var explicitScroll: Bool
+        }
+
         private weak var webView: WKWebView?
         private var parent: MarkdownReaderView?
         private var loaded = false
-        private var renderedKey: (documentID: String, text: String, style: String)?
+        private var renderedKey: RenderKey?
+        private var pendingRender: PendingRender?
+        private var renderRevision = 0
         private var renderTask: Task<Void, Never>?
         private var marksTask: Task<Void, Never>?
         private var navigationRevision: UInt64 = 0
@@ -92,29 +105,35 @@ struct MarkdownReaderView: NSViewRepresentable {
             if !view.active { navigationRevision = view.navigationRevision }
             guard loaded, view.isMarkdown, view.active else { return }
             let style = MarkdownReaderPage.style(theme: view.theme, presentation: view.presentation)
+            let key = RenderKey(documentID: view.documentID, text: view.text, style: style)
             let documentChanged = renderedKey?.documentID != view.documentID
             if documentChanged { readerDroveScroll = false }
             let textChanged = renderedKey?.text != view.text
             let navigation = view.navigationRevision != navigationRevision
                 && (view.workspace.navigationColumn == nil || view.workspace.navigationColumn == view.columnID)
             let navigationLine = navigation ? view.workspace.navigationReaderLine : nil
-            if documentChanged || textChanged || renderedKey?.style != style {
-                if renderedKey?.style != style { js("wb.style(\(Self.json(style)))") }
+            if pendingRender?.key == key {
+                if navigation {
+                    pendingRender?.line = navigationLine ?? startLine(view)
+                    pendingRender?.explicitScroll = true
+                }
+            } else if renderedKey != key {
                 let flashFrom = !documentChanged && view.externalChange != nil && view.externalChange != flashedChange ? renderedKey?.text : nil
                 let debounce = !documentChanged && textChanged
                     && view.workspace.editingColumn(for: view.documentID, beside: view.column) != nil
-                render(view, scrollTo: navigationLine ?? (documentChanged || previous?.active == false ? startLine(view) : nil), documentChanged: documentChanged,
-                       flashFrom: flashFrom, debounce: debounce, explicitScroll: navigationLine != nil)
-                renderedKey = (view.documentID, view.text, style)
+                render(key, scrollTo: navigationLine ?? (documentChanged || previous?.active == false ? startLine(view) : nil),
+                       documentChanged: documentChanged, flashFrom: flashFrom, debounce: debounce, explicitScroll: navigationLine != nil)
+            } else if renderedKey == key {
+                if pendingRender != nil { renderTask?.cancel(); pendingRender = nil }
+                if previous?.active == false, let start = PerfLog.readerSwitchStart(for: key.documentID) {
+                    reportPaint(for: key, switchStart: start)
+                }
             }
             flashedChange = view.externalChange
-            if documentChanged || view.indexRevision != indexRevision || textChanged {
-                indexRevision = view.indexRevision
-                loadMarks(view)
-            }
+            if renderedKey == key, view.indexRevision != indexRevision { loadMarks(view) }
             if view.navigationRevision != navigationRevision {
                 navigationRevision = view.navigationRevision
-                if !documentChanged, navigation,
+                if pendingRender == nil, !documentChanged, navigation,
                    let state = view.workspace.tabStates[view.documentID] {
                     scroll(toLine: navigationLine ?? line(at: state.selectionLocation), smooth: !view.workspace.navigationRestoresScroll)
                 }
@@ -122,18 +141,17 @@ struct MarkdownReaderView: NSViewRepresentable {
         }
 
         private var active: Bool?
-        private var hideWork: DispatchWorkItem?
 
-        /// Coming forward scrolls to the place the editor was showing and takes keyboard focus; going behind hides
-        /// the web view once the fade is over. The page stays loaded either way.
+        /// A code tab leaves the backing layers ready for the same reader to come back. In Markdown editing mode
+        /// hide the reader from AppKit immediately so there is only one visible native surface for this document.
         private func updateActive(_ view: MarkdownReaderView) {
+            guard let webView else { return }
+            let hidden = view.isMarkdown && !view.active
+            if webView.isHidden != hidden { webView.isHidden = hidden }
             guard active != view.active else { return }
             let first = active == nil
             active = view.active
-            hideWork?.cancel()
-            guard let webView else { return }
             if view.active {
-                webView.isHidden = false
                 guard !first else { return }
                 if loaded, let line = view.workspace.readerTopLineByColumn[view.columnID]?[view.documentID] { scroll(toLine: line, smooth: false) }
                 DispatchQueue.main.async { [weak self, weak webView] in
@@ -141,16 +159,8 @@ struct MarkdownReaderView: NSViewRepresentable {
                        let webView, webView.window != nil { webView.window?.makeFirstResponder(webView) }
                 }
             } else {
+                if pendingRender != nil { renderTask?.cancel(); pendingRender = nil }
                 js("window.wb?.hideSelection()")
-                // Behind a code file the page stays un-hidden (only transparent and not hit-testable): a hidden web view
-                // drops its layers, and showing it again repaints the whole document.
-                guard view.isMarkdown else { return }
-                let work = DispatchWorkItem { [weak self, weak webView] in
-                    guard self?.active == false else { return }
-                    webView?.isHidden = true
-                }
-                hideWork = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + (first ? 0 : 0.25), execute: work)
             }
         }
 
@@ -165,15 +175,16 @@ struct MarkdownReaderView: NSViewRepresentable {
         private var flashedChange: Date?
 
         /// `flashFrom`: the text before an outside change; blocks that differ from it light up and fade.
-        private func render(_ view: MarkdownReaderView, scrollTo line: Int?, documentChanged: Bool, flashFrom: String? = nil,
+        private func render(_ key: RenderKey, scrollTo line: Int?, documentChanged: Bool, flashFrom: String? = nil,
                             debounce: Bool = false, explicitScroll: Bool = false) {
             renderTask?.cancel()
-            let text = view.text, path = view.documentID
+            pendingRender = PendingRender(key: key, line: line, explicitScroll: explicitScroll)
+            let (path, text) = (key.documentID, key.text)
             let renderStart = ContinuousClock.now
             // A page rendered before (or prefetched) goes to the web view at once. Handing it over from a task put it
             // behind the window's layout pass, about 40 ms on every switch.
             if !debounce, let cached = ReaderRenderCache.find(path: path, text: text) {
-                show(cached, line: line, documentChanged: documentChanged, flashFrom: flashFrom, renderStart: renderStart, explicitScroll: explicitScroll)
+                show(cached, key: key, documentChanged: documentChanged, flashFrom: flashFrom, renderStart: renderStart)
                 return
             }
             renderTask = Task { @MainActor [weak self] in
@@ -181,22 +192,26 @@ struct MarkdownReaderView: NSViewRepresentable {
                     do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
                 }
                 let rendered = await ReaderRenderCache.render(path: path, text: text, priority: .userInitiated)
-                guard let self, !Task.isCancelled, !self.dismantled, self.parent?.documentID == path else { return }
-                self.show(rendered, line: line, documentChanged: documentChanged, flashFrom: flashFrom, renderStart: renderStart, explicitScroll: explicitScroll)
+                guard let self, !Task.isCancelled, !self.dismantled else { return }
+                self.show(rendered, key: key, documentChanged: documentChanged, flashFrom: flashFrom, renderStart: renderStart)
             }
         }
 
-        private func show(_ rendered: ReaderRenderCache.Entry, line: Int?, documentChanged: Bool, flashFrom: String?,
-                          renderStart: ContinuousClock.Instant, explicitScroll: Bool) {
+        private func show(_ rendered: ReaderRenderCache.Entry, key: RenderKey, documentChanged: Bool, flashFrom: String?,
+                          renderStart: ContinuousClock.Instant) {
+            guard let request = pendingRender, request.key == key, let parent else { return }
+            let line = request.line
             let (html, path, text) = (rendered.html, rendered.path, rendered.text)
+            if renderedKey?.style != key.style { js("wb.style(\(Self.json(key.style)))") }
+            renderedKey = key
+            pendingRender = nil
+            renderRevision += 1
             PerfLog.readerStep("reader.renderAt")
             lineStarts = rendered.starts
             // Rendering can finish after more scrolling; restore the editor's current place, not the render's input.
-            let following: Int? = readerDroveScroll ? nil : parent.flatMap { view in
-                view.active ? view.workspace.followingEditorLine(for: path, column: view.column) : nil
-            }
-            let scroll = (explicitScroll ? line : following ?? line).map(String.init) ?? "null"
-            let render = "wb.render(\(Self.json(html)), \(scroll), \(documentChanged), \(Self.json(path)))"
+            let following = readerDroveScroll ? nil : parent.workspace.followingEditorLine(for: path, column: parent.column)
+            let scroll = (request.explicitScroll ? line : following ?? line).map(String.init) ?? "null"
+            let render = "wb.render(\(Self.json(html)), \(scroll), \(documentChanged), \(Self.json(path)), \(renderRevision))"
             // The selection bar is in the page template; it names the agent the AI tab would use now.
             updateSelectionAgentTitle()
             if PerfLog.enabled {
@@ -206,12 +221,9 @@ struct MarkdownReaderView: NSViewRepresentable {
                     if let pair = value as? [Double] { PerfLog.note("reader.js", "render \(Int(pair[0]))ms layout \(Int(pair[1]))ms \(html.utf8.count)B") }
                     PerfLog.interval("reader.jsRoundtrip", since: swiftDone)
                 }
-                // Two animation frames after the DOM change: the page has been laid out and painted.
-                webView?.callAsyncJavaScript("await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return 0",
-                                             arguments: [:], in: nil, in: .page) { _ in
-                    PerfLog.readerPainted(path, bytes: text.utf8.count, renderStart: renderStart)
-                }
+                reportPaint(for: key, switchStart: PerfLog.readerSwitchStart(for: path), renderStart: renderStart)
             } else { js(render) }
+            loadMarks(parent)
             // The outline is published state; this can run inside a view update, so it moves to the next turn.
             let layout = rendered.layout
             renderTask = Task { @MainActor [weak self] in
@@ -230,17 +242,31 @@ struct MarkdownReaderView: NSViewRepresentable {
             }
         }
 
+        private func reportPaint(for key: RenderKey, switchStart: ContinuousClock.Instant?, renderStart: ContinuousClock.Instant? = nil) {
+            let revision = renderRevision
+            // A delayed callback belongs to the visible document and the measured switch that requested it.
+            webView?.callAsyncJavaScript("await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); return 0",
+                                         arguments: [:], in: nil, in: .page) { [weak self] result in
+                guard case .success = result, let self, !self.dismantled, self.renderRevision == revision,
+                      self.parent?.active == true, self.parent?.documentID == key.documentID else { return }
+                PerfLog.readerPainted(key.documentID, bytes: key.text.utf8.count, switchStart: switchStart, renderStart: renderStart)
+            }
+        }
+
         /// Bars beside blocks that differ from the index (or HEAD for a file with nothing staged), like the editor gutter.
         private func loadMarks(_ view: MarkdownReaderView) {
             marksTask?.cancel()
+            indexRevision = view.indexRevision
+            let revision = renderRevision
             let text = view.text, path = view.documentID
             guard let load = view.workspace.loadIndexBase else { return }
             marksTask = Task { @MainActor [weak self] in
-                guard let base = await load(path), !Task.isCancelled else {
-                    self?.js("wb.marks([])"); return
-                }
-                let changes = await Task.detached(priority: .utility) { GutterDiff.changes(base: base.text, current: text) }.value
-                guard let self, !Task.isCancelled, !self.dismantled, self.parent?.documentID == path else { return }
+                let base = await load(path)
+                guard !Task.isCancelled else { return }
+                let changes = if let base {
+                    await Task.detached(priority: .utility) { GutterDiff.changes(base: base.text, current: text) }.value
+                } else { [LineDiff.Change]() }
+                guard let self, !Task.isCancelled, !self.dismantled, self.renderRevision == revision else { return }
                 let marks = changes.map { change -> [Any] in
                     let kind = change.old.isEmpty ? "add" : change.new.isEmpty ? "del" : "mod"
                     return [change.new.lowerBound, max(change.new.lowerBound, change.new.upperBound - 1), kind]
@@ -285,7 +311,9 @@ struct MarkdownReaderView: NSViewRepresentable {
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any], let type = body["type"] as? String,
-                  let parent, !dismantled else { return }
+                  let parent, parent.active, !dismantled, body["path"] as? String == parent.documentID,
+                  body["revision"] as? Int == renderRevision else { return }
+            if pendingRender != nil, type != "top", type != "copy" { return }
             let workspace = parent.workspace, id = parent.documentID
             switch type {
             case "link":
@@ -533,7 +561,7 @@ enum MarkdownReaderPage {
     .mermaid .src{text-align:left;margin:0;padding:14px 16px;background:var(--code-bg);border:1px solid var(--border);border-radius:10px;font-family:var(--code-font);font-size:.82em;line-height:1.6;white-space:pre-wrap}
     .mermaid[data-done] .src{display:none}.mermaid .chart svg{max-width:100%;height:auto}
     .mermaid[data-error]::after{content:attr(data-error);display:block;margin-top:6px;text-align:left;font:12px -apple-system,sans-serif;color:var(--del)}
-    .code .tools{position:absolute;top:6px;right:8px;display:flex;gap:4px;align-items:center;font-family:-apple-system,sans-serif;font-size:11px;color:var(--muted);opacity:.0;transition:opacity .15s}
+    .code .tools{position:absolute;top:6px;right:8px;display:flex;gap:4px;align-items:center;font-family:-apple-system,sans-serif;font-size:11px;color:var(--muted);opacity:.0;transition:opacity .12s ease-out}
     .code:hover .tools{opacity:1}.code .tools button{font:inherit;color:inherit;background:var(--pop);border:1px solid var(--border);border-radius:6px;padding:2px 8px;cursor:pointer}
     .tok-keyword{color:var(--t-keyword)}.tok-string{color:var(--t-string)}.tok-number{color:var(--t-number)}.tok-comment{color:var(--t-comment);font-style:italic}
     .tok-type{color:var(--t-type)}.tok-variable{color:var(--t-variable)}.tok-literal{color:var(--t-literal)}
@@ -591,7 +619,7 @@ enum MarkdownReaderPage {
       max-width:calc(100vw - 16px);box-sizing:border-box;flex-wrap:wrap;
       -webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);
       box-shadow:inset 0 1px 0 var(--edge),0 0 0 1px var(--border),0 8px 24px rgba(0,0,0,.22);font:12.5px -apple-system,"PingFang SC",sans-serif;white-space:nowrap}
-    .flash{animation:wbflash 3s ease-out}@keyframes wbflash{0%,25%{background:var(--accent-bg);box-shadow:0 0 0 6px var(--accent-bg)}100%{background:transparent;box-shadow:0 0 0 6px transparent}}
+    .flash{animation:wbflash 1.5s ease-out}@keyframes wbflash{0%,40%{background:var(--accent-bg)}100%{background:transparent}}
     @media (prefers-reduced-motion:reduce){.flash{animation:none;background:var(--accent-bg)}*{transition:none!important}}
     #pop.on{display:flex}#pop button{font:inherit;color:var(--fg);background:none;border:0;padding:5px 10px;border-radius:7px;cursor:pointer}
     #pop button:hover{background:var(--code-bg)}#pop button.primary{color:var(--accent);background:var(--accent-bg)}
@@ -613,7 +641,8 @@ enum MarkdownReaderPage {
     </div>
     <script>
     (function(){
-    const post=(m)=>window.webkit.messageHandlers.wb.postMessage(m);
+    const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)');
+    const post=(m)=>window.webkit.messageHandlers.wb.postMessage({path:renderedPath,revision:renderRevision,...m});
     const doc=document.getElementById('doc'),pop=document.getElementById('pop');
     const more=document.getElementById('pop-more'),moreActions=document.getElementById('pop-actions');
     let marks=[];
@@ -701,8 +730,9 @@ enum MarkdownReaderPage {
       style(css){stopReaderFollow();document.getElementById('vars').textContent=css},
       hideSelection(){hide()},
       selectionAgentTitle(title){pop.querySelector('[data-act=agent]').textContent=title;if(picked)placeSelection()},
-      render(html,line,fresh,path=null){
-        renderedPath=path;stopReaderFollow();clearTimeout(scrollTimer);
+      render(html,line,fresh,path=null,revision=null){
+        if(renderedPath!==path)marks=[];
+        renderedPath=path;renderRevision=revision;stopReaderFollow();clearTimeout(scrollTimer);
         const anchor=fresh?null:topBlock(),key=anchor?anchor.dataset.line:null,delta=anchor?anchor.getBoundingClientRect().top:0;
         doc.innerHTML=html;decorate();hide();if(bar.classList.contains('on')&&fq.value)runFind(true);
         if(line!==null&&line!==undefined){wb.scrollToLine(line,false)}
@@ -719,13 +749,14 @@ enum MarkdownReaderPage {
       flash(ranges){const hit=[];const leaves=[...blocks()].filter(e=>e.matches('.table')||(!e.matches('tr')&&!e.querySelector('[data-line]')));
         for(const el of leaves){const a=+el.dataset.line,b=+(el.dataset.end||el.dataset.line);
         if(ranges.some(r=>r[0]<=b&&r[1]>=a))hit.push(el)}
-        for(const el of hit){el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');setTimeout(()=>el.classList.remove('flash'),3200)}},
+        clearTimeout(flashTimer);doc.querySelectorAll('.flash').forEach(el=>el.classList.remove('flash'));
+        hit.forEach(el=>el.classList.add('flash'));flashTimer=setTimeout(()=>hit.forEach(el=>el.classList.remove('flash')),1600)},
       scrollToLine(line,smooth){stopReaderFollow();let target=null;for(const el of blocks()){if(+el.dataset.line<=line)target=el;else break}
         if(!target){window.scrollTo(0,0);return}
         if(line===0&&+target.dataset.line===0){window.scrollTo(0,0);return}
-        target.scrollIntoView({block:'start',behavior:smooth?'smooth':'auto'})}
+        target.scrollIntoView({block:'start',behavior:smooth&&!reduceMotion.matches?'smooth':'auto'})}
     };
-    let renderedPath=null,scrollTimer=null,followTimer=null,scrollIntentUntil=0,lastFollowLine=null,draggingScrollbar=false;
+    let renderedPath=null,renderRevision=null,flashTimer=null,scrollTimer=null,followTimer=null,scrollIntentUntil=0,lastFollowLine=null,draggingScrollbar=false;
     function stopReaderFollow(){scrollIntentUntil=0;lastFollowLine=null;clearTimeout(followTimer);followTimer=null}
     function noteScrollIntent(){scrollIntentUntil=performance.now()+250}
     function postTop(userScroll){
@@ -751,7 +782,7 @@ enum MarkdownReaderPage {
     document.addEventListener('click',(e)=>{
       const box=e.target.closest('input.task');if(box){e.preventDefault();post({type:'task',offset:+box.dataset.offset});return}
       const a=e.target.closest('a[data-href]');if(a){e.preventDefault();const h=a.dataset.href,t=topBlock(),fromLine=t?+t.dataset.line:null;
-        if(h.startsWith('#')&&!h.startsWith('#L')){const el=document.getElementById(decodeURIComponent(h.slice(1)).toLowerCase().replace(/ /g,'-'));if(el){const line=+el.dataset.line;if(Number.isFinite(line))post({type:'anchor',line,fromLine});el.scrollIntoView({behavior:'smooth'});return}}
+        if(h.startsWith('#')&&!h.startsWith('#L')){const el=document.getElementById(decodeURIComponent(h.slice(1)).toLowerCase().replace(/ /g,'-'));if(el){const line=+el.dataset.line;if(Number.isFinite(line))post({type:'anchor',line,fromLine});el.scrollIntoView({behavior:reduceMotion.matches?'auto':'smooth'});return}}
         post({type:'link',href:h,fromLine})}});
     function lineOf(node,attr){let el=node&&(node.nodeType===1?node:node.parentElement);el=el&&el.closest('[data-line]');return el?+el.dataset[attr]:null}
     function selectionInfo(){const s=window.getSelection();if(!s||s.isCollapsed||!s.rangeCount)return null;

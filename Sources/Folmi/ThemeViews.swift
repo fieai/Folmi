@@ -80,6 +80,7 @@ private struct StandardProminentButtonStyle: ButtonStyle {
             enabled ? colors.accent.color.opacity(pressed && !clay ? 0.85 : 1) : colors.selectedFill.color
         }
         private var sink: CGFloat {
+            guard !reduceMotion else { return 0 }
             if lip > 0 { return pressed ? lip - 1 : 0 }
             return hard > 0 && pressed ? hard - 1 : 0
         }
@@ -96,9 +97,9 @@ private struct StandardProminentButtonStyle: ButtonStyle {
                 .overlay { if hard > 0 { Rectangle().strokeBorder(colors.border.color, lineWidth: theme.style.borderWidth) } }
                 .background { edge(shape) }
                 .offset(x: hard > 0 ? sink : 0, y: sink)
-                .scaleEffect(pressed && hard == 0 && lip == 0 && !reduceMotion ? 0.97 : 1)
+                .scaleEffect(pressed && hard == 0 && lip == 0 && !reduceMotion ? Metrics.pressScale : 1)
                 .padding(.bottom, lip)
-                .animation(reduceMotion ? nil : Motion.press, value: pressed)
+                .dissolve(value: pressed, animation: Motion.press)
                 .contentShape(shape)
                 .pointerCursor()
         }
@@ -107,8 +108,8 @@ private struct StandardProminentButtonStyle: ButtonStyle {
         @ViewBuilder private func edge(_ shape: AnyShape) -> some View {
             if lip > 0 {
                 shape.fill(colors.accent.color).overlay { shape.fill(Color.black.opacity(0.2)) }
-                    .offset(y: pressed ? 1 : lip)
-            } else if hard > 0, !pressed, enabled {
+                    .offset(y: pressed && !reduceMotion ? 1 : lip)
+            } else if hard > 0, !pressed || reduceMotion, enabled {
                 shape.fill(colors.hardShadow.color).offset(x: hard - 1, y: hard - 1)
             }
         }
@@ -158,8 +159,8 @@ struct TerrazzoButtonStyle: ButtonStyle {
                 }
                 .overlay { shape.strokeBorder(colors.border.color, lineWidth: 1) }
                 .offset(y: pressed && enabled && !reduceMotion ? 1 : 0)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: pressed)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+                .dissolve(value: pressed, animation: Motion.press)
+                .dissolve(value: hovered, animation: Motion.hover)
                 .contentShape(shape)
                 .onHover { hovered = $0 }
                 .pointerCursor()
@@ -180,7 +181,7 @@ struct ThemeProgressBar: View {
         let stops = (colors.progress ?? [colors.accent]).map(\.color)
         let height: CGFloat = style.isSquare ? 6 : 4
         let shape = RoundedRectangle(cornerRadius: style.isSquare ? 0 : height / 2, style: .continuous)
-        let filled = max(0, min(1, fraction.isFinite ? fraction : 0)) * width
+        let filled = max(0, min(1, fraction.isFinite ? fraction : 0))
         ZStack(alignment: .leading) {
             shape.fill(colors.selectedFill.color)
             Group {
@@ -190,13 +191,16 @@ struct ThemeProgressBar: View {
                     LinearGradient(colors: stops.count > 1 ? stops : [stops[0], stops[0]], startPoint: .leading, endPoint: .trailing).frame(width: width)
                 }
             }
-            .frame(width: filled, alignment: .leading)
-            .clipShape(shape)
+            .mask {
+                Rectangle().scaleEffect(x: filled, y: 1, anchor: .leading)
+                    .motion(Motion.state, value: filled)
+            }
         }
         .frame(width: width, height: height)
+        .clipShape(shape)
         .overlay { if style.isSquare { shape.strokeBorder(colors.border.color, lineWidth: 1) } }
         .accessibilityElement()
-        .accessibilityValue("\(Int((fraction.isFinite ? fraction : 0) * 100))%")
+        .accessibilityValue("\(Int(filled * 100))%")
     }
 }
 
@@ -234,24 +238,9 @@ struct ThemeFloorTexture: View {
 
 /// A sheet's content settles in: a short fade and a slight rise in scale over the native sheet slide. Off with
 /// Reduce Motion.
-private struct SheetEntrance: ViewModifier {
-    @State private var shown = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func body(content: Content) -> some View {
-        content
-            // Sheets sit outside the window content, so they take the themed default buttons here.
-            .buttonStyle(ThemedDefaultButtonStyle())
-            .opacity(shown || reduceMotion ? 1 : 0)
-            .scaleEffect(shown || reduceMotion ? 1 : 0.97, anchor: .top)
-            .onAppear {
-                guard !reduceMotion else { return }
-                withMotion(Motion.settle) { shown = true }
-            }
-    }
-}
-
 extension View {
-    func sheetEntrance() -> some View { modifier(SheetEntrance()) }
+    // AppKit presents the sheet. Its content only needs the window's button style.
+    func folmiSheetStyle() -> some View { buttonStyle(ThemedDefaultButtonStyle()) }
 }
 
 /// Closes the window's sheet when the user clicks the window outside it. AppKit drops clicks on a window that has a
@@ -303,7 +292,6 @@ struct ThemedSegmented<Value: Hashable>: View {
                     Text(option.title)
                         .themedFont(.system(size: small ? 11.5 : 12.5, weight: selected ? .semibold : .regular), points: small ? 11.5 : 12.5)
                         .foregroundStyle(ThemeColor(token: selected ? .foreground : .secondaryText))
-                        .contentTransition(.numericText())
                         .lineLimit(1)
                         .padding(.horizontal, small ? 8 : 10)
                         .frame(maxWidth: fillsWidth ? .infinity : nil)
@@ -358,11 +346,12 @@ struct PixelKeyButtonStyle: ButtonStyle {
         @Environment(\.colorScheme) private var colorScheme
         @Environment(\.isEnabled) private var enabled
         @Environment(\.controlSize) private var controlSize
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
         var body: some View {
             let colors = theme.definition.colors(dark: colorScheme == .dark)
             let small = controlSize == .small || controlSize == .mini
             // The shadow stays put while the key sinks onto it.
-            let sunk: CGFloat = pressed ? 2 : 0
+            let sunk: CGFloat = pressed && !reduceMotion ? 2 : 0
             label
                 .themedFont(.system(size: small ? 11 : 12), points: small ? 11 : 12)
                 .foregroundStyle((enabled ? (destructive ? colors.removed : colors.foreground) : colors.tertiaryText).color)
@@ -375,6 +364,7 @@ struct PixelKeyButtonStyle: ButtonStyle {
                 .background { if enabled { Rectangle().fill(colors.hardShadow.color).offset(x: 2 - sunk, y: 2 - sunk) } }
                 .offset(x: sunk, y: sunk)
                 .padding(.trailing, 2).padding(.bottom, 2)
+                .dissolve(value: pressed, animation: Motion.press)
                 .contentShape(Rectangle())
                 .pointerCursor()
         }
@@ -543,19 +533,14 @@ struct BusyButton: View {
             clicked = true
             action()
         } label: {
-            HStack(spacing: 5) {
-                if clicked && busy {
-                    ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12)
-                }
-                Text(title)
-            }
+            WaitingLabel(title: title, waiting: clicked && busy)
         }
         .onChange(of: busy) { _, now in if !now { clicked = false } }
         // A click whose work never set `busy` (it was refused, or finished at once) must not spin later for another.
         .task(id: clicked) {
             guard clicked else { return }
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            if !busy { clicked = false }
+            if !Task.isCancelled, !busy { clicked = false }
         }
     }
 }
@@ -566,8 +551,38 @@ struct WaitingLabel: View {
     let waiting: Bool
     var body: some View {
         HStack(spacing: 5) {
-            if waiting { ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 12, height: 12) }
-            Text(title)
+            ZStack {
+                if waiting { WaitingIndicator().controlSize(.mini).transition(.opacity) }
+            }
+            .frame(width: 12, height: 12)
+            .dissolve(value: waiting)
+            .accessibilityHidden(true)
+            Text(title).motionContent(title)
+        }
+    }
+}
+
+/// Inline waiting keeps a visible mark when the system asks to reduce motion.
+struct WaitingIndicator: View {
+    let title: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlSize) private var size
+
+    init(_ title: String? = nil) { self.title = title }
+
+    var body: some View {
+        if reduceMotion {
+            if let title {
+                Label(title, systemImage: "hourglass")
+            } else {
+                Image(systemName: "hourglass")
+                    .font(.system(size: size == .mini ? 10 : size == .small ? 13 : 16, weight: .medium))
+                    .accessibilityLabel("正在处理")
+            }
+        } else if let title {
+            ProgressView(title)
+        } else {
+            ProgressView()
         }
     }
 }

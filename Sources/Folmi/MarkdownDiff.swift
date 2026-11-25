@@ -101,7 +101,7 @@ struct MarkdownDiffView: View {
             } else if failed {
                 Text("无法读取这份文件的两个版本，请切到「源码」查看。").foregroundStyle(.secondary)
             } else {
-                ProgressView()
+                WaitingIndicator()
             }
         }
         .task(id: key) {

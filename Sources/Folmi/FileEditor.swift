@@ -42,17 +42,24 @@ struct FileEditorPane: View {
                     Text(shown?.path ?? "")
                         .themedFont(.caption.monospaced(), points: 10).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 8)
-                    if let notice = workspace.notice {
-                        Text(notice).themedFont(.caption, points: 10).foregroundStyle(ThemeColor(token: .modified)).lineLimit(1).truncationMode(.tail).help(notice)
-                            .transition(.opacity)
+                    ZStack {
+                        if let notice = workspace.notice {
+                            Text(notice).themedFont(.caption, points: 10).foregroundStyle(ThemeColor(token: .modified))
+                                .lineLimit(1).truncationMode(.tail).help(notice)
+                                .motionContent(notice)
+                                .transition(.opacity)
+                        }
                     }
-                    // Only what is used while working shows here; the rest is under ⋯.
-                    if shown?.isDirty == true {
-                        Button("保存") { saveSelected() }
-                            .buttonStyle(.folmiProminent).controlSize(.small)
-                            .help("保存（⌘S）")
-                            .transition(.scale(scale: 0.8).combined(with: .opacity))
-                    }
+                    .dissolve(value: workspace.notice != nil)
+                    // Keep neighboring controls still when the first edit makes Save available.
+                    let dirty = shown?.isDirty == true
+                    Button("保存") { saveSelected() }
+                        .buttonStyle(.folmiProminent).controlSize(.small)
+                        .help("保存（⌘S）")
+                        .opacity(dirty ? 1 : 0)
+                        .dissolve(value: dirty)
+                        .disabled(!dirty)
+                        .accessibilityHidden(!dirty)
                     if isMarkdown {
                         PaneIconToggle(symbol: "list.bullet.indent", isOn: $workspace.showsOutline,
                                        help: "大纲：点击标题跳转，当前一节在左边竖线上亮起")
@@ -86,8 +93,6 @@ struct FileEditorPane: View {
                     .help("更多：全部保存、语言与高亮说明。词法着色无外部依赖，每次最多扫描前 192 Ki 字符")
                     .accessibilityLabel("更多")
                 }
-                .motion(Motion.reveal, value: shown?.isDirty == true)
-                .motion(Motion.reveal, value: workspace.notice)
                 .background {
                     // Keyboard shortcuts stay on even when their buttons are tucked away; only the active column has them.
                     if isActiveColumn && workspace.singleFilePath == nil {
@@ -115,10 +120,10 @@ struct FileEditorPane: View {
                                     ExternalChangeBanner(onShowChanges: workspace.showChanges.map { showChanges in { showChanges(document.path) } },
                                                          onDismiss: { workspace.dismissExternalChange(document.id) })
                                         .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 6)
-                                        .transition(.move(edge: .top).combined(with: .opacity))
+                                        .transition(.opacity.animation(Motion.resolved(Motion.reveal, reduceMotion: reduceMotion)))
                                 }
-                                // Both views stay alive for a Markdown file, so 阅读 / 编辑 is a cross-fade at the same
-                                // place in the document rather than tearing one view down and loading the other.
+                                // Keep both hosts alive at the same place in the document. Visibility and input
+                                // change together, without waiting for a cross-fade.
                                 ZStack {
                                     NativeCodeEditor(workspace: workspace, documentID: document.id, text: Binding(
                                         get: { workspace.documents.first { $0.id == document.id }?.text ?? "" },
@@ -126,6 +131,7 @@ struct FileEditorPane: View {
                                     ), syntaxStatus: $syntaxStatus, column: column)
                                     .opacity(reading || document.preview != nil ? 0 : 1)
                                     .allowsHitTesting(!reading && document.preview == nil)
+                                    .accessibilityHidden(reading || document.preview != nil)
                                     // Kept for code files too (rendering nothing), so coming back to a Markdown file does not
                                     // build and load a new web view.
                                     MarkdownReaderView(workspace: workspace, documentID: document.id, text: isMarkdown ? document.text : "",
@@ -135,6 +141,7 @@ struct FileEditorPane: View {
                                                        externalChange: workspace.externalChanges[document.id], column: column)
                                     .opacity(reading ? 1 : 0)
                                     .allowsHitTesting(reading)
+                                    .accessibilityHidden(!reading)
                                     if let kind = document.preview {
                                         FilePreviewView(url: workspace.root.appendingPathComponent(document.path), kind: kind,
                                                         revision: document.fingerprint,
@@ -143,9 +150,7 @@ struct FileEditorPane: View {
                                         .id(document.id)
                                     }
                                 }
-                                .animation(reduceMotion ? nil : Motion.state, value: reading)
                             }
-                            .animation(reduceMotion ? nil : Motion.state, value: workspace.externalChanges[document.id] != nil)
                             if isMarkdown && workspace.showsOutline && fits {
                                 Divider()
                                 MarkdownOutlinePane(outline: workspace.outline(for: column), workspace: workspace, documentID: document.id)
@@ -155,10 +160,8 @@ struct FileEditorPane: View {
                                         MarkdownOutlineResizeHandle(width: $workspace.outlineWidth,
                                                                     available: geometry.size.width)
                                     }
-                                    .transition(.paneSlide(edge: .trailing))
                             }
                         }
-                        .animation(reduceMotion ? nil : Motion.layout, value: isMarkdown && workspace.showsOutline && fits)
                     }
                 }
             }
@@ -251,8 +254,7 @@ struct EditorTabStrip: View {
                                         onSplit: { onSplit?(document.id, $0) }, onMove: { onMove?(document.id, $0) })
                         .equatable()
                         .id(document.id)
-                        .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.92, anchor: .leading)),
-                                                removal: .opacity.combined(with: .scale(scale: 0.92, anchor: .leading))))
+                        .transition(.opacity)
                     }
                 }
                 .padding(.horizontal, 2)
@@ -261,7 +263,7 @@ struct EditorTabStrip: View {
             }
             .onChange(of: selectedID) { _, id in
                 guard let id else { return }
-                withMotion(Motion.reveal) { proxy.scrollTo(id) }
+                proxy.scrollTo(id)
             }
         }
         .confirmationDialog("这个文件还有未保存的改动", isPresented: $showsClosePrompt, titleVisibility: .visible) {
@@ -329,16 +331,16 @@ private struct EditorTabButton: View, Equatable {
     }
     @State private var hovering = false
     @Environment(\.folmiTheme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let _ = PerfLog.body("EditorTabButton")
         HStack(spacing: 2) {
             Button(action: onSelect) {
                 HStack(spacing: 5) {
-                    if isDirty {
-                        Circle().fill(ThemeColor(token: .modified)).frame(width: 6, height: 6).transition(.scale.combined(with: .opacity))
-                    }
+                    Circle().fill(ThemeColor(token: .modified)).frame(width: 6, height: 6)
+                        .opacity(isDirty ? 1 : 0)
+                        .dissolve(value: isDirty)
+                        .accessibilityHidden(true)
                     Text((path as NSString).lastPathComponent).lineLimit(1)
                         .themedFont(.system(size: 12, weight: selected ? .medium : .regular), points: 12)
                         .foregroundStyle(ThemeColor(token: selected ? .foreground : .secondaryText))
@@ -347,12 +349,15 @@ private struct EditorTabButton: View, Equatable {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.pressable)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityValue(isDirty ? "未保存" : "")
             Button(action: onClose) {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).frame(width: 16, height: 16)
                     .themedBackground(ThemeColor(token: .hover, opacity: hovering ? 1 : 0), .control)
             }
             .buttonStyle(.pressable)
             .opacity(selected || hovering ? 1 : 0)
+            .accessibilityHidden(!(selected || hovering))
             .help("关闭 \(path)")
         }
         .padding(.trailing, 4)
@@ -365,8 +370,7 @@ private struct EditorTabButton: View, Equatable {
             }
         }
         .onHover { hovering = $0 }
-        .animation(reduceMotion ? nil : Motion.hover, value: hovering)
-        .animation(reduceMotion ? nil : Motion.state, value: isDirty)
+        .dissolve(value: hovering, animation: Motion.hover)
         .help(path)
         .contextMenu {
             Button("关闭", action: onClose)

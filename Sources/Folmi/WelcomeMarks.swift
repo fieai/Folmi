@@ -174,7 +174,7 @@ private struct IntroClock<Content: View>: View {
     private var animated: Bool { !reduceMotion && scenePhase == .active }
 
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion || !(running || extraActive))) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion || scenePhase != .active || !(running || extraActive))) { timeline in
             content(elapsed(at: timeline.date), timeline.date)
         }
         .task(id: animated) {

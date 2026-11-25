@@ -320,7 +320,7 @@ struct CallMapPage: View {
                     } else { start(graph) }
                 } else {
                     VStack(spacing: 10) {
-                        ProgressView().controlSize(.small)
+                        WaitingIndicator().controlSize(.small)
                         Text("正在读项目里的 JS、TS 和 Python 文件…").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -367,7 +367,7 @@ struct CallMapPage: View {
                 ForEach(CallMapState.Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented).labelsHidden().frame(width: 190)
-            if state.building || state.codeGraphLoading { ProgressView().controlSize(.small) }
+            if state.building || state.codeGraphLoading { WaitingIndicator().controlSize(.small) }
             else {
                 Button { Task { await model.ensureCallGraph(force: true) } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless).help("重新读一遍项目")
