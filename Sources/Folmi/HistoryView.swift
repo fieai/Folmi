@@ -36,7 +36,7 @@ struct HistoryView: View {
         .sheet(item: $rewording) { detail in
             RewordSheet(text: $rewordText, onCancel: { rewording = nil },
                         onSave: { model.rewordCommit(detail.id, message: rewordText); rewording = nil })
-                .sheetEntrance()
+                .folmiSheetStyle()
         }
         .sheet(item: $model.squashPrompt) { plan in
             RewordSheet(text: $squashText, title: "把 \(plan.count) 个提交合并成一个",
@@ -44,7 +44,7 @@ struct HistoryView: View {
                         saveTitle: "合并提交",
                         onCancel: { model.squashPrompt = nil },
                         onSave: { model.squash(plan, message: squashText) })
-                .sheetEntrance()
+                .folmiSheetStyle()
                 .onAppear { squashText = plan.suggestedMessage }
         }
         .alert("从这个提交新建分支", isPresented: Binding(get: { branchFrom != nil }, set: { if !$0 { branchFrom = nil } })) {
@@ -94,7 +94,7 @@ struct HistoryView: View {
                 } else if querying {
                     Text("筛选到 \(filtered.count) 个").themedFont(.caption, points: 10).foregroundStyle(.secondary)
                 }
-                if model.historyLoading { ProgressView().controlSize(.mini) }
+                if model.historyLoading { WaitingIndicator().controlSize(.mini) }
                 Spacer()
                 if model.historyPath == nil {
                     historyScopePicker
@@ -191,8 +191,9 @@ struct HistoryView: View {
     }
 
     private var historyScopePicker: some View {
-        ThemedSegmented(options: [(GitRepository.HistoryScope.allBranches, "全部分支"), (.currentBranch, "只看当前分支")],
-                        selection: Binding(get: { model.historyScope }, set: model.setHistoryScope))
+        ThemedSegmented(options: [(true, "全部分支"), (false, "只看当前分支")],
+                        selection: Binding(get: { model.historyScope == .allBranches },
+                                           set: { model.setHistoryScope($0 ? .allBranches : .currentBranch) }))
             .controlSize(.small)
             .help("全部分支包含本地分支、远端分支和标签。")
             .accessibilityIdentifier("history-scope")
@@ -318,7 +319,7 @@ struct HistoryView: View {
                                                previewHeight: max(ChangePreview.defaultHeight, geometry.size.height - 60))
                             .id(detail.id + diff.file.path)
                     } else {
-                        ProgressView().controlSize(.small).padding(20)
+                        WaitingIndicator().controlSize(.small).padding(20)
                     }
                 }
             }

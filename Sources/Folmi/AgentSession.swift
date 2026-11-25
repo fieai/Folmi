@@ -690,7 +690,7 @@ struct AgentSessionTab: View {
         if session.needsPermission {
             Circle().fill(ThemeColor(token: .modified)).frame(width: 7, height: 7)
         } else if session.isBusy {
-            ProgressView().controlSize(.mini).scaleEffect(0.6)
+            WaitingIndicator().controlSize(.mini).scaleEffect(0.6)
         } else if case .failed = session.state {
             Circle().fill(ThemeColor(token: .removed)).frame(width: 7, height: 7)
         } else if session.unseen {
@@ -798,7 +798,7 @@ struct AgentPane: View {
                     } else {
                         Text("模型：\(current)")
                     }
-                    if session.isSelectingModel { ProgressView().controlSize(.mini) }
+                    if session.isSelectingModel { WaitingIndicator().controlSize(.mini) }
                     Spacer(minLength: 0)
                 }
                 .themedFont(.caption, points: 10).padding(.horizontal, 10).padding(.vertical, 5)

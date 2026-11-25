@@ -214,6 +214,7 @@ struct TasksPage: View {
                         Text("\(count)").themedFont(.system(size: 22, weight: .semibold).monospacedDigit(), points: 20)
                             .foregroundStyle(item == .dueNow && overdue > 0 ? AnyShapeStyle(.themed(.removed))
                                              : item == .doneThisWeek && count > 0 ? AnyShapeStyle(.themed(.added)) : AnyShapeStyle(.primary))
+                            .motionContent(count, transition: .numericText())
                         Text(feet[item] ?? "").themedFont(.caption2, points: 10).foregroundStyle(.tertiary).lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -370,6 +371,7 @@ struct TasksPage: View {
             Button { toggle(task) } label: {
                 Image(systemName: done ? "checkmark.square.fill" : entry.status == .inProgress ? "square.lefthalf.filled" : "square")
                     .foregroundStyle(done ? AnyShapeStyle(.themed(.added)) : entry.status == .inProgress ? AnyShapeStyle(.themed(.accent)) : AnyShapeStyle(.secondary))
+                    .motionContent(entry.status, transition: .symbolEffect(.replace))
                     .frame(width: 22, height: 22).contentShape(Rectangle())
             }
             .buttonStyle(.pressable).disabled(model.busy)

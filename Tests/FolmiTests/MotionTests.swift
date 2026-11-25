@@ -1,7 +1,6 @@
 import XCTest
 
-/// Under Reduce Motion every animation becomes a plain switch (checklist N3): each SwiftUI animation goes through
-/// `.motion` / `withMotion` or checks `reduceMotion` itself, and AppKit layer animations check it first.
+/// Reduce Motion leaves only local fades. Each SwiftUI or AppKit animation consults the setting.
 final class MotionTests: XCTestCase {
     func testEveryAnimationRespectsReduceMotion() throws {
         let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

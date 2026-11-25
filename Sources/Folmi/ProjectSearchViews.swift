@@ -145,7 +145,7 @@ struct ProjectSearchPanel: View {
                 Button("搜索") { selectedHitID = nil; onSearch() }.disabled(query.isEmpty)
             }.padding(14)
             HStack(spacing: 7) {
-                if searching { ProgressView().controlSize(.small); Text("搜索中…") }
+                if searching { WaitingIndicator().controlSize(.small); Text("搜索中…") }
                 else if let result {
                     Text("\(result.hits.count) 处命中 · \(groups.count) 个文件 · 已读取 \(result.scannedFiles) 个文件")
                 } else { Text("按原文搜索 UTF-8 文件，回车执行") }

@@ -117,7 +117,6 @@ struct AllChangesView: View {
     /// Files whose 只看这一轮 comparison is open (turn filter on).
     @State private var turnOnly: Set<String> = []
     @Environment(\.folmiTheme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The turn 全部改动 is narrowed to, if any (see `FolmiModel.turnFilter`).
     private var turn: AIBatch? { model.turnFilter.flatMap { id in model.aiBatches.first { $0.id == id } } }
@@ -179,7 +178,15 @@ struct AllChangesView: View {
                 geometry.safeAreaInsets.top...max(geometry.safeAreaInsets.top, geometry.size.height - geometry.safeAreaInsets.bottom)
             } action: { visibleBand = $0 }
             .overlay(alignment: .bottom) {
-                VStack(spacing: 8) { acceptedNote; rejectReason; backToCurrent }.padding(.bottom, 14)
+                VStack(spacing: 8) {
+                    acceptedNote
+                    rejectReason
+                    backToCurrent
+                }
+                .dissolve(value: needsReviewReveal)
+                .dissolve(value: model.lastReject != nil)
+                .dissolve(value: model.lastAccept != nil && model.lastReject == nil)
+                .padding(.bottom, 14)
             }
             .onChange(of: cursor) { _, _ in currentPlace = .visible; reveal(proxy) }
             .onChange(of: revealTick) { _, _ in reveal(proxy) }
@@ -255,9 +262,6 @@ struct AllChangesView: View {
         .focusEffectDisabled()
         .focused($focused)
         .onKeyPress(phases: .down) { press in handle(press) }
-        .animation(reduceMotion ? nil : Motion.reveal, value: currentPlace)
-        .animation(reduceMotion ? nil : Motion.reveal, value: model.lastReject)
-        .animation(reduceMotion ? nil : Motion.reveal, value: model.lastAccept)
         .onAppear { focused = true; decideFolds(); follow() }
         .onDisappear { model.reviewBrowsingFileKey = nil }
         .task(id: diffs.map(\.fingerprint)) { await model.prepareCallImpacts(diffs) }
@@ -358,9 +362,9 @@ struct AllChangesView: View {
                     let total = matches.hits.count
                     let count = total == 0 ? "没有匹配" : "\(searchIndex + 1) / \(total)" + (matches.limited ? "+" : "")
                     Text(count).monospacedDigit().foregroundStyle(.secondary)
-                    if model.allChangesLoading { ProgressView().controlSize(.mini) }
+                    if model.allChangesLoading { WaitingIndicator().controlSize(.mini) }
                 } else {
-                    ProgressView().controlSize(.mini).accessibilityLabel("正在查找")
+                    WaitingIndicator().controlSize(.mini).accessibilityLabel("正在查找")
                 }
             }
             PaneIconButton(symbol: "chevron.up", help: "上一项（⇧⏎）") { stepSearch(by: -1) }
@@ -491,28 +495,29 @@ struct AllChangesView: View {
             Button { revealTick += 1; focused = true } label: {
                 Label("回到当前处", systemImage: currentPlace == .above ? "arrow.up" : "arrow.down")
                     .themedFont(.caption.weight(.semibold), points: 10)
+                    .motionContent(currentPlace, transition: .symbolEffect(.replace))
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .themedCapsule(.regularMaterial, stroke: true)
             }
             .buttonStyle(.plain)
             .help("⏎ / ⌫ 作用在当前处上，它不在视野里时先回到它")
-            .transition(.opacity.combined(with: .offset(y: 6)))
+            .transition(.opacity)
         }
     }
     /// After a ⏎ went through: what was taken and what is left, for a moment. Shown only on success, never ahead of it.
     @ViewBuilder private var acceptedNote: some View {
         if let accept = model.lastAccept, model.lastReject == nil {
             let remaining = model.reviewTally.remaining
-            Label("已收下 \((accept.path as NSString).lastPathComponent) 的\(accept.scope)"
-                  + (remaining > 0 ? " · 还剩 \(remaining) 处" : " · 全部看过了"), systemImage: "checkmark.circle.fill")
+            Label("已收下 · " + (remaining > 0 ? "还剩 \(remaining) 处" : "全部看过了"),
+                  systemImage: "checkmark.circle.fill")
                 .themedFont(.caption.weight(.semibold), points: 10)
                 .symbolRenderingMode(.palette).foregroundStyle(ThemeColor(token: .added), ThemeColor(token: .foreground))
-                .contentTransition(.numericText())
+                .motionContent(remaining, transition: .numericText())
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .themedCapsule(.regularMaterial, stroke: true)
-                .transition(.opacity.combined(with: .offset(y: 6)))
+                .transition(.opacity)
                 .task(id: accept) {
-                    try? await Task.sleep(for: .seconds(1.6))
+                    do { try await Task.sleep(for: .seconds(1.4)) } catch { return }
                     if model.lastAccept == accept { model.lastAccept = nil }
                 }
                 .accessibilityAddTraits(.updatesFrequently)
@@ -540,9 +545,9 @@ struct AllChangesView: View {
             .themedFont(.caption.weight(.semibold), points: 10)
             .padding(.horizontal, 12).padding(.vertical, 6)
             .themedCapsule(.regularMaterial, stroke: true)
-            .transition(.opacity.combined(with: .offset(y: 6)))
+            .transition(.opacity)
             .task(id: reject) {
-                try? await Task.sleep(for: .seconds(6))
+                do { try await Task.sleep(for: .seconds(6)) } catch { return }
                 if !writingReason, model.lastReject == reject { model.lastReject = nil }
             }
         }
@@ -625,6 +630,7 @@ struct AllChangesView: View {
                             .terrazzoParticles(trigger: completionTick)
                         Text(tally.remaining == 0 ? "全部看过了 · \(tally.hunks) 处" : "已看 \(tally.seen) / \(tally.hunks) 处")
                             .themedFont(.caption.weight(.medium), points: 10).monospacedDigit().fixedSize()
+                            .motionContent(tally, transition: .numericText())
                     }
                     Spacer(minLength: 8)
                     PaneIconButton(symbol: "magnifyingglass", help: "查找差异（⌘F）", action: openSearch)
@@ -651,13 +657,12 @@ struct AllChangesView: View {
                 if let toast = model.lastCommit, Date().timeIntervalSince(toast.date) < 6, diffs.isEmpty || tally.remaining > 0 {
                     Label("已提交 \(toast.id.prefix(7)) · \(toast.subject)", systemImage: "checkmark.circle.fill")
                         .themedFont(.caption.weight(.medium), points: 10).foregroundStyle(.themed(.added))
-                        .transition(.opacity)
+                        .motionContent(toast.id)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(.bar)
             .overlay(alignment: .bottom) { Divider() }
-            .animation(reduceMotion ? nil : Motion.reveal, value: tally.remaining == 0)
         }
     }
 
@@ -680,7 +685,7 @@ struct AllChangesView: View {
             if !model.turnChoices.isEmpty || turn != nil { turnBar }
             HStack(spacing: 10) {
                 Text("已暂存 \(staged) · 未暂存 \(working)").themedFont(.caption.weight(.medium), points: 10)
-                if model.allChangesLoading { ProgressView().controlSize(.mini); Text("读取中…").themedFont(.caption, points: 10).foregroundStyle(.secondary) }
+                if model.allChangesLoading { WaitingIndicator().controlSize(.mini); Text("读取中…").themedFont(.caption, points: 10).foregroundStyle(.secondary) }
                 Spacer()
                 Menu {
                     Text("空格：下一处 · ⌥⌘Z：撤销 Git 操作")
@@ -861,10 +866,8 @@ struct AllChangesView: View {
 
     private func reveal(_ proxy: ScrollViewProxy) {
         guard let stop = current else { return }
-        withMotion(Motion.hover) {
-            if let hunk = stop.hunkID { proxy.scrollTo(stop.fileKey + "#" + hunk, anchor: UnitPoint(x: 0.5, y: 0.2)) }
-            else { proxy.scrollTo(stop.fileKey, anchor: .top) }
-        }
+        if let hunk = stop.hunkID { proxy.scrollTo(stop.fileKey + "#" + hunk, anchor: UnitPoint(x: 0.5, y: 0.2)) }
+        else { proxy.scrollTo(stop.fileKey, anchor: .top) }
     }
 
     private func handle(_ press: KeyPress) -> KeyPress.Result {
@@ -1012,7 +1015,7 @@ private struct TurnOnlyDiff: View {
                     showsHeader: false, allowsLineSelection: false, anchorPrefix: "turn#\(batch)#",
                     readOnly: true, sideTitles: ("这一轮之前", "这一轮之后"), unified: unified)
             } else if !loaded {
-                ProgressView().controlSize(.small)
+                WaitingIndicator().controlSize(.small)
             }
             Divider().padding(.top, 4)
             Text("下面是文件现在的差异，在这里收下或丢弃。").themedFont(.caption, points: 10).foregroundStyle(.secondary)

@@ -3,50 +3,57 @@ import SwiftUI
 /// "● Claude 正在修改 3 个文件…" / "✓ 改完了 · 查看" above the cards: background work made visible.
 struct ActivityCapsuleView: View {
     let model: FolmiModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulse = false
 
     var body: some View {
         let _ = PerfLog.body("ActivityCapsuleView")
-        if let capsule = model.capsule {
-            HStack(spacing: 8) {
-                switch capsule {
-                case let .working(files, prompt):
-                    Circle().fill(ThemeColor(token: .modified)).frame(width: 7, height: 7)
-                        .opacity(pulse ? 0.35 : 1)
-                        .animation(reduceMotion ? nil : Motion.pulse, value: pulse)
-                        .onAppear { pulse = true }
-                    Text(model.capsuleAgentTitle + " 正在修改" + (files > 0 ? " \(files) 个文件" : "") + "…").themedFont(.caption.weight(.medium), points: 10)
-                    if let prompt { Text(prompt).themedFont(.caption, points: 10).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 220) }
-                case let .finished(files, prompt, batch):
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.themed(.added)).font(.caption)
-                    Text("\(model.capsuleAgentTitle) 改完了 · \(files) 个文件").themedFont(.caption.weight(.medium), points: 10)
-                    if let prompt { Text(prompt).themedFont(.caption, points: 10).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 200) }
-                    Button("查看") { model.dismissCapsule(); model.showContent(.allChanges) }
-                        .buttonStyle(.borderless).themedFont(.caption.weight(.semibold), points: 10)
-                    Button("只看这一轮") { model.dismissCapsule(); model.showTurn(batch) }.buttonStyle(.borderless).themedFont(.caption, points: 10)
-                        .help("在全部改动里只看这一轮改过的文件，收下、丢弃照常")
-                    if model.aiBatches.first(where: { $0.id == batch })?.canUndo == true {
-                        Button("撤回") { model.undoAIBatch(batch) }.buttonStyle(.borderless).themedFont(.caption, points: 10)
-                            .help("把这一批改动前的文件内容放回去（⌥⌘Z 可以再恢复）")
-                    }
-                    Button { model.dismissCapsule() } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
-                        .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("收起提示")
-                case let .external(files, _):
-                    Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(ThemeColor(token: .accent)).font(.caption)
-                    Text("有 \(files) 个文件刚被改动").themedFont(.caption.weight(.medium), points: 10)
-                    Button("查看") { model.dismissCapsule(); model.showContent(.allChanges) }
-                        .buttonStyle(.borderless).themedFont(.caption.weight(.semibold), points: 10)
-                    Button { model.dismissCapsule() } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
-                        .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("收起提示")
-                        .help("接入 Claude Code 后，这里会显示 Claude 正在改什么，并能整批撤回")
-                }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            .themedCapsule(.regularMaterial, stroke: true)
-            .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-            .transition(.move(edge: .top).combined(with: .opacity))
+        ZStack {
+            if let capsule = model.capsule { capsuleBody(capsule).transition(.opacity) }
         }
+        .dissolve(value: model.capsule != nil)
+    }
+
+    private func capsuleBody(_ capsule: AIActivityCapsule) -> some View {
+        let mark: (symbol: String, token: ThemeToken) = switch capsule {
+        case .working: ("circle.fill", .modified)
+        case .finished: ("checkmark.circle.fill", .added)
+        case .external: ("arrow.triangle.2.circlepath", .accent)
+        }
+        return HStack(spacing: 8) {
+            Image(systemName: mark.symbol).font(.system(size: mark.symbol == "circle.fill" ? 7 : 11))
+                .foregroundStyle(ThemeColor(token: mark.token)).frame(width: 12)
+                .motionContent(mark.symbol, transition: .symbolEffect(.replace))
+                .accessibilityHidden(true)
+            switch capsule {
+            case let .working(files, prompt):
+                Text(model.capsuleAgentTitle + " 正在修改" + (files > 0 ? " \(files) 个文件" : "") + "…").themedFont(.caption.weight(.medium), points: 10)
+                    .motionContent(files, transition: .numericText())
+                if let prompt { Text(prompt).themedFont(.caption, points: 10).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 220) }
+            case let .finished(files, prompt, batch):
+                Text("\(model.capsuleAgentTitle) 改完了 · \(files) 个文件待验收").themedFont(.caption.weight(.medium), points: 10)
+                if let prompt { Text(prompt).themedFont(.caption, points: 10).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 200) }
+                Button("查看改动") { model.dismissCapsule(); model.showContent(.allChanges) }
+                    .buttonStyle(.borderless).themedFont(.caption.weight(.semibold), points: 10)
+                Button("只看这一轮") { model.dismissCapsule(); model.showTurn(batch) }.buttonStyle(.borderless).themedFont(.caption, points: 10)
+                    .help("在全部改动里只看这一轮改过的文件，收下、丢弃照常")
+                if model.aiBatches.first(where: { $0.id == batch })?.canUndo == true {
+                    Button("撤回") { model.undoAIBatch(batch) }.buttonStyle(.borderless).themedFont(.caption, points: 10)
+                        .help("把这一批改动前的文件内容放回去（⌥⌘Z 可以再恢复）")
+                }
+                Button { model.dismissCapsule() } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("收起提示")
+            case let .external(files, _):
+                Text("有 \(files) 个文件刚被改动").themedFont(.caption.weight(.medium), points: 10)
+                    .motionContent(files, transition: .numericText())
+                Button("查看改动") { model.dismissCapsule(); model.showContent(.allChanges) }
+                    .buttonStyle(.borderless).themedFont(.caption.weight(.semibold), points: 10)
+                Button { model.dismissCapsule() } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("收起提示")
+                    .help("接入 Claude Code 后，这里会显示 Claude 正在改什么，并能整批撤回")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .themedCapsule(.regularMaterial, stroke: true)
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
     }
 }
 

@@ -204,10 +204,9 @@ private struct AssistBeside: ViewModifier {
                 Divider()
                 AIAssistCard(model: model, beside: true).frame(width: 320)
                     .background(Color.theme(theme, \.card))
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .transition(.opacity.animation(Motion.resolved(Motion.reveal, reduceMotion: reduceMotion)))
             }
         }
-        .animation(reduceMotion ? nil : Motion.reveal, value: model.assistBesideReview)
     }
 }
 
@@ -233,7 +232,7 @@ struct AIAssistCard: View {
                     Text(state.mode.title).themedFont(.headline, points: 13)
                     Text(state.source).themedFont(.caption, points: 10).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     Spacer()
-                    if state.running { ProgressView().controlSize(.small) }
+                    if state.running { WaitingIndicator().controlSize(.small) }
                     if docked {
                         Button("换成当前文件") { model.openAsk() }.controlSize(.small).help("把上下文换成现在打开的文件或改动")
                     } else {

@@ -17,7 +17,7 @@ extension FolmiModel {
         let files = filesInArea.filter { ids.contains($0.id) }
         let cached = files.compactMap { cachedDiff($0, area: area) }
         if !files.isEmpty, cached.count == files.count {
-            diffRequest = UUID(); selectedLines = [:]
+            diffRequest = UUID(); diffLoading = false; selectedLines = [:]
             fileDiffs = cached; fileDiff = cached.first
             prefetchNeighbours(of: selectedFileID)
             if let start = diffSwitchStart {
@@ -28,7 +28,7 @@ extension FolmiModel {
             }
             return
         }
-        Task { await updateDiff() }
+        queueDiffUpdate()
     }
 
     /// The review page's current change, mirrored in the change list without leaving the page: the row of the file
@@ -38,7 +38,7 @@ extension FolmiModel {
         if area != diff.area { area = diff.area; scheduleSave() }
         selectedFileIDs = [diff.file.id]; selectedFileID = diff.file.id
         // The page's diff is current: no read, and a read still under way must not land over it.
-        diffRequest = UUID(); selectedLines = [:]
+        diffRequest = UUID(); diffLoading = false; selectedLines = [:]
         fileDiffs = [diff]; fileDiff = diff
     }
 
@@ -53,12 +53,24 @@ extension FolmiModel {
         guard !busy else { return }
         reviewCommentReveal = nil
         area = newArea; selectedFileID = nil; selectedFileIDs = []
-        Task { await updateDiff() }; scheduleSave()
+        queueDiffUpdate()
+        scheduleSave()
+    }
+
+    func queueDiffUpdate() {
+        let request = UUID()
+        diffRequest = request
+        diffLoading = true
+        Task {
+            guard diffRequest == request else { return }
+            await updateDiff()
+        }
     }
 
     func updateDiff(keepingSelection: Bool = false) async {
         if let start = diffSwitchStart { PerfLog.interval("switch.taskStart", since: start) }
         let request = UUID(); diffRequest = request
+        defer { if diffRequest == request { diffLoading = false } }
         let previous = Dictionary(fileDiffs.map { ($0.file.path, $0.rawPatch) }, uniquingKeysWith: { first, _ in first })
         // The previous diff stays on screen until the new one is ready (usually from the cache, at once): no blank frame.
         if !keepingSelection { selectedLines = [:] }
@@ -73,9 +85,14 @@ extension FolmiModel {
         selectedFileID = filesInArea.first { selectedFileIDs.contains($0.id) }?.id
         guard repository != nil else { return }
         let files = filesInArea.filter { selectedFileIDs.contains($0.id) }
-        guard files.count <= 50 else { report(FolmiFailure(message: "一次最多查看 50 个文件，请缩小选择。"), title: "选择过多"); return }
+        guard files.count <= 50 else {
+            fileDiff = nil; fileDiffs = []
+            report(FolmiFailure(message: "一次最多查看 50 个文件，请缩小选择。"), title: "选择过多")
+            return
+        }
         if files.isEmpty { fileDiff = nil; fileDiffs = []; return }
         let requestedArea = area
+        if fileDiff?.area != requestedArea || files.map(\.id) != fileDiffs.map(\.file.id) { diffLoading = true }
         do {
             var results: [FileDiff] = []
             for file in files {

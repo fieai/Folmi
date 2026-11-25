@@ -29,7 +29,7 @@ struct GitHubDeliveryDetails: View {
                 }
             }
             if loading {
-                ProgressView("正在读取 PR 状态…").controlSize(.small)
+                WaitingIndicator("正在读取 PR 状态…").controlSize(.small)
             } else if let status, case .otherRemote = status.access, status.problem == nil {
                 EmptyView()
             } else {
@@ -158,7 +158,7 @@ private struct GitHubReviewPopover: View {
                 }
                 Spacer()
                 if model.githubRequests[target] != nil {
-                    ProgressView().controlSize(.small).accessibilityLabel("正在刷新 PR")
+                    WaitingIndicator().controlSize(.small).accessibilityLabel("正在刷新 PR")
                 } else {
                     PaneIconButton(symbol: "arrow.clockwise", help: "刷新 PR 状态") { Task { await model.refreshGitHub(target) } }
                 }
@@ -241,7 +241,7 @@ private struct GitHubReviewPopover: View {
                 }
             }
         }
-        if loadingLog { ProgressView("正在读取失败日志…").controlSize(.small) }
+        if loadingLog { WaitingIndicator("正在读取失败日志…").controlSize(.small) }
         if let logProblem { Text(logProblem).foregroundStyle(.secondary).textSelection(.enabled) }
     }
 

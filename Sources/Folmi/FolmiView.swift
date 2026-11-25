@@ -6,6 +6,19 @@ struct FolmiView: View {
 
     var body: some View {
         let _ = PerfLog.body("FolmiView")
+        return windowPrompts
+            // Apply the theme outside the presentations so sheets inherit it with the window.
+            .themedFont(.body, points: 13)
+            .environment(\.folmiTheme, model.theme)
+            .environment(\.folmiGlass, model.glassSurfaces)
+            .environment(\.foldWhitespaceHunks, model.foldWhitespace)
+            // Reading repositoryURL (observed) re-reads the repository when the project changes.
+            .environment(\.gitRepository, model.repositoryURL == nil ? nil : model.repository)
+            // A design swaps a custom font for the system one in that design.
+            .fontDesign(model.theme.style.pixelFont && PixelFont.isAvailable ? nil : model.theme.style.fontDesign)
+    }
+
+    private var workspaceWindow: some View {
         Group {
             if model.gitStartupState.blocksGit {
                 StartupEnvironmentView(model: model)
@@ -53,33 +66,43 @@ struct FolmiView: View {
                 }
             }
         }
+    }
+
+    private var workspaceSheets: some View {
+        workspaceWindow
         .sheet(isPresented: $model.showDelivery) {
-            DeliverySheet(model: model).sheetEntrance()
+            DeliverySheet(model: model).folmiSheetStyle()
         }
         .sheet(isPresented: $model.showPull) {
-            PullSheet(model: model).sheetEntrance()
+            PullSheet(model: model).folmiSheetStyle()
         }
         .sheet(isPresented: $model.showStashes) {
-            StashSheet(model: model).sheetEntrance()
+            StashSheet(model: model).folmiSheetStyle()
         }
         .sheet(isPresented: $model.showActivity) {
-            ActivitySheet(model: model).sheetEntrance()
+            ActivitySheet(model: model).folmiSheetStyle()
         }
-        .sheet(isPresented: $model.showAISettings) { AISettingsSheet(model: model).sheetEntrance() }
-        .sheet(isPresented: $model.showSettings) { FolmiSettingsSheet(model: model).sheetEntrance() }
+        .sheet(isPresented: $model.showAISettings) { AISettingsSheet(model: model).folmiSheetStyle() }
+        .sheet(isPresented: $model.showSettings) { FolmiSettingsSheet(model: model).folmiSheetStyle() }
         .sheet(isPresented: $model.showPalette) {
-            CommandPaletteSheet(items: model.paletteItemsCache, usage: model.paletteUsage, onPick: model.pickPaletteItem).sheetEntrance()
+            CommandPaletteSheet(items: model.paletteItemsCache, usage: model.paletteUsage, onPick: model.pickPaletteItem).folmiSheetStyle()
         }
-        .sheet(isPresented: $model.showHooksSetup) { HooksSetupSheet(model: model).sheetEntrance() }
-        .sheet(isPresented: $model.showMemory) { MemorySheet(model: model).sheetEntrance() }
-        .sheet(isPresented: $model.showWorktrees) { WorktreesSheet(model: model).sheetEntrance() }
-        .sheet(isPresented: $model.showRemotes) { RemotesSheet(model: model).sheetEntrance() }
-        .sheet(isPresented: $model.showOverview) { ProjectOverviewSheet(model: model).sheetEntrance() }
+        .sheet(isPresented: $model.showHooksSetup) { HooksSetupSheet(model: model).folmiSheetStyle() }
+        .sheet(isPresented: $model.showMemory) { MemorySheet(model: model).folmiSheetStyle() }
+        .sheet(isPresented: $model.showWorktrees) { WorktreesSheet(model: model).folmiSheetStyle() }
+        .sheet(isPresented: $model.showRemotes) { RemotesSheet(model: model).folmiSheetStyle() }
+        .sheet(isPresented: $model.showOverview) { ProjectOverviewSheet(model: model).folmiSheetStyle() }
         .sheet(isPresented: $model.showAllTerminals, onDismiss: model.jumpToListedTerminal) {
-            AllTerminalsSheet(model: model).sheetEntrance()
+            AllTerminalsSheet(model: model).folmiSheetStyle()
         }
-        .sheet(isPresented: $model.showDocHistory) { DocHistorySheet(model: model).sheetEntrance() }
-        .confirmationDialog(model.mergePrompt.map { "把「\($0.source)」合并进「\($0.branch)」？" } ?? "",
+        .sheet(isPresented: $model.showDocHistory) { DocHistorySheet(model: model).folmiSheetStyle() }
+    }
+
+    private var repositoryPrompts: some View {
+        let mergeTitle = model.mergePrompt.map { "把「\($0.source)」合并进「\($0.branch)」？" } ?? ""
+        let switchTitle = model.branchSwitchPrompt.map { "切换到「\($0.target.name)」" } ?? ""
+        return workspaceSheets
+        .confirmationDialog(mergeTitle,
                             isPresented: Binding(get: { model.mergePrompt != nil }, set: { if !$0 { model.mergePrompt = nil } }),
                             presenting: model.mergePrompt) { plan in
             if plan.blocked == nil {
@@ -89,7 +112,7 @@ struct FolmiView: View {
         } message: { plan in
             Text(FolmiModel.mergeMessage(plan))
         }
-        .confirmationDialog(model.branchSwitchPrompt.map { "切换到「\($0.target.name)」" } ?? "",
+        .confirmationDialog(switchTitle,
                             isPresented: Binding(get: { model.branchSwitchPrompt != nil }, set: { if !$0 { model.branchSwitchPrompt = nil } }),
                             presenting: model.branchSwitchPrompt) { plan in
             if plan.canStash {
@@ -100,6 +123,10 @@ struct FolmiView: View {
             Text(plan.blocker ?? "")
         }
         .modifier(RefPrompts(model: model))
+    }
+
+    private var windowPrompts: some View {
+        repositoryPrompts
         .alert(model.discardPrompt?.title ?? "",
                isPresented: Binding(get: { model.discardPrompt != nil }, set: { if !$0 { model.discardPrompt = nil } }),
                presenting: model.discardPrompt) { prompt in
@@ -112,10 +139,10 @@ struct FolmiView: View {
             ReviewCommentComposer(title: "\(draft.reference) · 「\(draft.quote.prefix(40))\(draft.quote.count > 40 ? "…" : "")」",
                                   onAdd: { model.addReaderComment($0, draft: draft) },
                                   onCancel: { model.readerCommentDraft = nil })
-                .sheetEntrance()
+                .folmiSheetStyle()
         }
         .sheet(isPresented: $model.showQuickOpen) {
-            QuickOpenSheet(paths: model.quickOpenPaths, onOpen: model.openQuickMatch).sheetEntrance()
+            QuickOpenSheet(paths: model.quickOpenPaths, onOpen: model.openQuickMatch).folmiSheetStyle()
         }
         .sheet(isPresented: $model.showProjectSearch, onDismiss: model.cancelProjectSearch) {
             VStack(spacing: 0) {
@@ -128,7 +155,7 @@ struct FolmiView: View {
                 ProjectSearchPanel(result: model.projectSearchResult, searching: model.projectSearching,
                                    query: $model.projectSearchQuery, caseSensitive: $model.searchCaseSensitive,
                                    onSearch: model.performProjectSearch, onOpen: model.openSearchHit)
-            }.frame(width: 840, height: 600).sheetEntrance()
+            }.frame(width: 840, height: 600).folmiSheetStyle()
         }
         .background(SheetOutsideClick(dismiss: model.dismissSheets))
         .alert("操作未完成", isPresented: Binding(
@@ -146,17 +173,6 @@ struct FolmiView: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
-        // Text without its own font (labels, buttons, menus) in the pixel font under 像素; reads the theme set below.
-        .themedFont(.body, points: 13)
-        // Last, so the sheets above (push, pull, settings…) get the theme too, not just the window. The accent tint
-        // stays on the window: in a sheet it would turn every plain button into accent-colored text.
-        .environment(\.folmiTheme, model.theme)
-        .environment(\.folmiGlass, model.glassSurfaces)
-        .environment(\.foldWhitespaceHunks, model.foldWhitespace)
-        // Reading repositoryURL (observed) re-reads the repository when the project changes.
-        .environment(\.gitRepository, model.repositoryURL == nil ? nil : model.repository)
-        // A design swaps a custom font for the system one in that design, so the pixel font goes without it.
-        .fontDesign(model.theme.style.pixelFont && PixelFont.isAvailable ? nil : model.theme.style.fontDesign)
     }
 }
 
@@ -299,6 +315,7 @@ private struct FolmiMain: View {
                 guard let request else { return }
                 // Let SwiftUI insert a reopened card before looking for its text view or terminal.
                 DispatchQueue.main.async {
+                    guard model.paneFocusRequest == request else { return }
                     paneTracker.makeFirstResponder(request.pane,
                                                    preferCommitEditor: request.prefersCommitEditor)
                 }
@@ -323,7 +340,6 @@ private struct FolmiMain: View {
 
 private struct TopNotices: View {
     let model: FolmiModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let _ = PerfLog.body("TopNotices")
         VStack(spacing: 8) {
@@ -331,20 +347,21 @@ private struct TopNotices: View {
             LargeRepositoryOffer(model: model)
         }
         .padding(.top, 4)
-        .animation(reduceMotion ? nil : Motion.reveal, value: model.capsule)
     }
 }
 
 private struct FloatingAssist: View {
     let model: FolmiModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let _ = PerfLog.body("FloatingAssist")
         // On the review page an explanation docks beside the diff instead (AllChangesView).
-        if !model.assistBesideReview {
-            AIAssistCard(model: model).padding(18)
-                .animation(reduceMotion ? nil : Motion.state, value: model.aiAssist?.mode)
+        let visible = !model.assistBesideReview && model.aiAssist != nil
+        ZStack {
+            if visible {
+                AIAssistCard(model: model).padding(18).transition(.opacity)
+            }
         }
+        .dissolve(value: visible)
     }
 }
 
@@ -565,14 +582,12 @@ private struct PaneHost: View {
                                  min(PaneLayoutState.sidebarRange.upperBound, Double(available.size.width) - 24 - 420))
         HStack(spacing: 0) {
             if sideShown {
-                Group {
-                    if rightShown {
-                        PaneSizeBox(sizes: sizes, dimension: .sidebarWidth, maximumWidth: sidebarMaximum).overlay { sideCard }
-                    } else { sideCard.frame(maxWidth: .infinity) }
-                }
+                PaneSizeBox(sizes: sizes, dimension: .sidebarWidth, maximumWidth: sidebarMaximum,
+                            fillsAvailableSpace: !rightShown)
+                    .overlay { sideCard }
                 .transition(.paneSlide(edge: .leading))
                 if rightShown {
-                    PaneResizeHandle(axis: .horizontal, thickness: model.theme.style.paneGap, elastic: true, value: { sizes.sidebarWidth },
+                    PaneResizeHandle(axis: .horizontal, thickness: model.theme.style.paneGap, value: { sizes.sidebarWidth },
                                      limit: { size in PaneLayoutState.sidebarRange.lowerBound...max(PaneLayoutState.sidebarRange.lowerBound,
                                          min(PaneLayoutState.sidebarRange.upperBound, Double(size.width) - projectRailWidth - 24 - 420)) },
                                      onBegin: sizes.begin, onChange: { sizes.sidebarWidth = $0 },
@@ -587,7 +602,7 @@ private struct PaneHost: View {
                             .transition(.paneSlide(edge: .top))
                     }
                     if editorShown && terminalShown {
-                        PaneResizeHandle(axis: .vertical, inverted: true, thickness: model.theme.style.paneGap, elastic: true, value: { sizes.terminalHeight },
+                        PaneResizeHandle(axis: .vertical, inverted: true, thickness: model.theme.style.paneGap, value: { sizes.terminalHeight },
                                          limit: { size in PaneLayoutState.terminalRange.lowerBound...max(PaneLayoutState.terminalRange.lowerBound,
                                              min(PaneLayoutState.terminalRange.upperBound, Double(size.height) - 44 - 16 - 8 - 200)) },
                                          onBegin: sizes.begin, onChange: { sizes.terminalHeight = $0 },
@@ -595,15 +610,12 @@ private struct PaneHost: View {
                                          help: "拖动调整终端高度，双击恢复默认")
                     }
                     if terminalShown {
-                        Group {
-                            if editorShown {
-                                PaneSizeBox(sizes: sizes, dimension: .terminalHeight).overlay { TerminalCard(model: model, tracker: tracker) }
-                            } else { TerminalCard(model: model, tracker: tracker) }
-                        }
-                        .transition(.paneSlide(edge: .bottom))
+                        PaneSizeBox(sizes: sizes, dimension: .terminalHeight, fillsAvailableSpace: !editorShown)
+                            .overlay { TerminalCard(model: model, tracker: tracker) }
+                            .transition(.paneSlide(edge: .bottom))
                     }
                 }
-                .transition(.paneSlide(edge: .trailing))
+                .transition(.identity)
             }
             if !sideShown && !rightShown {
                 WelcomeView(model: model, panesClosed: true).transition(.opacity)
@@ -611,7 +623,7 @@ private struct PaneHost: View {
         }
         .padding(.vertical, model.theme.style.paneGap).padding(.horizontal, model.theme.style.paneGap)
         // Which cards are on screen; a change animates cards in and out.
-        .animation(reduceMotion ? nil : Motion.layout, value: [sideShown, editorShown, terminalShown])
+        .motion(Motion.layout, value: [sideShown, editorShown, terminalShown])
         }
     }
 
@@ -695,7 +707,7 @@ private struct WelcomeView: View {
             if !recentProjects.isEmpty {
                 recents.padding(.top, 24)
             }
-            ProgressView().controlSize(.small)
+            WaitingIndicator().controlSize(.small)
                 .opacity(model.busy ? 1 : 0)
                 .padding(.top, 14)
         }
@@ -784,17 +796,24 @@ private struct FolmiStatusBar: View {
                 if model.updater.enabled { UpdateStatusItem(updater: model.updater) }
                 if model.theme.style.companion {
                     CompanionStatusItem(model: model)
-                } else if model.busy {
-                    ProgressView().controlSize(.mini)
-                    Text("正在执行…")
                 } else {
-                    if model.theme.style.solidMarks {
-                        StatusSquare(token: model.hasSnapshot ? .added : .tertiaryText)
-                    } else {
-                        Image(systemName: "checkmark.circle")
-                            .foregroundStyle(.secondary)
+                    let title = model.busy ? model.projectReadStatus ?? "正在执行…" : model.hasSnapshot ? "就绪" : "选择仓库开始"
+                    HStack(spacing: 6) {
+                        ZStack {
+                            if model.busy {
+                                WaitingIndicator().controlSize(.mini)
+                                    .transition(.opacity)
+                            } else if model.theme.style.solidMarks {
+                                StatusSquare(token: model.hasSnapshot ? .added : .tertiaryText)
+                            } else {
+                                Image(systemName: model.hasSnapshot ? "checkmark.circle" : "folder")
+                            }
+                        }
+                        .frame(width: 14)
+                        .dissolve(value: model.busy)
+                        .accessibilityHidden(true)
+                        Text(title).motionContent(title)
                     }
-                    Text(!model.hasSnapshot ? "选择仓库开始" : "就绪")
                 }
                 // Saving settings is silent when it works; only a problem is worth the space.
                 if !["", "已保存个人配置", "配置已载入"].contains(model.preferencesStatus) {
@@ -808,24 +827,25 @@ private struct FolmiStatusBar: View {
                         if model.workingCount > 0 {
                             HStack(spacing: 5) {
                                 if model.theme.style.solidMarks { StatusSquare(token: .modified) }
-                                Text("工作区 \(model.workingCount)").contentTransition(.numericText())
+                                Text("工作区 \(model.workingCount)").motionContent(model.workingCount, transition: .numericText())
                             }
                         }
                         if model.stagedCount > 0 {
                             HStack(spacing: 5) {
                                 if model.theme.style.solidMarks { StatusSquare(token: .added) }
-                                Text("暂存 \(model.stagedCount)").contentTransition(.numericText())
+                                Text("暂存区 \(model.stagedCount)").motionContent(model.stagedCount, transition: .numericText())
                             }
                         }
                         if model.unpushedCount > 0 {
-                            Text("↑\(model.unpushedCount) 未推送").foregroundStyle(ThemeColor(token: .modified)).contentTransition(.numericText())
+                            Text("↑\(model.unpushedCount) 未推送").foregroundStyle(ThemeColor(token: .modified))
+                                .motionContent(model.unpushedCount, transition: .numericText())
                         }
                         if model.inReviewCount > 0 {
-                            Text("评审中 \(model.inReviewCount)").contentTransition(.numericText())
+                            Text("评审中 \(model.inReviewCount)").motionContent(model.inReviewCount, transition: .numericText())
                                 .help("已推到 Gerrit 等待评审的提交，合并后会自动消失")
                         }
                         if let behind = snapshot.behind, behind > 0 {
-                            Button(action: model.preparePull) { Text("↓\(behind) 可拉取").contentTransition(.numericText()) }
+                            Button(action: model.preparePull) { Text("↓\(behind) 可拉取").motionContent(behind, transition: .numericText()) }
                                 .buttonStyle(.pressable).disabled(model.busy)
                                 .help("远端有 \(behind) 个新提交，点按预览并拉取")
                         }
@@ -835,7 +855,6 @@ private struct FolmiStatusBar: View {
                     }
                     .monospacedDigit()
                     .fontDesign(model.theme.style.instrument ? .monospaced : nil)
-                    .motion(Motion.reveal, value: [model.workingCount, model.stagedCount, snapshot.unpushed ?? 0, snapshot.behind ?? 0])
                 }
                 if let root = model.repositoryURL {
                     Button { NSWorkspace.shared.activateFileViewerSelecting([root]) } label: {

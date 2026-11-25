@@ -385,7 +385,7 @@ struct MenuBarBoard: View {
                 model.openBoardRow(row)
             }, compact: true)
             HStack(spacing: 6) {
-                if model.board.refreshing { ProgressView().controlSize(.mini); Text("正在读取各项目…") }
+                if model.board.refreshing { WaitingIndicator().controlSize(.mini); Text("正在读取各项目…") }
                 else if let updated = model.board.updated { Text("更新于 \(updated.formatted(date: .omitted, time: .shortened))") }
                 Text("· 远端状态来自最近一次取回")
             }

@@ -73,7 +73,7 @@ struct AllTerminalsSheet: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if let error = list.error { message(error) }
                     if loading {
-                        ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 22)
+                        WaitingIndicator().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 22)
                     } else if rows.isEmpty && list.error == nil {
                         message(query.isEmpty ? "没有打开的终端" : "没有找到终端")
                     }

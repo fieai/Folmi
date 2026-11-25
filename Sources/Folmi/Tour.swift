@@ -42,7 +42,7 @@ extension FolmiModel {
     }
     func dismissTour() {
         guard !tour.dismissed else { return }
-        withMotion(.easeOut(duration: 0.2)) { tour.dismissed = true }
+        tour.dismissed = true
         tour.save()
     }
     var showsTour: Bool { isDemo && !tour.dismissed && snapshot != nil }
@@ -50,13 +50,17 @@ extension FolmiModel {
 
 struct TourCard: View {
     let model: FolmiModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        ZStack { content }.dissolve(value: model.showsTour)
+    }
+
+    @ViewBuilder private var content: some View {
         if model.showsTour {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(model.tour.finished ? "都试过了" : "试一试").themedFont(.callout.weight(.semibold), points: 12)
+                        .motionContent(model.tour.finished)
                     Spacer()
                     Button { model.dismissTour() } label: { Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)) }
                         .buttonStyle(.borderless).foregroundStyle(.secondary).help("不再显示").accessibilityLabel("关闭试一试")
@@ -66,7 +70,7 @@ struct TourCard: View {
                     HStack(spacing: 8) {
                         Image(systemName: done ? "checkmark.circle.fill" : "circle")
                             .foregroundStyle(done ? ThemeColor(token: .added) : ThemeColor(token: .secondaryText))
-                            .contentTransition(.symbolEffect(.replace))
+                            .motionContent(done, transition: .symbolEffect(.replace))
                         Text(step.title).themedFont(.caption, points: 10)
                             .foregroundStyle(done ? .secondary : .primary)
                             .strikethrough(done, color: .secondary)
@@ -85,8 +89,7 @@ struct TourCard: View {
             .overlay(RoundedRectangle(cornerRadius: model.theme.style.radius(.card) + 2, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
             .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
             .padding(18)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: model.tour)
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
+            .transition(.opacity)
         }
     }
 }

@@ -371,7 +371,7 @@ struct QuickLookView: View {
             HStack(spacing: 6) {
                 switch loading.phase {
                 case .loading:
-                    ProgressView().controlSize(.mini)
+                    WaitingIndicator().controlSize(.mini)
                     Text("正在请求系统预览…").foregroundStyle(.secondary)
                 case .requested:
                     Text("由系统快速查看提供预览").foregroundStyle(.secondary)

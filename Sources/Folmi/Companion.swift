@@ -82,6 +82,7 @@ extension FolmiModel {
             let line = error.split(separator: "\n").first.map(String.init) ?? error
             return CompanionStatus(state: .error, text: line)
         }
+        if let projectReadStatus, busy { return CompanionStatus(state: .working, text: projectReadStatus) }
         if case let .finished(files, _, _) = capsule {
             return CompanionStatus(state: .attention, text: "改完了 · \(files) 个文件等你看")
         }
@@ -140,12 +141,13 @@ struct CompanionStatusItem: View {
         let lasting = model.companionStatus
         let showSuccess = celebrating != nil && lasting.state.priority < CompanionState.success.priority
         let state = showSuccess ? .success : lasting.state
+        let title = showSuccess ? "已提交 \(celebrating?.id.prefix(7) ?? "")" : lasting.text ?? (model.hasSnapshot ? "就绪" : "选择仓库开始")
         HStack(spacing: 5) {
             CompanionMark(state: state, size: 16, animated: false)
-            Text(showSuccess ? "已提交 \(celebrating?.id.prefix(7) ?? "")" : lasting.text ?? (model.hasSnapshot ? "就绪" : "选择仓库开始"))
+            Text(title)
                 .foregroundStyle(ThemeColor(token: state == .error ? .removed : state == .attention ? .modified : .secondaryText))
                 .lineLimit(1)
-                .contentTransition(.opacity)
+                .motionContent(title)
         }
         .onChange(of: model.lastCommit) { _, toast in
             guard let toast else { return }

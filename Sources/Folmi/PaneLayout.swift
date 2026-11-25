@@ -245,25 +245,35 @@ struct PaneTab: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Text(title).italic(italic).lineLimit(1).truncationMode(.middle)
-                if let count, count > 0 { Text("\(count)").foregroundStyle(.secondary).contentTransition(.numericText()) }
-                if dot { Circle().fill(ThemeColor(token: .accent)).frame(width: 6, height: 6).transition(.scale.combined(with: .opacity)) }
+                if let count, count > 0 {
+                    Text("\(count)").foregroundStyle(.secondary).monospacedDigit().motionContent(count, transition: .numericText())
+                }
             }
             .themedFont(.system(size: 12, weight: selected ? .medium : .regular), points: 12)
             .foregroundStyle(ThemeColor(token: selected ? .foreground : .secondaryText))
             .padding(.horizontal, 8).padding(.vertical, 4)
             // Underlined tabs stand the header's full height so the line sits on its bottom edge.
             .frame(maxHeight: underlined ? .infinity : nil)
-            .background { TabBackground(selected: selected, hovering: hovering) }
+            .background {
+                TabBackground(selected: selected, hovering: hovering)
+                    .dissolve(value: hovering, animation: Motion.hover)
+                    .dissolve(value: selected, animation: Motion.state)
+            }
+            .overlay(alignment: .topTrailing) {
+                Circle().fill(ThemeColor(token: .accent)).frame(width: 5, height: 5)
+                    .opacity(dot ? 1 : 0)
+                    .dissolve(value: dot)
+                    .padding(3)
+                    .accessibilityHidden(true)
+            }
             .contentShape(Rectangle())
-            .animation(reduceMotion ? nil : Motion.hover, value: hovering)
-            .animation(reduceMotion ? nil : Motion.state, value: selected)
-            .animation(reduceMotion ? nil : Motion.reveal, value: dot)
         }
         .buttonStyle(.pressable)
         .onHover { hovering = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(dot ? "有新动态" : "")
     }
     @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.folmiTheme) private var theme
     private var underlined: Bool { theme.style.tabs == .underline }
 }
@@ -277,10 +287,11 @@ struct PaneIconButton: View {
         let _ = PerfLog.body("PaneIconButton")
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: Metrics.iconSize, weight: .medium))
+                .motionContent(symbol, transition: .symbolEffect(.replace))
                 .frame(width: Metrics.iconButton, height: Metrics.iconButton)
                 .themedBackground(ThemeColor(token: .hover, opacity: hovering ? 1 : 0), .control)
                 .contentShape(Rectangle())
-                .motion(Motion.hover, value: hovering)
+                .dissolve(value: hovering, animation: Motion.hover)
         }
         .buttonStyle(.pressable)
         .foregroundStyle(.secondary)
@@ -305,8 +316,8 @@ struct PaneIconToggle: View {
                 .frame(width: Metrics.iconButton, height: Metrics.iconButton)
                 .themedBackground(ThemeColor(token: isOn ? .selectedFill : .hover, opacity: isOn || hovering ? 1 : 0), .control)
                 .contentShape(Rectangle())
-                .motion(Motion.hover, value: hovering)
-                .motion(Motion.state, value: isOn)
+                .dissolve(value: hovering, animation: Motion.hover)
+                .dissolve(value: isOn, animation: Motion.state)
         }
         .buttonStyle(.pressable)
         .opacity(enabled ? 1 : 0.4)
@@ -318,9 +329,9 @@ struct PaneIconToggle: View {
 }
 
 extension AnyTransition {
-    /// A card arriving or leaving: it fades while drifting a few points from the edge it belongs to.
+    /// A card arrives from the edge it belongs to.
     static func paneSlide(edge: Edge) -> AnyTransition {
-        let distance: CGFloat = 14
+        let distance: CGFloat = 6
         let offset: CGSize
         switch edge {
         case .leading: offset = CGSize(width: -distance, height: 0)
@@ -328,7 +339,7 @@ extension AnyTransition {
         case .top: offset = CGSize(width: 0, height: -distance)
         case .bottom: offset = CGSize(width: 0, height: distance)
         }
-        return .opacity.combined(with: .offset(offset)).combined(with: .scale(scale: 0.985))
+        return .opacity.combined(with: .offset(offset))
     }
 }
 
@@ -379,27 +390,27 @@ struct PaneSizeBox: View {
     @ObservedObject var sizes: PaneSizes
     let dimension: Dimension
     var maximumWidth = Double.greatestFiniteMagnitude
+    var fillsAvailableSpace = false
     var body: some View {
         let _ = PerfLog.body("PaneSizeBox")
         switch dimension {
-        case .sidebarWidth: Color.clear.frame(width: min(sizes.sidebarWidth, maximumWidth))
-        case .terminalHeight: Color.clear.frame(height: sizes.terminalHeight)
+        case .sidebarWidth:
+            Color.clear.frame(width: fillsAvailableSpace ? nil : min(sizes.sidebarWidth, maximumWidth))
+        case .terminalHeight:
+            Color.clear.frame(height: fillsAvailableSpace ? nil : sizes.terminalHeight)
         }
     }
 }
 
 /// The gap between cards doubles as the resize handle. AppKit handles the drag: the mouse is tracked in window
 /// coordinates (stable while the handle itself moves), and the cursor is a cursor rect rather than a push/pop pair that
-/// SwiftUI hover can unbalance. A short accent grip fades in on hover; while dragging it stretches, bows with the
-/// drag speed and springs straight again, and an `elastic` edge gives a little past its limit and springs back on release.
+/// SwiftUI hover can unbalance. The grip fades in on hover and brightens while the edge follows the mouse.
 struct PaneResizeHandle: NSViewRepresentable {
     enum Axis { case horizontal, vertical }
     let axis: Axis
     /// Dragging toward the leading/top edge grows the value when true (the terminal sits below the editor).
     var inverted = false
     var thickness: CGFloat = 8
-    /// Lets the drag run a little past the limit with resistance, then springs back to it on release.
-    var elastic = false
     let value: () -> Double
     /// The largest value that still leaves the neighbouring card its room, given the window's content size.
     var limit: (NSSize) -> ClosedRange<Double> = { _ in 0...Double.greatestFiniteMagnitude }
@@ -418,7 +429,6 @@ struct PaneResizeHandle: NSViewRepresentable {
     func updateNSView(_ view: PaneDividerView, context: Context) { update(view) }
     private func update(_ view: PaneDividerView) {
         view.inverted = inverted
-        view.elastic = elastic
         view.value = value; view.limit = limit
         view.onBegin = onBegin; view.onChange = onChange; view.onEnd = onEnd; view.onReset = onReset
         view.accent = theme.palette.accent
@@ -432,7 +442,6 @@ struct PaneResizeHandle: NSViewRepresentable {
 final class PaneDividerView: NSView {
     let vertical: Bool
     var inverted = false
-    var elastic = false
     var value: () -> Double = { 0 }
     var limit: (NSSize) -> ClosedRange<Double> = { _ in 0...Double.greatestFiniteMagnitude }
     var onBegin: () -> Void = {}
@@ -445,14 +454,7 @@ final class PaneDividerView: NSView {
     private var hovering = false
     private var hoverWork: DispatchWorkItem?
 
-    /// The grip's length at rest, while dragging, and the most it bows sideways.
-    private static let restLength: CGFloat = 28, dragLength: CGFloat = 52, maxBend: CGFloat = 4
-    /// Two small springs drive the grip: its length and its sideways bow. Underdamped, so they settle with a slight wobble.
-    private var length = Spring(value: restLength), bend = Spring(value: 0)
-    private var dragVelocity: CGFloat = 0
-    private var lastDrag: (time: TimeInterval, position: CGFloat)?
-    private var displayLink: CADisplayLink?
-    private var lastTick: CFTimeInterval?
+    private static let gripLength: CGFloat = 28
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     init(vertical: Bool) {
@@ -463,7 +465,7 @@ final class PaneDividerView: NSView {
         line.fillColor = nil
         line.lineWidth = 3
         line.lineCap = .round
-        line.actions = ["path": NSNull(), "position": NSNull(), "bounds": NSNull()]
+        line.actions = ["path": NSNull(), "position": NSNull(), "bounds": NSNull(), "opacity": NSNull()]
         layer?.addSublayer(line)
         setAccessibilityElement(false)
     }
@@ -488,7 +490,13 @@ final class PaneDividerView: NSView {
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateLine() }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { stopTicking() }
+        guard window == nil else { return }
+        hoverWork?.cancel()
+        hovering = false
+        if start != nil {
+            start = nil
+            onEnd()
+        }
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -506,11 +514,9 @@ final class PaneDividerView: NSView {
     }
     override func mouseDown(with event: NSEvent) {
         if event.clickCount == 2, let onReset { onReset(); return }
-        start = (event.locationInWindow, value())
-        lastDrag = nil; dragVelocity = 0
+        start = (event.locationInWindow, clamped(value()))
         hoverWork?.cancel()
         showLine(true)
-        animate(length: Self.dragLength)
         onBegin()
     }
     override func mouseDragged(with event: NSEvent) {
@@ -520,134 +526,54 @@ final class PaneDividerView: NSView {
         // Window coordinates grow upward; the terminal height grows when the edge moves up.
         let delta = vertical ? Double(point.y - start.point.y) : Double(point.x - start.point.x)
         let signed = vertical ? (inverted ? delta : -delta) : (inverted ? -delta : delta)
-        let range = limit(window?.contentLayoutRect.size ?? .zero)
-        onChange(resisted(start.value + signed, in: range))
-        trackVelocity(vertical ? point.y : point.x, time: event.timestamp)
+        let next = clamped(start.value + signed)
+        if next != value() { onChange(next) }
     }
     override func mouseUp(with event: NSEvent) {
         guard start != nil else { return }
         start = nil
-        let range = limit(window?.contentLayoutRect.size ?? .zero)
-        let current = value()
-        let settled = Swift.min(range.upperBound, Swift.max(range.lowerBound, current))
-        if settled != current {
-            // Pulled past the limit: spring back to it.
-            withAnimation(reduceMotion ? nil : Motion.settle) { onChange(settled) }
-        }
-        dragVelocity = 0; lastDrag = nil
-        animate(length: Self.restLength, bend: 0)
         onEnd()
-        if !hovering { showLine(false) }
+        showLine(hovering)
     }
 
-    /// Inside the range the value follows the mouse; past it, an elastic edge gives ever less (a rubber band capped
-    /// at about 24 points), a plain one stops.
-    private func resisted(_ proposed: Double, in range: ClosedRange<Double>) -> Double {
-        guard elastic, !reduceMotion else { return Swift.min(range.upperBound, Swift.max(range.lowerBound, proposed)) }
-        let reach = 24.0
-        func rubber(_ excess: Double) -> Double { reach * (1 - 1 / (excess * 0.55 / reach + 1)) }
-        if proposed > range.upperBound { return range.upperBound + rubber(proposed - range.upperBound) }
-        if proposed < range.lowerBound { return range.lowerBound - rubber(range.lowerBound - proposed) }
-        return proposed
+    private func clamped(_ proposed: Double) -> Double {
+        let range = limit(window?.contentLayoutRect.size ?? .zero)
+        return min(range.upperBound, max(range.lowerBound, proposed))
     }
 
     // MARK: Grip
 
-    private func trackVelocity(_ position: CGFloat, time: TimeInterval) {
-        defer { lastDrag = (time, position) }
-        guard let lastDrag, time > lastDrag.time else { return }
-        let instant = (position - lastDrag.position) / CGFloat(time - lastDrag.time)
-        dragVelocity = dragVelocity * 0.6 + instant * 0.4
-        guard !reduceMotion else { return }
-        // The grip leads with its middle: it bows toward the drag, more the faster it goes.
-        bend.target = Swift.max(-Self.maxBend * 2, Swift.min(Self.maxBend * 2, dragVelocity * 0.012))
-        startTicking()
-    }
-
-    private func animate(length target: CGFloat, bend bendTarget: CGFloat? = nil) {
-        length.target = target
-        if let bendTarget { bend.target = bendTarget }
-        if reduceMotion { length.snap(); bend.snap(); drawLine(); return }
-        startTicking()
-    }
-
-    private func startTicking() {
-        guard displayLink == nil, window != nil else { return }
-        let link = displayLink(target: self, selector: #selector(tick(_:)))
-        link.add(to: .main, forMode: .common)
-        displayLink = link
-        lastTick = nil
-    }
-    private func stopTicking() {
-        displayLink?.invalidate()
-        displayLink = nil
-    }
-    @objc private func tick(_ link: CADisplayLink) {
-        let now = link.timestamp
-        let dt = Swift.min(1.0 / 30, now - (lastTick ?? now - 1.0 / 60))
-        lastTick = now
-        // The bow fades once the mouse rests, even if no further drag event arrives.
-        if let lastDrag, ProcessInfo.processInfo.systemUptime - lastDrag.time > 0.06 { bend.target = 0; dragVelocity = 0 }
-        length.step(dt); bend.step(dt)
-        drawLine()
-        if length.isSettled && bend.isSettled && (start == nil || bend.target == 0) { stopTicking() }
-    }
-
     private func drawLine() {
         let path = CGMutablePath()
-        let half = Swift.min(length.value, vertical ? bounds.width : bounds.height) / 2
+        let half = min(Self.gripLength, vertical ? bounds.width : bounds.height) / 2
         let mid = CGPoint(x: bounds.midX, y: bounds.midY)
-        // A quadratic curve's middle sits halfway to its control point, so the control is twice the bow.
-        let bow = Swift.max(-Self.maxBend, Swift.min(Self.maxBend, bend.value)) * 2
         if vertical {
             path.move(to: CGPoint(x: mid.x - half, y: mid.y))
-            path.addQuadCurve(to: CGPoint(x: mid.x + half, y: mid.y), control: CGPoint(x: mid.x, y: mid.y + bow))
+            path.addLine(to: CGPoint(x: mid.x + half, y: mid.y))
         } else {
             path.move(to: CGPoint(x: mid.x, y: mid.y - half))
-            path.addQuadCurve(to: CGPoint(x: mid.x, y: mid.y + half), control: CGPoint(x: mid.x + bow, y: mid.y))
+            path.addLine(to: CGPoint(x: mid.x, y: mid.y + half))
         }
         line.path = path
     }
 
     private func showLine(_ visible: Bool) {
+        let opacity: Float = visible ? (start == nil ? 0.7 : 1) : 0
         if reduceMotion {
-            // Reduce Motion: the line is simply there or not, at its resting length.
-            CATransaction.begin(); CATransaction.setDisableActions(true)
             line.removeAnimation(forKey: "opacity")
-            line.opacity = visible ? 1 : 0
-            CATransaction.commit()
+            line.opacity = opacity
             return
         }
+        guard line.opacity != opacity else { return }
         let animation = CABasicAnimation(keyPath: "opacity")
         animation.fromValue = line.presentation()?.opacity ?? line.opacity
-        animation.duration = visible ? 0.16 : 0.22
+        animation.duration = Motion.hoverDuration
         animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        line.opacity = visible ? 1 : 0
+        line.opacity = opacity
         line.add(animation, forKey: "opacity")
-        if visible, start == nil {
-            // Grows in from a dot.
-            length.value = 8
-            animate(length: Self.restLength)
-        }
     }
     private func updateLine() {
         effectiveAppearance.performAsCurrentDrawingAppearance { line.strokeColor = accent.withAlphaComponent(0.85).cgColor }
     }
 
-    private struct Spring {
-        var value: CGFloat
-        var target: CGFloat
-        var velocity: CGFloat = 0
-        init(value: CGFloat) { self.value = value; target = value }
-        mutating func step(_ dt: CFTimeInterval) {
-            // Stiffness 520, damping ratio about 0.5: quick, with one soft overshoot.
-            let stiffness: CGFloat = 520, damping: CGFloat = 23
-            let force = -stiffness * (value - target) - damping * velocity
-            velocity += force * CGFloat(dt)
-            value += velocity * CGFloat(dt)
-            if isSettled { snap() }
-        }
-        mutating func snap() { value = target; velocity = 0 }
-        var isSettled: Bool { abs(value - target) < 0.05 && abs(velocity) < 0.5 }
-    }
 }

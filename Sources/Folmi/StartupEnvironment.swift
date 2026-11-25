@@ -79,7 +79,7 @@ struct StartupEnvironmentView: View {
             }
             .font(.title2.weight(.semibold))
             if case .checking = model.gitStartupState {
-                ProgressView("正在检查 Git 环境…")
+                WaitingIndicator("正在检查 Git 环境…")
             } else if case let .checked(result) = model.gitStartupState {
                 switch result {
                 case .ready:

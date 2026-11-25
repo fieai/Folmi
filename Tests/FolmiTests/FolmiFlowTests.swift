@@ -60,6 +60,26 @@ final class FolmiFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testRapidDiffSelectionKeepsTheOldContentUntilTheLatestDiffIsReady() async throws {
+        let demo = try await makeDemo()
+        let model = FolmiModel(store: try makeStore())
+        _ = try await open(demo, in: model)
+        let previous = try XCTUnwrap(model.fileDiff)
+        let targets = Array(model.filesInArea.filter { $0.id != previous.file.id }.prefix(2))
+        XCTAssertEqual(targets.count, 2)
+        guard let first = targets.first, let last = targets.last else { return }
+        model.prefetchTaskValue?.cancel()
+        model.diffCache.removeAll()
+
+        model.selectFile(first)
+        model.selectFile(last)
+        XCTAssertTrue(model.diffLoading)
+        XCTAssertEqual(model.fileDiff?.file.id, previous.file.id)
+        try await eventually("最后选中的差异加载完成") { !model.diffLoading }
+        XCTAssertEqual(model.fileDiffs.map(\.file.id), [last.id])
+    }
+
+    @MainActor
     func testProjectsKeepDraftsAndDeliveryProfilesAfterSwitchAndRestart() async throws {
         let store = try makeStore()
         let first = try await makeDemo(), second = try await makeDemo()

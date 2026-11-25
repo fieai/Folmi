@@ -298,8 +298,8 @@ private struct UpdatePanel: View {
 
     @ViewBuilder private var status: some View {
         switch updater.phase {
-        case .checking: HStack(spacing: 6) { ProgressView().controlSize(.mini); Text("正在检查…") }
-        case .installing(let message): HStack(spacing: 6) { ProgressView().controlSize(.mini); Text(message) }
+        case .checking: HStack(spacing: 6) { WaitingIndicator().controlSize(.mini); Text("正在检查…") }
+        case .installing(let message): HStack(spacing: 6) { WaitingIndicator().controlSize(.mini); Text(message) }
         case .installed: Text("新版本已装好，退出 Folmi 后会自动打开新版本。")
         case .failed(let message):
             Text(message).foregroundStyle(ThemeColor(token: .removed)).fixedSize(horizontal: false, vertical: true)
