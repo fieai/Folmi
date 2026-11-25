@@ -311,9 +311,11 @@ extension FolmiModel {
     func discardBlocker(_ files: [FileChange]) -> String? {
         if files.contains(where: \.isConflict) { return "先解决冲突，再丢弃改动。" }
         if files.contains(where: \.isSubmodule) { return "请在子模块里处理这些改动。" }
-        let paths = Set(files.flatMap { [$0.path] + ($0.worktreeCode == "R" ? [$0.originalPath].compactMap { $0 } : []) })
-        if editorWorkspace?.documents.contains(where: { $0.isDirty && paths.contains($0.id) }) == true {
-            return "编辑器里还有没保存的改动，先保存。"
+        if let editorWorkspace, editorWorkspace.hasUnsavedChanges {
+            let paths = Set(files.flatMap { [$0.path] + ($0.worktreeCode == "R" ? [$0.originalPath].compactMap { $0 } : []) })
+            if editorWorkspace.documents.contains(where: { $0.isDirty && paths.contains($0.id) }) {
+                return "编辑器里还有没保存的改动，先保存。"
+            }
         }
         return nil
     }

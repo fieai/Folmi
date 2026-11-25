@@ -368,7 +368,12 @@ struct ChangesPane: View {
     }
 
     private func preparedTree(in group: ChangeArea) -> ChangeListTree? {
-        guard model.fileSearch.isEmpty, let input = model.changeListInput,
+        guard model.fileSearch.isEmpty else { return nil }
+        return fullTree(in: group)
+    }
+
+    private func fullTree(in group: ChangeArea) -> ChangeListTree? {
+        guard let input = model.changeListInput,
               input.root == model.snapshot?.root, input.fingerprint == model.snapshot?.fingerprint else { return nil }
         return group == .staged ? input.staged : input.working
     }
@@ -535,7 +540,7 @@ struct ChangesPane: View {
 
     @ViewBuilder private func folderMenu(_ path: String, in area: ChangeArea) -> some View {
         let prefix = path + "/"
-        let files = (model.snapshot?.files ?? []).filter {
+        let files = fullTree(in: area)?.files(inFolder: path) ?? (model.snapshot?.files ?? []).filter {
             $0.path.hasPrefix(prefix) && (area == .working ? $0.hasWorking : $0.hasStaged)
         }
         if area == .working {

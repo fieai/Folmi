@@ -182,6 +182,16 @@ final class ChangeListTests: XCTestCase {
         XCTAssertEqual(cache.files(second, in: .working, query: "").count, 2)
     }
 
+    func testIndexedFolderOperationsIncludeDescendantsInSnapshotOrder() {
+        let paths = ["Folder/nested/one.txt", "Folder.old/other.txt", "Folder/two.txt", "Folder/nested/three.txt"]
+        let files = paths.map { FileChange(path: $0, indexCode: "?", worktreeCode: "?") }
+        let tree = ChangeListTree(files)
+
+        XCTAssertEqual(tree.files(inFolder: "Folder").map(\.path), [paths[0], paths[2], paths[3]])
+        XCTAssertEqual(tree.files(inFolder: "Folder/nested").map(\.path), [paths[0], paths[3]])
+        XCTAssertTrue(tree.files(inFolder: "Missing").isEmpty)
+    }
+
     @MainActor
     func testLargeRenderedListRowBoundHeartbeatFoldingCountsAndSearch() async throws {
         let fixture = try await makeLargeRepository()

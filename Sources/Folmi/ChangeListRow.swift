@@ -34,7 +34,7 @@ enum ChangeListRow: Identifiable, Equatable {
 /// Build the directory index once per input list, independently of which folders are open.
 struct ChangeListTree: Sendable {
     let files: [FileChange]
-    private var filesByFolder: [String: [FileChange]] = [:]
+    private var fileIndicesByFolder: [String: [Int]] = [:]
     private var foldersByParent: [String: [String]] = [:]
     private(set) var counts: [String: Int] = [:]
     var forcedGrouping: Bool { files.count > ChangeListRow.automaticGroupingThreshold }
@@ -42,14 +42,14 @@ struct ChangeListTree: Sendable {
     init(_ files: [FileChange]) {
         self.files = files
         var directories: [String] = []
-        for file in files {
+        for (index, file) in files.enumerated() {
             let directory = file.path.lastIndex(of: "/").map { String(file.path[..<$0]) } ?? ""
-            if !directory.isEmpty, filesByFolder[directory] == nil { directories.append(directory) }
-            filesByFolder[directory, default: []].append(file)
+            if !directory.isEmpty, fileIndicesByFolder[directory] == nil { directories.append(directory) }
+            fileIndicesByFolder[directory, default: []].append(index)
         }
         // A large change set often has hundreds of files in each folder. Count their shared ancestors once.
         for directory in directories {
-            let fileCount = filesByFolder[directory]!.count
+            let fileCount = fileIndicesByFolder[directory]!.count
             var parent = ""
             for component in directory.split(separator: "/") {
                 let path = parent.isEmpty ? String(component) : parent + "/" + component
@@ -72,10 +72,21 @@ struct ChangeListTree: Sendable {
                 result.append(.folder(folder, depth: depth, expanded: open))
                 if open { appendRows(in: folder, depth: depth + 1) }
             }
-            for file in filesByFolder[path] ?? [] { result.append(.file(file, depth: depth)) }
+            for index in fileIndicesByFolder[path] ?? [] { result.append(.file(files[index], depth: depth)) }
         }
         appendRows(in: "", depth: 0)
         return result
+    }
+
+    /// SwiftUI can build each folder menu while settling the list. Walk only that folder's subtree.
+    func files(inFolder path: String) -> [FileChange] {
+        var indices: [Int] = []
+        func appendFiles(in path: String) {
+            if let direct = fileIndicesByFolder[path] { indices.append(contentsOf: direct) }
+            for child in foldersByParent[path] ?? [] { appendFiles(in: child) }
+        }
+        appendFiles(in: path)
+        return indices.sorted().map { files[$0] }
     }
 }
 
